@@ -1,4 +1,7 @@
-use manonica_core::{Quantity, units::{ManonCount, ManonDensity}};
+use manonica_core::{
+    Quantity,
+    units::{ManonCount, ManonDensity},
+};
 use manonica_error::{BaseError, ErrorCode};
 
 /// Размерности регулярной расчётной области. Не является Minecraft chunk.
@@ -11,16 +14,28 @@ pub struct GridShape {
 
 impl GridShape {
     pub fn new(nx: usize, ny: usize, nz: usize) -> Result<Self, BaseError> {
-        if nx == 0 || ny == 0 || nz == 0 || nx.checked_mul(ny).and_then(|n| n.checked_mul(nz)).is_none() {
+        if nx == 0
+            || ny == 0
+            || nz == 0
+            || nx.checked_mul(ny).and_then(|n| n.checked_mul(nz)).is_none()
+        {
             return Err(BaseError::new(ErrorCode::InvalidShape, "grid_shape"));
         }
         Ok(Self { nx, ny, nz })
     }
 
-    pub fn nx(self) -> usize { self.nx }
-    pub fn ny(self) -> usize { self.ny }
-    pub fn nz(self) -> usize { self.nz }
-    pub fn len(self) -> usize { self.nx * self.ny * self.nz }
+    pub fn nx(self) -> usize {
+        self.nx
+    }
+    pub fn ny(self) -> usize {
+        self.ny
+    }
+    pub fn nz(self) -> usize {
+        self.nz
+    }
+    pub fn len(self) -> usize {
+        self.nx * self.ny * self.nz
+    }
 
     pub fn index(self, x: usize, y: usize, z: usize) -> Option<usize> {
         if x < self.nx && y < self.ny && z < self.nz {
@@ -46,8 +61,10 @@ impl FreeManaField {
         cell_width_metres: f64,
         density: Quantity<ManonDensity>,
     ) -> Result<Self, BaseError> {
-        if !cell_width_metres.is_finite() || cell_width_metres <= 0.0
-            || !cell_width_metres.powi(3).is_finite() {
+        if !cell_width_metres.is_finite()
+            || cell_width_metres <= 0.0
+            || !cell_width_metres.powi(3).is_finite()
+        {
             return Err(BaseError::new(ErrorCode::InvalidRange, "cell_width"));
         }
         if density.value() < 0.0 {
@@ -60,21 +77,32 @@ impl FreeManaField {
         })
     }
 
-    pub fn shape(&self) -> GridShape { self.shape }
-    pub fn cell_width_metres(&self) -> f64 { self.cell_width }
+    pub fn shape(&self) -> GridShape {
+        self.shape
+    }
+    pub fn cell_width_metres(&self) -> f64 {
+        self.cell_width
+    }
 
     pub fn at(&self, x: usize, y: usize, z: usize) -> Option<Quantity<ManonDensity>> {
-        self.shape.index(x, y, z).map(|index| self.concentrations[index])
+        self.shape
+            .index(x, y, z)
+            .map(|index| self.concentrations[index])
     }
 
     pub fn set(
-        &mut self, x: usize, y: usize, z: usize,
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
         density: Quantity<ManonDensity>,
     ) -> Result<(), BaseError> {
         if density.value() < 0.0 {
             return Err(BaseError::new(ErrorCode::InvalidRange, "mana_density"));
         }
-        let index = self.shape.index(x, y, z)
+        let index = self
+            .shape
+            .index(x, y, z)
             .ok_or(BaseError::new(ErrorCode::InvalidShape, "cell_coordinate"))?;
         self.concentrations[index] = density;
         Ok(())
@@ -113,8 +141,9 @@ mod tests {
     fn rejects_negative_density_and_zero_size() {
         assert!(GridShape::new(0, 1, 1).is_err());
         let shape = GridShape::new(1, 1, 1).unwrap();
-        assert!(FreeManaField::uniform(
-            shape, 1.0, Quantity::<ManonDensity>::new(-1.0).unwrap()
-        ).is_err());
+        assert!(
+            FreeManaField::uniform(shape, 1.0, Quantity::<ManonDensity>::new(-1.0).unwrap())
+                .is_err()
+        );
     }
 }

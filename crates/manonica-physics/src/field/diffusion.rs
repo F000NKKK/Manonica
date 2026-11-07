@@ -37,11 +37,7 @@ impl Evolution<FreeManaField> for FreeDiffusion {
     type Error = PhysicsError;
     type Report = ConservationReport;
 
-    fn evolve(
-        &self,
-        field: &mut FreeManaField,
-        dt: TimeStep,
-    ) -> Result<Self::Report, Self::Error> {
+    fn evolve(&self, field: &mut FreeManaField, dt: TimeStep) -> Result<Self::Report, Self::Error> {
         let dx = field.cell_width_metres();
         let lambda = self.diffusivity.value() * dt.seconds() / (dx * dx);
         if !lambda.is_finite() || lambda < 0.0 {
@@ -81,7 +77,11 @@ impl Evolution<FreeManaField> for FreeDiffusion {
 
         let mut converted = Vec::with_capacity(next.len());
         for density in next {
-            let safe = if density < 0.0 && density > -1e-12 { 0.0 } else { density };
+            let safe = if density < 0.0 && density > -1e-12 {
+                0.0
+            } else {
+                density
+            };
             if !safe.is_finite() || safe < 0.0 {
                 return Err(BaseError::new(ErrorCode::NumericalInstability, "density").into());
             }
@@ -99,7 +99,11 @@ impl Evolution<FreeManaField> for FreeDiffusion {
         let after = Quantity::<ManonCount>::nonnegative(after_value)?;
         let absolute_error = Quantity::<ManonCount>::nonnegative(absolute)?;
         field.replace(converted);
-        Ok(ConservationReport { before, after, absolute_error })
+        Ok(ConservationReport {
+            before,
+            after,
+            absolute_error,
+        })
     }
 }
 
@@ -118,9 +122,8 @@ mod tests {
 
     #[test]
     fn closed_3d_diffusion_conserves_total_and_stays_nonnegative() {
-        let mut grid = FreeManaField::uniform(
-            GridShape::new(4, 3, 2).unwrap(), 1.0, density(0.0)
-        ).unwrap();
+        let mut grid =
+            FreeManaField::uniform(GridShape::new(4, 3, 2).unwrap(), 1.0, density(0.0)).unwrap();
         grid.set(1, 1, 1, density(100.0)).unwrap();
         let solver = FreeDiffusion::new(Quantity::<Diffusivity>::new(0.5).unwrap()).unwrap();
         for _ in 0..200 {
@@ -133,9 +136,8 @@ mod tests {
 
     #[test]
     fn unstable_step_does_not_modify_field() {
-        let mut grid = FreeManaField::uniform(
-            GridShape::new(2, 2, 2).unwrap(), 1.0, density(0.0)
-        ).unwrap();
+        let mut grid =
+            FreeManaField::uniform(GridShape::new(2, 2, 2).unwrap(), 1.0, density(0.0)).unwrap();
         grid.set(0, 0, 0, density(5.0)).unwrap();
         let initial = grid.at(0, 0, 0).unwrap();
         let solver = FreeDiffusion::new(Quantity::<Diffusivity>::new(2.0).unwrap()).unwrap();
@@ -145,9 +147,8 @@ mod tests {
 
     #[test]
     fn nonnegative_total_is_volume_aware() {
-        let grid = FreeManaField::uniform(
-            GridShape::new(1, 1, 1).unwrap(), 3.0, density(2.0)
-        ).unwrap();
+        let grid =
+            FreeManaField::uniform(GridShape::new(1, 1, 1).unwrap(), 3.0, density(2.0)).unwrap();
         assert_eq!(grid.total_manons().unwrap().value(), 54.0);
     }
 }
