@@ -56,12 +56,9 @@ pub fn step_crystal(
     } else {
         0.0
     };
-    let absorbed = reservoir.free
-        * (1.0 - (-crystal.binding_rate * dt).exp())
-        * vacancy;
+    let absorbed = reservoir.free * (1.0 - (-crystal.binding_rate * dt).exp()) * vacancy;
     let released = reservoir.bound * (1.0 - (-crystal.release_rate * dt).exp());
-    reservoir.bound =
-        (reservoir.bound + absorbed - released).clamp(0.0, crystal.capacity);
+    reservoir.bound = (reservoir.bound + absorbed - released).clamp(0.0, crystal.capacity);
     reservoir.free = total - reservoir.bound;
     Ok(())
 }
@@ -105,8 +102,15 @@ mod tests {
 
     #[test]
     fn crystal_exchange_conserves_mana() {
-        let mut state = Reservoir { free: 100.0, bound: 5.0 };
-        let crystal = Crystal { capacity: 70.0, binding_rate: 0.7, release_rate: 0.03 };
+        let mut state = Reservoir {
+            free: 100.0,
+            bound: 5.0,
+        };
+        let crystal = Crystal {
+            capacity: 70.0,
+            binding_rate: 0.7,
+            release_rate: 0.03,
+        };
         let initial = state.total();
         for _ in 0..1000 {
             step_crystal(&mut state, crystal, 0.01).unwrap();
@@ -130,6 +134,9 @@ mod tests {
     #[test]
     fn unstable_timestep_is_rejected() {
         let mut field = vec![10.0, 0.0];
-        assert_eq!(diffuse_1d(&mut field, 1.0, 1.0, 1.0), Err(PhysicsError::UnstableStep));
+        assert_eq!(
+            diffuse_1d(&mut field, 1.0, 1.0, 1.0),
+            Err(PhysicsError::UnstableStep)
+        );
     }
 }
