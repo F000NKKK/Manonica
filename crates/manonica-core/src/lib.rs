@@ -8,7 +8,7 @@ pub mod signal;
 pub mod time;
 pub mod units;
 
-pub use math::{Matrix, Vec3};
+pub use math::{GainMatrix, Matrix, Vec3};
 pub use quantity::Quantity;
 pub use signal::{Instrumented, Signal};
 pub use time::{Time, TimeStep};
