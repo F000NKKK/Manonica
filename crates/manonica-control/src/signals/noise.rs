@@ -12,7 +12,12 @@ pub struct SampledNoise<U: Unit> {
 
 impl<U: Unit> SampledNoise<U> {
     pub fn new(offset: Quantity<U>, amplitude: Quantity<U>, period: TimeStep, seed: u64) -> Self {
-        Self { offset, amplitude, period, seed }
+        Self {
+            offset,
+            amplitude,
+            period,
+            seed,
+        }
     }
 }
 

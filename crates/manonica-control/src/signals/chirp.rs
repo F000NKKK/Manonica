@@ -30,8 +30,13 @@ impl<U: Unit> Chirp<U> {
             return Err(BaseError::new(ErrorCode::InvalidRange, "chirp_frequency"));
         }
         Ok(Self {
-            amplitude, offset, start, duration,
-            start_frequency, end_frequency, phase,
+            amplitude,
+            offset,
+            start,
+            duration,
+            start_frequency,
+            end_frequency,
+            phase,
         })
     }
 }

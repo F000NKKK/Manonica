@@ -11,7 +11,12 @@ pub struct Gaussian<U: Unit> {
 
 impl<U: Unit> Gaussian<U> {
     pub fn new(amplitude: Quantity<U>, offset: Quantity<U>, center: Time, sigma: TimeStep) -> Self {
-        Self { amplitude, offset, center, sigma }
+        Self {
+            amplitude,
+            offset,
+            center,
+            sigma,
+        }
     }
 }
 
