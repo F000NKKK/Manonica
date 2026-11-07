@@ -49,7 +49,8 @@ mod tests {
             Vec3::<Metres>::try_values(1.0, 2.0, 3.0).unwrap(),
             Vec3::<MetresPerSecond>::try_values(2.0, -1.0, 0.5).unwrap(),
             Quantity::<Joules>::nonnegative(10.0).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         let result = FreeMotion::propagate(initial, TimeStep::from_seconds(2.0).unwrap()).unwrap();
         assert_eq!(result.position().x.value(), 5.0);
         assert_eq!(result.position().y.value(), 0.0);

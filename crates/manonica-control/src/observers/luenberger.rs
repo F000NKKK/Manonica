@@ -35,7 +35,8 @@ impl<X: Unit, U: Unit, Y: Unit> LuenbergerObserver<X, U, Y> {
     ) -> Result<Self, ControlError> {
         if initial_estimate.len() != system.order()
             || gain.matrix().rows() != system.order()
-            || gain.matrix().cols() != system.output_count() {
+            || gain.matrix().cols() != system.output_count()
+        {
             return Err(BaseError::new(ErrorCode::InvalidShape, "observer").into());
         }
         Ok(Self {
@@ -87,22 +88,25 @@ impl<X: Unit, U: Unit, Y: Unit> LuenbergerObserver<X, U, Y> {
                 derivative += self.gain.matrix().at(row, i) * residual.value();
             }
             updated.push(Quantity::<X>::new(
-                self.estimate[row].value() + dt.seconds() * derivative
+                self.estimate[row].value() + dt.seconds() * derivative,
             )?);
         }
 
         self.estimate = updated.clone();
-        Ok(ObserverReport { estimate: updated, innovation })
+        Ok(ObserverReport {
+            estimate: updated,
+            innovation,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::{LinearSystem, LuenbergerObserver};
     use manonica_core::{
         GainMatrix, Matrix, Quantity, TimeStep,
         units::{Dimensionless, PerSecond},
     };
-    use crate::{LuenbergerObserver, LinearSystem};
 
     type U = Dimensionless;
 
@@ -114,21 +118,22 @@ mod tests {
             GainMatrix::<U, U>::new(Matrix::new(1, 1, vec![1.0]).unwrap()),
             GainMatrix::<U, U>::new(Matrix::new(1, 1, vec![0.0]).unwrap()),
             vec![Quantity::<U>::new(1.0).unwrap()],
-        ).unwrap();
+        )
+        .unwrap();
         let gain = GainMatrix::<U, PerSecond<U>>::new(Matrix::new(1, 1, vec![2.0]).unwrap());
-        let mut observer = LuenbergerObserver::from_system(
-            &system, gain, vec![Quantity::<U>::new(0.0).unwrap()]
-        ).unwrap();
+        let mut observer =
+            LuenbergerObserver::from_system(&system, gain, vec![Quantity::<U>::new(0.0).unwrap()])
+                .unwrap();
         let input = [Quantity::<U>::new(0.0).unwrap()];
         let measurement = [Quantity::<U>::new(1.0).unwrap()];
-        let result = observer.update(
-            &input, &measurement, TimeStep::from_seconds(0.1).unwrap()
-        ).unwrap();
+        let result = observer
+            .update(&input, &measurement, TimeStep::from_seconds(0.1).unwrap())
+            .unwrap();
         assert!((result.estimate[0].value() - 0.2).abs() < 1e-12);
         assert!((result.innovation[0].value() - 1.0).abs() < 1e-12);
-        let result = observer.update(
-            &input, &measurement, TimeStep::from_seconds(0.1).unwrap()
-        ).unwrap();
+        let result = observer
+            .update(&input, &measurement, TimeStep::from_seconds(0.1).unwrap())
+            .unwrap();
         assert!((result.estimate[0].value() - 0.36).abs() < 1e-12);
     }
 
@@ -140,15 +145,21 @@ mod tests {
             GainMatrix::<U, U>::new(Matrix::new(1, 1, vec![1.0]).unwrap()),
             GainMatrix::<U, U>::new(Matrix::new(1, 1, vec![0.0]).unwrap()),
             vec![Quantity::<U>::new(0.0).unwrap()],
-        ).unwrap();
+        )
+        .unwrap();
         let gain = GainMatrix::<U, PerSecond<U>>::new(Matrix::new(1, 1, vec![1.0]).unwrap());
-        let mut observer = LuenbergerObserver::from_system(
-            &system, gain, vec![Quantity::<U>::new(0.0).unwrap()]
-        ).unwrap();
-        assert!(observer.update(
-            &[Quantity::<U>::new(0.0).unwrap()], &[],
-            TimeStep::from_seconds(0.1).unwrap()
-        ).is_err());
+        let mut observer =
+            LuenbergerObserver::from_system(&system, gain, vec![Quantity::<U>::new(0.0).unwrap()])
+                .unwrap();
+        assert!(
+            observer
+                .update(
+                    &[Quantity::<U>::new(0.0).unwrap()],
+                    &[],
+                    TimeStep::from_seconds(0.1).unwrap()
+                )
+                .is_err()
+        );
         assert_eq!(observer.estimate()[0].value(), 0.0);
     }
 }

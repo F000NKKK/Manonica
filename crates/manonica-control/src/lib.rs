@@ -12,13 +12,13 @@ pub mod systems;
 
 pub use analysis::{AnalysisReport, controllability, observability};
 pub use blocks::{
-    ControllerSnapshot, ControllerTerm, Derivative, DerivativeMode, Gain,
-    Integral, IntegralMode, IntegralTerm, Limits, Pid, Proportional, ProportionalMode,
+    ControllerSnapshot, ControllerTerm, Derivative, DerivativeMode, Gain, Integral, IntegralMode,
+    IntegralTerm, Limits, Pid, Proportional, ProportionalMode,
 };
 pub use error::ControlError;
 pub use observers::{LuenbergerObserver, ObserverReport};
 pub use signals::{
-    Chirp, Constant, DampedSine, Delay, Exponential, Gaussian, Pulse,
-    Ramp, SampledNoise, Sawtooth, Scale, Sine, Square, Step, Sum, Triangle,
+    Chirp, Constant, DampedSine, Delay, Exponential, Gaussian, Pulse, Ramp, SampledNoise, Sawtooth,
+    Scale, Sine, Square, Step, Sum, Triangle,
 };
 pub use systems::{DynamicSystem, LinearSystem};

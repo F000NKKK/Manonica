@@ -35,7 +35,10 @@ impl ManonSystem {
         law: &L,
         dt: TimeStep,
     ) -> Result<(), PhysicsError> {
-        let next = self.manons.iter().copied()
+        let next = self
+            .manons
+            .iter()
+            .copied()
             .map(|manon| law.propagate(manon, dt))
             .collect::<Result<Vec<_>, _>>()?;
         self.manons = next;
@@ -57,7 +60,8 @@ mod tests {
             Vec3::<Metres>::try_values(0.0, 0.0, 0.0).unwrap(),
             Vec3::<MetresPerSecond>::try_values(1.0, 0.0, 0.0).unwrap(),
             Quantity::<Joules>::nonnegative(1.0).unwrap(),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]
@@ -84,7 +88,11 @@ mod tests {
         system.insert(particle(1)).unwrap();
         system.insert(particle(2)).unwrap();
         let original = system.manons().to_vec();
-        assert!(system.advance_with(&FailOnSecond, TimeStep::from_seconds(0.1).unwrap()).is_err());
+        assert!(
+            system
+                .advance_with(&FailOnSecond, TimeStep::from_seconds(0.1).unwrap())
+                .is_err()
+        );
         assert_eq!(original, system.manons());
     }
 }
