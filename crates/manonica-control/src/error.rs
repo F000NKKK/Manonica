@@ -8,7 +8,9 @@ pub enum ControlError {
 }
 
 impl From<BaseError> for ControlError {
-    fn from(value: BaseError) -> Self { Self::Base(value) }
+    fn from(value: BaseError) -> Self {
+        Self::Base(value)
+    }
 }
 
 impl ClassifiedError for ControlError {
@@ -31,6 +33,9 @@ impl std::fmt::Display for ControlError {
 
 impl std::error::Error for ControlError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self { Self::Base(error) => Some(error), Self::NumericalFailure(_) => None }
+        match self {
+            Self::Base(error) => Some(error),
+            Self::NumericalFailure(_) => None,
+        }
     }
 }

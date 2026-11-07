@@ -12,7 +12,11 @@ pub struct Sum<U: Unit, A: Signal<U>, B: Signal<U>> {
 
 impl<U: Unit, A: Signal<U>, B: Signal<U>> Sum<U, A, B> {
     pub fn new(left: A, right: B) -> Self {
-        Self { left, right, unit: PhantomData }
+        Self {
+            left,
+            right,
+            unit: PhantomData,
+        }
     }
 }
 
@@ -31,9 +35,16 @@ pub struct Scale<U: Unit, S: Signal<U>> {
 impl<U: Unit, S: Signal<U>> Scale<U, S> {
     pub fn new(signal: S, factor: f64) -> Result<Self, BaseError> {
         if !factor.is_finite() {
-            return Err(BaseError::new(manonica_error::ErrorCode::NonFinite, "scale"));
+            return Err(BaseError::new(
+                manonica_error::ErrorCode::NonFinite,
+                "scale",
+            ));
         }
-        Ok(Self { signal, factor, unit: PhantomData })
+        Ok(Self {
+            signal,
+            factor,
+            unit: PhantomData,
+        })
     }
 }
 
@@ -51,12 +62,17 @@ pub struct Delay<U: Unit, S: Signal<U>> {
 
 impl<U: Unit, S: Signal<U>> Delay<U, S> {
     pub fn new(signal: S, amount: TimeStep) -> Self {
-        Self { signal, amount, unit: PhantomData }
+        Self {
+            signal,
+            amount,
+            unit: PhantomData,
+        }
     }
 }
 
 impl<U: Unit, S: Signal<U>> Signal<U> for Delay<U, S> {
     fn sample(&self, time: Time) -> Result<Quantity<U>, BaseError> {
-        self.signal.sample(Time::from_seconds(time.seconds() - self.amount.seconds())?)
+        self.signal
+            .sample(Time::from_seconds(time.seconds() - self.amount.seconds())?)
     }
 }

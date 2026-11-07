@@ -4,11 +4,7 @@ use crate::ControlError;
 
 /// Универсальный блок регулятора со строго заданными размерностями входа и выхода.
 pub trait ControllerTerm<In: Unit, Out: Unit>: Send {
-    fn update(
-        &mut self,
-        error: Quantity<In>,
-        dt: TimeStep,
-    ) -> Result<Quantity<Out>, ControlError>;
+    fn update(&mut self, error: Quantity<In>, dt: TimeStep) -> Result<Quantity<Out>, ControlError>;
 
     fn reset(&mut self);
 }

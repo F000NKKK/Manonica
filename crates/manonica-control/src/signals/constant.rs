@@ -6,9 +6,13 @@ pub struct Constant<U: Unit> {
 }
 
 impl<U: Unit> Constant<U> {
-    pub fn new(value: Quantity<U>) -> Self { Self { value } }
+    pub fn new(value: Quantity<U>) -> Self {
+        Self { value }
+    }
 }
 
 impl<U: Unit> Signal<U> for Constant<U> {
-    fn sample(&self, _: Time) -> Result<Quantity<U>, BaseError> { Ok(self.value) }
+    fn sample(&self, _: Time) -> Result<Quantity<U>, BaseError> {
+        Ok(self.value)
+    }
 }

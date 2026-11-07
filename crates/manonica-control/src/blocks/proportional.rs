@@ -1,6 +1,9 @@
 use manonica_core::{Quantity, TimeStep, units::Unit};
 
-use crate::{ControlError, blocks::{ControllerTerm, Gain, ProportionalMode}};
+use crate::{
+    ControlError,
+    blocks::{ControllerTerm, Gain, ProportionalMode},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Proportional<In: Unit, Out: Unit> {

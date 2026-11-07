@@ -1,4 +1,7 @@
-use manonica_core::{Quantity, Vec3, units::{Joules, Metres, MetresPerSecond}};
+use manonica_core::{
+    Quantity, Vec3,
+    units::{Joules, Metres, MetresPerSecond},
+};
 
 /// Постоянный идентификатор частицы.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,14 +36,30 @@ impl Manon {
                 "manon_energy",
             ));
         }
-        Ok(Self { id, position, velocity, energy, state: ManonState::Free })
+        Ok(Self {
+            id,
+            position,
+            velocity,
+            energy,
+            state: ManonState::Free,
+        })
     }
 
-    pub fn id(&self) -> ManonId { self.id }
-    pub fn position(&self) -> Vec3<Metres> { self.position }
-    pub fn velocity(&self) -> Vec3<MetresPerSecond> { self.velocity }
-    pub fn energy(&self) -> Quantity<Joules> { self.energy }
-    pub fn state(&self) -> ManonState { self.state }
+    pub fn id(&self) -> ManonId {
+        self.id
+    }
+    pub fn position(&self) -> Vec3<Metres> {
+        self.position
+    }
+    pub fn velocity(&self) -> Vec3<MetresPerSecond> {
+        self.velocity
+    }
+    pub fn energy(&self) -> Quantity<Joules> {
+        self.energy
+    }
+    pub fn state(&self) -> ManonState {
+        self.state
+    }
 
     pub(crate) fn set_position(&mut self, position: Vec3<Metres>) {
         self.position = position;

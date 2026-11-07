@@ -1,7 +1,10 @@
 use manonica_core::{Quantity, TimeStep, units::Unit};
 use manonica_error::{BaseError, ErrorCode};
 
-use crate::{ControlError, blocks::{ControllerTerm, DerivativeMode, Gain}};
+use crate::{
+    ControlError,
+    blocks::{ControllerTerm, DerivativeMode, Gain},
+};
 
 /// Дифференциатор ошибки, опционально фильтруемый апериодическим звеном.
 /// Первый шаг возвращает 0, не вызывая искусственного выброса.
@@ -25,14 +28,10 @@ impl<In: Unit, Out: Unit> Derivative<In, Out> {
 }
 
 impl<In: Unit, Out: Unit> ControllerTerm<In, Out> for Derivative<In, Out> {
-    fn update(
-        &mut self,
-        error: Quantity<In>,
-        dt: TimeStep,
-    ) -> Result<Quantity<Out>, ControlError> {
-        let raw_slope = self.previous_error.map_or(0.0, |previous| {
-            (error.value() - previous) / dt.seconds()
-        });
+    fn update(&mut self, error: Quantity<In>, dt: TimeStep) -> Result<Quantity<Out>, ControlError> {
+        let raw_slope = self
+            .previous_error
+            .map_or(0.0, |previous| (error.value() - previous) / dt.seconds());
         let slope = self.filter_time.map_or(raw_slope, |tau| {
             let alpha = tau.seconds() / (tau.seconds() + dt.seconds());
             alpha * self.filtered_slope + (1.0 - alpha) * raw_slope

@@ -44,15 +44,31 @@ impl<X: Unit, U: Unit, Y: Unit> LinearSystem<X, U, Y> {
         Ok(Self { a, b, c, d, state })
     }
 
-    pub fn order(&self) -> usize { self.state.len() }
-    pub fn input_count(&self) -> usize { self.b.matrix().cols() }
-    pub fn output_count(&self) -> usize { self.c.matrix().rows() }
-    pub fn state(&self) -> &[Quantity<X>] { &self.state }
+    pub fn order(&self) -> usize {
+        self.state.len()
+    }
+    pub fn input_count(&self) -> usize {
+        self.b.matrix().cols()
+    }
+    pub fn output_count(&self) -> usize {
+        self.c.matrix().rows()
+    }
+    pub fn state(&self) -> &[Quantity<X>] {
+        &self.state
+    }
 
-    pub fn a(&self) -> &manonica_core::Matrix { self.a.matrix() }
-    pub fn b(&self) -> &manonica_core::Matrix { self.b.matrix() }
-    pub fn c(&self) -> &manonica_core::Matrix { self.c.matrix() }
-    pub fn d(&self) -> &manonica_core::Matrix { self.d.matrix() }
+    pub fn a(&self) -> &manonica_core::Matrix {
+        self.a.matrix()
+    }
+    pub fn b(&self) -> &manonica_core::Matrix {
+        self.b.matrix()
+    }
+    pub fn c(&self) -> &manonica_core::Matrix {
+        self.c.matrix()
+    }
+    pub fn d(&self) -> &manonica_core::Matrix {
+        self.d.matrix()
+    }
 }
 
 impl<X: Unit, U: Unit, Y: Unit> DynamicSystem<U, Y> for LinearSystem<X, U, Y> {
@@ -86,7 +102,9 @@ impl<X: Unit, U: Unit, Y: Unit> DynamicSystem<U, Y> for LinearSystem<X, U, Y> {
             for (i, u) in input.iter().enumerate() {
                 derivative += self.b().at(row, i) * u.value();
             }
-            updated.push(Quantity::new(self.state[row].value() + dt.seconds() * derivative)?);
+            updated.push(Quantity::new(
+                self.state[row].value() + dt.seconds() * derivative,
+            )?);
         }
         self.state = updated;
         Ok(output)
@@ -97,7 +115,7 @@ impl<X: Unit, U: Unit, Y: Unit> DynamicSystem<U, Y> for LinearSystem<X, U, Y> {
 mod tests {
     use manonica_core::{
         GainMatrix, Matrix, Quantity, TimeStep,
-        units::{Joules, Newtons, PerSecond, Kelvin},
+        units::{Joules, Kelvin, Newtons, PerSecond},
     };
 
     use super::{DynamicSystem, LinearSystem};
@@ -110,9 +128,12 @@ mod tests {
             GainMatrix::<Joules, Kelvin>::new(Matrix::new(1, 1, vec![1.0]).unwrap()),
             GainMatrix::<Newtons, Kelvin>::new(Matrix::new(1, 1, vec![0.0]).unwrap()),
             vec![Quantity::<Joules>::new(0.0).unwrap()],
-        ).unwrap();
+        )
+        .unwrap();
         let input = [Quantity::<Newtons>::new(1.0).unwrap()];
-        let output = system.step(&input, TimeStep::from_seconds(0.1).unwrap()).unwrap();
+        let output = system
+            .step(&input, TimeStep::from_seconds(0.1).unwrap())
+            .unwrap();
         assert_eq!(output[0].value(), 0.0);
         assert!((system.state()[0].value() - 0.1).abs() < 1e-12);
     }

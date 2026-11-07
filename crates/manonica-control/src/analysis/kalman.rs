@@ -41,14 +41,24 @@ pub fn observability<X: Unit, U: Unit, Y: Unit>(
 
 fn report(matrix: Matrix, order: usize, tolerance: f64) -> Result<AnalysisReport, ControlError> {
     let rank = matrix.rank(tolerance)?;
-    Ok(AnalysisReport { rank, order, full_rank: rank == order })
+    Ok(AnalysisReport {
+        rank,
+        order,
+        full_rank: rank == order,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use manonica_core::{GainMatrix, Matrix, Quantity, units::{Joules, Newtons, Kelvin, PerSecond}};
+    use manonica_core::{
+        GainMatrix, Matrix, Quantity,
+        units::{Joules, Kelvin, Newtons, PerSecond},
+    };
 
-    use crate::{analysis::{controllability, observability}, systems::LinearSystem};
+    use crate::{
+        analysis::{controllability, observability},
+        systems::LinearSystem,
+    };
 
     fn system(b: Vec<f64>, c: Vec<f64>) -> LinearSystem<Joules, Newtons, Kelvin> {
         LinearSystem::new(
@@ -57,7 +67,8 @@ mod tests {
             GainMatrix::new(Matrix::new(1, 2, c).unwrap()),
             GainMatrix::new(Matrix::new(1, 1, vec![0.0]).unwrap()),
             vec![Quantity::<Joules>::new(0.0).unwrap(); 2],
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]

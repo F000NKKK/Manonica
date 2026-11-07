@@ -10,7 +10,9 @@ pub struct ManonSystem {
 }
 
 impl ManonSystem {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn insert(&mut self, manon: Manon) -> Result<(), PhysicsError> {
         if self.manons.iter().any(|m| m.id() == manon.id()) {
@@ -20,10 +22,15 @@ impl ManonSystem {
         Ok(())
     }
 
-    pub fn manons(&self) -> &[Manon] { &self.manons }
+    pub fn manons(&self) -> &[Manon] {
+        &self.manons
+    }
 
     pub fn advance(&mut self, dt: TimeStep) -> Result<(), PhysicsError> {
-        let updated = self.manons.iter().copied()
+        let updated = self
+            .manons
+            .iter()
+            .copied()
             .map(|manon| FreeMotion::propagate(manon, dt))
             .collect::<Result<Vec<_>, _>>()?;
         self.manons = updated;
@@ -33,8 +40,11 @@ impl ManonSystem {
 
 #[cfg(test)]
 mod tests {
-    use manonica_core::{Quantity, Vec3, units::{Joules, Metres, MetresPerSecond}};
     use crate::{Manon, ManonId, ManonSystem};
+    use manonica_core::{
+        Quantity, Vec3,
+        units::{Joules, Metres, MetresPerSecond},
+    };
 
     #[test]
     fn ids_are_unique() {
@@ -44,7 +54,8 @@ mod tests {
             Vec3::<Metres>::try_values(0.0, 0.0, 0.0).unwrap(),
             Vec3::<MetresPerSecond>::try_values(0.0, 0.0, 0.0).unwrap(),
             Quantity::<Joules>::nonnegative(1.0).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         system.insert(manon).unwrap();
         assert!(system.insert(manon).is_err());
     }

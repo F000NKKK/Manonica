@@ -21,7 +21,9 @@ impl Matrix {
     }
 
     pub fn identity(n: usize) -> Result<Self, BaseError> {
-        let count = n.checked_mul(n).ok_or(BaseError::new(ErrorCode::InvalidShape, "identity"))?;
+        let count = n
+            .checked_mul(n)
+            .ok_or(BaseError::new(ErrorCode::InvalidShape, "identity"))?;
         let mut data = vec![0.0; count];
         for i in 0..n {
             data[i * n + i] = 1.0;
@@ -57,7 +59,10 @@ impl Matrix {
     }
 
     pub fn horizontal(matrices: &[Self]) -> Result<Self, BaseError> {
-        let rows = matrices.first().ok_or(BaseError::new(ErrorCode::InvalidShape, "horizontal"))?.rows;
+        let rows = matrices
+            .first()
+            .ok_or(BaseError::new(ErrorCode::InvalidShape, "horizontal"))?
+            .rows;
         if matrices.iter().any(|m| m.rows != rows) {
             return Err(BaseError::new(ErrorCode::InvalidShape, "horizontal"));
         }
@@ -74,11 +79,17 @@ impl Matrix {
     }
 
     pub fn vertical(matrices: &[Self]) -> Result<Self, BaseError> {
-        let cols = matrices.first().ok_or(BaseError::new(ErrorCode::InvalidShape, "vertical"))?.cols;
+        let cols = matrices
+            .first()
+            .ok_or(BaseError::new(ErrorCode::InvalidShape, "vertical"))?
+            .cols;
         if matrices.iter().any(|m| m.cols != cols) {
             return Err(BaseError::new(ErrorCode::InvalidShape, "vertical"));
         }
-        let values = matrices.iter().flat_map(|m| m.data.iter().copied()).collect();
+        let values = matrices
+            .iter()
+            .flat_map(|m| m.data.iter().copied())
+            .collect();
         Self::new(matrices.iter().map(|m| m.rows).sum(), cols, values)
     }
 
@@ -90,10 +101,13 @@ impl Matrix {
         let mut a = self.data.clone();
         let mut pivot_row = 0;
         for column in 0..self.cols {
-            if pivot_row == self.rows { break; }
+            if pivot_row == self.rows {
+                break;
+            }
             let best = (pivot_row..self.rows)
                 .max_by(|&a_row, &b_row| {
-                    a[a_row * self.cols + column].abs()
+                    a[a_row * self.cols + column]
+                        .abs()
                         .total_cmp(&a[b_row * self.cols + column].abs())
                 })
                 .unwrap_or(pivot_row);

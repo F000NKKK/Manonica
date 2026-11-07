@@ -16,6 +16,10 @@ impl<U: Unit> Step<U> {
 
 impl<U: Unit> Signal<U> for Step<U> {
     fn sample(&self, time: Time) -> Result<Quantity<U>, BaseError> {
-        Ok(if time.seconds() < self.at.seconds() { self.before } else { self.after })
+        Ok(if time.seconds() < self.at.seconds() {
+            self.before
+        } else {
+            self.after
+        })
     }
 }

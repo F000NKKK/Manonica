@@ -37,7 +37,10 @@ impl<U: Unit> Quantity<U> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Quantity, units::{Joules, Metres}};
+    use crate::{
+        Quantity,
+        units::{Joules, Metres},
+    };
 
     #[test]
     fn quantities_reject_non_finite_values() {

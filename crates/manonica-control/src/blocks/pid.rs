@@ -60,11 +60,7 @@ where
     I: IntegralTerm<In, Out> + Clone,
     D: ControllerTerm<In, Out> + Clone,
 {
-    fn update(
-        &mut self,
-        error: Quantity<In>,
-        dt: TimeStep,
-    ) -> Result<Quantity<Out>, ControlError> {
+    fn update(&mut self, error: Quantity<In>, dt: TimeStep) -> Result<Quantity<Out>, ControlError> {
         let mut p = self.proportional.clone();
         let mut i = self.integral.clone();
         let mut d = self.derivative.clone();

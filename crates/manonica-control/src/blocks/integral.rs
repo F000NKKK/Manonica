@@ -1,7 +1,10 @@
 use manonica_core::{Quantity, TimeStep, units::Unit};
 use manonica_error::{BaseError, ErrorCode};
 
-use crate::{ControlError, blocks::{ControllerTerm, Gain, IntegralMode, IntegralTerm}};
+use crate::{
+    ControlError,
+    blocks::{ControllerTerm, Gain, IntegralMode, IntegralTerm},
+};
 
 /// Дискретный интегратор по правилу трапеций.
 /// Интегральное состояние хранится отдельно от коэффициента Ki.
@@ -23,15 +26,12 @@ impl<In: Unit, Out: Unit> Integral<In, Out> {
 }
 
 impl<In: Unit, Out: Unit> ControllerTerm<In, Out> for Integral<In, Out> {
-    fn update(
-        &mut self,
-        error: Quantity<In>,
-        dt: TimeStep,
-    ) -> Result<Quantity<Out>, ControlError> {
-        let area = self.previous_error.map_or(
-            error.value() * dt.seconds(),
-            |previous| 0.5 * (previous + error.value()) * dt.seconds(),
-        );
+    fn update(&mut self, error: Quantity<In>, dt: TimeStep) -> Result<Quantity<Out>, ControlError> {
+        let area = self
+            .previous_error
+            .map_or(error.value() * dt.seconds(), |previous| {
+                0.5 * (previous + error.value()) * dt.seconds()
+            });
         let next = self.integral + area;
         let output = self.gain.coefficient() * next;
         if !next.is_finite() || !output.is_finite() {

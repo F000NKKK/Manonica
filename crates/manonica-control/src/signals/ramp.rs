@@ -1,4 +1,7 @@
-use manonica_core::{Quantity, Signal, Time, units::{PerSecond, Unit}};
+use manonica_core::{
+    Quantity, Signal, Time,
+    units::{PerSecond, Unit},
+};
 use manonica_error::BaseError;
 
 /// Линейный сигнал y(t) = initial + slope * (t - start).
@@ -10,7 +13,11 @@ pub struct Ramp<U: Unit> {
 
 impl<U: Unit> Ramp<U> {
     pub fn new(initial: Quantity<U>, slope: Quantity<PerSecond<U>>, start: Time) -> Self {
-        Self { initial, slope, start }
+        Self {
+            initial,
+            slope,
+            start,
+        }
     }
 }
 

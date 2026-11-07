@@ -1,4 +1,7 @@
-use manonica_core::{Quantity, TimeStep, Vec3, units::{Joules, Metres, MetresPerSecond}};
+use manonica_core::{
+    Quantity, TimeStep, Vec3,
+    units::{Joules, Metres, MetresPerSecond},
+};
 use manonica_physics::{Manon, ManonId, ManonSystem};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

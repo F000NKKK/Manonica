@@ -24,8 +24,11 @@ impl FreeMotion {
 
 #[cfg(test)]
 mod tests {
-    use manonica_core::{Quantity, TimeStep, Vec3, units::{Joules, Metres, MetresPerSecond}};
     use crate::{FreeMotion, Manon, ManonId};
+    use manonica_core::{
+        Quantity, TimeStep, Vec3,
+        units::{Joules, Metres, MetresPerSecond},
+    };
 
     #[test]
     fn free_motion_keeps_energy_and_velocity() {
@@ -34,7 +37,8 @@ mod tests {
             Vec3::<Metres>::try_values(1.0, 2.0, 3.0).unwrap(),
             Vec3::<MetresPerSecond>::try_values(2.0, -1.0, 0.5).unwrap(),
             Quantity::<Joules>::nonnegative(10.0).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         let result = FreeMotion::propagate(initial, TimeStep::from_seconds(2.0).unwrap()).unwrap();
         assert_eq!(result.position().x.value(), 5.0);
         assert_eq!(result.position().y.value(), 0.0);

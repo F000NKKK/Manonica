@@ -11,7 +11,12 @@ pub struct Pulse<U: Unit> {
 
 impl<U: Unit> Pulse<U> {
     pub fn new(start: Time, width: TimeStep, baseline: Quantity<U>, peak: Quantity<U>) -> Self {
-        Self { start, width, baseline, peak }
+        Self {
+            start,
+            width,
+            baseline,
+            peak,
+        }
     }
 }
 
