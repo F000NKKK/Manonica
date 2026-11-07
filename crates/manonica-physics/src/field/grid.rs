@@ -33,6 +33,10 @@ impl GridShape {
     pub fn nz(self) -> usize {
         self.nz
     }
+    pub fn is_empty(self) -> bool {
+        false // Создание пустой сетки запрещено GridShape::new.
+    }
+
     pub fn len(self) -> usize {
         self.nx * self.ny * self.nz
     }
