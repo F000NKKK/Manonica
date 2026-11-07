@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-/// Маркер физической размерности. Новые единицы могут добавлять сторонние модули.
+/// Тип-маркер физической размерности, а не название визуального эффекта.
 pub trait Unit: Copy + Clone + Debug + Send + Sync + 'static {}
 
 macro_rules! units {
@@ -23,6 +23,9 @@ units!(
     Joules,
     ManonCount,
     ManonDensity,
+    ManonFlux,
+    ManaPotential,
+    Diffusivity,
     Newtons,
     Kelvin,
 );
