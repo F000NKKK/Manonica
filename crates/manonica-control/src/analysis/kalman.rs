@@ -52,7 +52,7 @@ fn report(matrix: Matrix, order: usize, tolerance: f64) -> Result<AnalysisReport
 mod tests {
     use manonica_core::{
         GainMatrix, Matrix, Quantity,
-        units::{Joules, Kelvin, Newtons, PerSecond},
+        units::{Joules, Kelvin, Newtons},
     };
 
     use crate::{
