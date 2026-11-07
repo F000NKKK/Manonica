@@ -2,12 +2,24 @@ use manonica_core::{TimeStep, Vec3, units::Metres};
 
 use crate::{Manon, PhysicsError};
 
-/// Эталонная модель: свободный манон движется прямолинейно и равномерно.
-/// Взаимодействия и внешние поля добавляются отдельными физическими законами.
+/// Универсальный контракт микроскопического закона движения.
+/// Физика манонов не зависит от конкретного интегратора.
+pub trait ParticleLaw: Send + Sync {
+    fn propagate(&self, manon: Manon, dt: TimeStep) -> Result<Manon, PhysicsError>;
+}
+
+/// Эталонный закон свободного движения: r(t+dt) = r(t) + v·dt.
+/// Пока манон не взаимодействует с полями, средой и другими частицами.
 pub struct FreeMotion;
 
 impl FreeMotion {
     pub fn propagate(manon: Manon, dt: TimeStep) -> Result<Manon, PhysicsError> {
+        <Self as ParticleLaw>::propagate(&Self, manon, dt)
+    }
+}
+
+impl ParticleLaw for FreeMotion {
+    fn propagate(&self, manon: Manon, dt: TimeStep) -> Result<Manon, PhysicsError> {
         let p = manon.position();
         let v = manon.velocity();
         let seconds = dt.seconds();
@@ -37,8 +49,7 @@ mod tests {
             Vec3::<Metres>::try_values(1.0, 2.0, 3.0).unwrap(),
             Vec3::<MetresPerSecond>::try_values(2.0, -1.0, 0.5).unwrap(),
             Quantity::<Joules>::nonnegative(10.0).unwrap(),
-        )
-        .unwrap();
+        ).unwrap();
         let result = FreeMotion::propagate(initial, TimeStep::from_seconds(2.0).unwrap()).unwrap();
         assert_eq!(result.position().x.value(), 5.0);
         assert_eq!(result.position().y.value(), 0.0);

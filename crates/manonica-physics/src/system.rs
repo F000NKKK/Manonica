@@ -1,9 +1,9 @@
 use manonica_core::TimeStep;
 
-use crate::{FreeMotion, Manon, PhysicsError};
+use crate::{FreeMotion, Manon, ParticleLaw, PhysicsError};
 
-/// Первая микроскопическая лаборатория без взаимодействий.
-/// Обновление транзакционное: не применяется частичный шаг при ошибке.
+/// Микроскопическая лаборатория: сам контейнер не знает конкретного закона.
+/// Шаг транзакционный — либо обновятся все маноны, либо ни один.
 #[derive(Debug, Default, Clone)]
 pub struct ManonSystem {
     manons: Vec<Manon>,
@@ -27,36 +27,64 @@ impl ManonSystem {
     }
 
     pub fn advance(&mut self, dt: TimeStep) -> Result<(), PhysicsError> {
-        let updated = self
-            .manons
-            .iter()
-            .copied()
-            .map(|manon| FreeMotion::propagate(manon, dt))
+        self.advance_with(&FreeMotion, dt)
+    }
+
+    pub fn advance_with<L: ParticleLaw>(
+        &mut self,
+        law: &L,
+        dt: TimeStep,
+    ) -> Result<(), PhysicsError> {
+        let next = self.manons.iter().copied()
+            .map(|manon| law.propagate(manon, dt))
             .collect::<Result<Vec<_>, _>>()?;
-        self.manons = updated;
+        self.manons = next;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Manon, ManonId, ManonSystem};
+    use crate::{Manon, ManonId, ManonSystem, ParticleLaw, PhysicsError};
     use manonica_core::{
-        Quantity, Vec3,
+        Quantity, TimeStep, Vec3,
         units::{Joules, Metres, MetresPerSecond},
     };
+
+    fn particle(id: u64) -> Manon {
+        Manon::free(
+            ManonId(id),
+            Vec3::<Metres>::try_values(0.0, 0.0, 0.0).unwrap(),
+            Vec3::<MetresPerSecond>::try_values(1.0, 0.0, 0.0).unwrap(),
+            Quantity::<Joules>::nonnegative(1.0).unwrap(),
+        ).unwrap()
+    }
 
     #[test]
     fn ids_are_unique() {
         let mut system = ManonSystem::new();
-        let manon = Manon::free(
-            ManonId(7),
-            Vec3::<Metres>::try_values(0.0, 0.0, 0.0).unwrap(),
-            Vec3::<MetresPerSecond>::try_values(0.0, 0.0, 0.0).unwrap(),
-            Quantity::<Joules>::nonnegative(1.0).unwrap(),
-        )
-        .unwrap();
-        system.insert(manon).unwrap();
-        assert!(system.insert(manon).is_err());
+        system.insert(particle(7)).unwrap();
+        assert!(system.insert(particle(7)).is_err());
+    }
+
+    struct FailOnSecond;
+    impl ParticleLaw for FailOnSecond {
+        fn propagate(&self, manon: Manon, _: TimeStep) -> Result<Manon, PhysicsError> {
+            if manon.id().0 == 2 {
+                Err(PhysicsError::DuplicateManonId(2))
+            } else {
+                Ok(manon)
+            }
+        }
+    }
+
+    #[test]
+    fn external_law_failure_does_not_mutate_particle_system() {
+        let mut system = ManonSystem::new();
+        system.insert(particle(1)).unwrap();
+        system.insert(particle(2)).unwrap();
+        let original = system.manons().to_vec();
+        assert!(system.advance_with(&FailOnSecond, TimeStep::from_seconds(0.1).unwrap()).is_err());
+        assert_eq!(original, system.manons());
     }
 }

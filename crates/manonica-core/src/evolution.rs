@@ -1,11 +1,13 @@
+use manonica_error::ClassifiedError;
+
 use crate::TimeStep;
 
 /// Общий контракт численного шага любой динамической модели.
-/// Физика, ТАУ и симуляторы подставляют собственные типы состояния и ошибок.
+/// Физические законы и решатели реализуют собственные состояния и отчёты.
 pub trait Evolution<State> {
-    type Error: std::error::Error + Send + Sync + 'static;
+    type Error: ClassifiedError + Send + Sync + 'static;
     type Report;
 
-    /// При ошибке состояние должно оставаться неизменным (транзакционная семантика).
+    /// При ошибке состояние должно остаться без изменений.
     fn evolve(&self, state: &mut State, dt: TimeStep) -> Result<Self::Report, Self::Error>;
 }
