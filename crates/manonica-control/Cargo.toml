@@ -1,0 +1,5 @@
+[package]
+name = "manonica-control"
+version.workspace = true
+edition.workspace = true
+publish = false

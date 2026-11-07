@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "manonica",
+  "version": "${version}",
+  "name": "Manonica",
+  "description": "Mathematical magic engineering and manon physics.",
+  "authors": [
+    "Manonica Contributors"
+  ],
+  "contact": {
+    "sources": "https://github.com/F000NKKK/Manonica"
+  },
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "dev.manonica.minecraft.fabric.ManonicaFabric"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

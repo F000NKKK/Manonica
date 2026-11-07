@@ -1,0 +1,12 @@
+**/target/
+**/build/
+**/.gradle/
+**/run/
+.idea/
+.vscode/
+*.iml
+*.log
+*.so
+*.dll
+*.dylib
+Cargo.lock
