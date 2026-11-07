@@ -1,28 +1,26 @@
-use manonica_physics::{Crystal, Reservoir, diffuse_1d, step_crystal};
+use manonica_core::{Quantity, TimeStep, Vec3, units::{Joules, Metres, MetresPerSecond}};
+use manonica_physics::{Manon, ManonId, ManonSystem};
 
-fn main() {
-    let mut state = Reservoir {
-        free: 100.0,
-        bound: 0.0,
-    };
-    let crystal = Crystal {
-        capacity: 80.0,
-        binding_rate: 0.5,
-        release_rate: 0.03,
-    };
-    let initial = state.total();
-    for _ in 0..1000 {
-        step_crystal(&mut state, crystal, 0.02).expect("valid crystal model");
-    }
-    println!(
-        "free={:.6}, bound={:.6}, conservation_error={:.12}",
-        state.free,
-        state.bound,
-        (state.total() - initial).abs()
-    );
-    let mut field = vec![100.0, 0.0, 0.0, 0.0, 0.0];
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut simulation = ManonSystem::new();
+    simulation.insert(Manon::free(
+        ManonId(1),
+        Vec3::<Metres>::try_values(0.0, 0.0, 0.0)?,
+        Vec3::<MetresPerSecond>::try_values(1.0, 0.0, 0.0)?,
+        Quantity::<Joules>::nonnegative(5.0)?,
+    )?)?;
+
     for _ in 0..100 {
-        diffuse_1d(&mut field, 0.25, 1.0, 0.1).expect("stable diffusion step");
+        simulation.advance(TimeStep::from_seconds(0.01)?)?;
     }
-    println!("mana field: {field:?}");
+
+    for manon in simulation.manons() {
+        println!(
+            "manon={} x={:.4}m energy={:.4}J",
+            manon.id().0,
+            manon.position().x.value(),
+            manon.energy().value()
+        );
+    }
+    Ok(())
 }
