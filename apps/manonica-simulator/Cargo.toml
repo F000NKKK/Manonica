@@ -5,4 +5,6 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+manonica-core = { path = "../../crates/manonica-core" }
 manonica-physics = { path = "../../crates/manonica-physics" }
+manonica-control = { path = "../../crates/manonica-control" }
