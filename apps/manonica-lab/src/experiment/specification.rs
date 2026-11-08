@@ -241,9 +241,9 @@ pub struct FormulaTrap {
     pub max_flux: f64,
 }
 impl FormulaTrap {
-    pub fn material(&self, cells: usize) -> manonica_physics::TrapMaterial {
+    pub fn material(&self, cells: usize) -> manonica_materials::TrapMaterial {
         let share = 1.0 / cells as f64;
-        manonica_physics::TrapMaterial {
+        manonica_materials::TrapMaterial {
             capacity: self.capacity * share,
             capture_rate: self.capture_rate,
             release_rate: self.release_rate,
@@ -273,8 +273,8 @@ pub struct MaterialSite {
     pub conductivity: f64,
 }
 impl MaterialSite {
-    pub fn physics(&self) -> manonica_physics::TrapMaterial {
-        manonica_physics::TrapMaterial {
+    pub fn physics(&self) -> manonica_materials::TrapMaterial {
+        manonica_materials::TrapMaterial {
             capacity: self.capacity,
             capture_rate: self.capture_rate,
             release_rate: self.release_rate,
@@ -308,8 +308,8 @@ pub struct DirectionalConductivitySpec {
     pub rotation_z_radians: f64,
 }
 impl DirectionalConductivitySpec {
-    pub fn physics(&self) -> manonica_physics::DirectionalConductivity {
-        manonica_physics::DirectionalConductivity {
+    pub fn physics(&self) -> manonica_materials::DirectionalConductivity {
+        manonica_materials::DirectionalConductivity {
             principal: self.principal,
             rotation_z_radians: self.rotation_z_radians,
         }
@@ -318,15 +318,15 @@ impl DirectionalConductivitySpec {
 impl ChannelSpec {
     pub fn install(
         &self,
-        lattice: &mut manonica_physics::MaterialLattice,
+        lattice: &mut manonica_materials::MaterialLattice,
     ) -> Result<(), manonica_error::BaseError> {
         match &self.anisotropy {
             Some(material) => lattice.add_directional_channel(self.physics(), material.physics()),
             None => lattice.add_channel(self.physics()),
         }
     }
-    pub fn physics(&self) -> manonica_physics::ManaChannel {
-        manonica_physics::ManaChannel {
+    pub fn physics(&self) -> manonica_materials::ManaChannel {
+        manonica_materials::ManaChannel {
             from: self.from,
             to: self.to,
             length: self.length,
@@ -572,7 +572,7 @@ impl Experiment {
             site.physics().validate()?;
         }
         let shape = manonica_physics::GridShape::new(nx, ny, nz)?;
-        let mut lattice = manonica_physics::MaterialLattice::new(shape);
+        let mut lattice = manonica_materials::MaterialLattice::new(shape);
         for channel in &self.channels {
             channel.install(&mut lattice)?;
         }
