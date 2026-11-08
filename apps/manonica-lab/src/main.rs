@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         experiment.circles.len(),
         experiment.seeds.len(),
     );
-    println!("Controls: WASD + mouse, Escape cursor, Space pause, R reset, F wisps, arrows threshold");
+    println!("Controls: WASD + mouse, F3 diagnostics, Escape cursor, Space pause, R reset, F wisps, arrows threshold");
     let title = format!("Manonica Lab — {}", experiment.name);
     let sim = Simulation::new(experiment)?;
     println!("Initial free manons: {:.6}", sim.total()?.value());

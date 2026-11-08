@@ -6,13 +6,21 @@ use meridian_sdk::{
     Vec3, Window, compose_frame, fly_controls,
 };
 
-use crate::{simulation::Simulation, visualization::FieldView};
+use crate::{
+    diagnostics::{DebugHud, FrameMetrics},
+    simulation::Simulation,
+    visualization::FieldView,
+};
 
 pub struct App {
     runtime: tokio::runtime::Runtime,
     simulation: Simulation,
     camera: FlyCamera,
     graphics: Option<FieldView>,
+    hud: DebugHud,
+    show_debug: bool,
+    initial_manons: f64,
+    last_draw_cpu_ms: f64,
     paused: bool,
     mouse_locked: bool,
     last_frame: Instant,
@@ -21,11 +29,16 @@ pub struct App {
 
 impl App {
     pub fn new(simulation: Simulation) -> Self {
+        let initial_manons = simulation.total().map_or(0.0, |amount| amount.value());
         Self {
             runtime: tokio::runtime::Runtime::new().expect("Tokio runtime"),
             simulation,
             camera: FlyCamera::new(Vec3::new(0.0, 3.0, 18.0)),
             graphics: None,
+            hud: DebugHud::default(),
+            show_debug: false,
+            initial_manons,
+            last_draw_cpu_ms: 0.0,
             paused: false,
             mouse_locked: true,
             last_frame: Instant::now(),
@@ -75,6 +88,9 @@ impl AppHandler for App {
     }
 
     fn on_redraw(&mut self, window: &Window, input: &InputState) {
+        if input.was_key_pressed(KeyCode::F3) {
+            self.show_debug = !self.show_debug;
+        }
         if input.was_key_pressed(KeyCode::Escape) {
             self.mouse_locked = !self.mouse_locked;
             window.set_cursor_grabbed(self.mouse_locked);
@@ -108,7 +124,9 @@ impl AppHandler for App {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f64();
         self.last_frame = now;
+        let sim_start = Instant::now();
         self.advance_simulation(dt);
+        let sim_cpu_ms = sim_start.elapsed().as_secs_f64() * 1000.0;
 
         if self.mouse_locked {
             self.camera.update(fly_controls(input), dt.min(0.1) as f32);
@@ -116,14 +134,48 @@ impl AppHandler for App {
         let Some(gfx) = &mut self.graphics else { return; };
         let aspect = window.width() as f32 / window.height().max(1) as f32;
         gfx.scene.camera = self.camera.camera(aspect);
+
+        let volume_start = Instant::now();
         gfx.update(&self.simulation);
-        compose_frame(
-            &mut gfx.base,
-            &gfx.scene,
-            &[],
-            [0.003, 0.003, 0.012, 1.0],
-            window,
-        );
+        let field_cpu_ms = volume_start.elapsed().as_secs_f64() * 1000.0;
+        let field = self.simulation.field();
+        let shape = field.shape();
+        self.hud.record(FrameMetrics {
+            frame_ms: dt * 1000.0,
+            sim_cpu_ms,
+            draw_cpu_ms: self.last_draw_cpu_ms,
+            field_cpu_ms,
+            sim_time: self.simulation.elapsed(),
+            steps: self.simulation.steps(),
+            total: self.simulation.total().map_or(0.0, |value| value.value()),
+            initial_total: self.initial_manons,
+            peak_density: gfx.peak_density(),
+            shown_slices: gfx.visible_slices(),
+            grid_cells: shape.len(),
+            paused: self.paused,
+        });
+        let panel = self.show_debug.then(|| {
+            self.hud.overlay(&mut gfx.base, [window.width(), window.height()])
+        }).flatten();
+        let draw_start = Instant::now();
+        if let Some(panel) = panel {
+            compose_frame(
+                &mut gfx.base,
+                &gfx.scene,
+                std::slice::from_ref(&panel),
+                [0.003, 0.003, 0.012, 1.0],
+                window,
+            );
+        } else {
+            compose_frame(
+                &mut gfx.base,
+                &gfx.scene,
+                &[],
+                [0.003, 0.003, 0.012, 1.0],
+                window,
+            );
+        }
+        self.last_draw_cpu_ms = draw_start.elapsed().as_secs_f64() * 1000.0;
     }
 
     fn on_resized(&mut self, width: u32, height: u32) {

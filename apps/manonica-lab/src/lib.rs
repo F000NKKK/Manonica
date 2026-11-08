@@ -4,6 +4,7 @@
 //! движок и адаптер графики Meridian SDK.
 
 pub mod app;
+pub mod diagnostics;
 pub mod experiment;
 pub mod simulation;
 pub mod visualization;
