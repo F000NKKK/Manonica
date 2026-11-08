@@ -1,5 +1,5 @@
-//! Геометрические окружности как тонкие трубки; не физический закон.
-use crate::experiment::{Circle, Formula, sample_curve};
+//! Физические геометрические контуры из параметрических формул.
+use crate::experiment::{Formula, sample_curve};
 use meridian_sdk::MeshSource;
 
 fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -82,74 +82,24 @@ pub fn formula_mesh(formula: &Formula) -> Result<MeshSource, String> {
     Ok(mesh)
 }
 
-pub fn circle_mesh(circle: &Circle) -> MeshSource {
-    let mut mesh = MeshSource {
-        positions: Vec::new(),
-        normals: Vec::new(),
-        uvs: Vec::new(),
-        indices: Vec::new(),
-        skin: None,
-        morph: None,
-    };
-    let normal = unit(circle.normal);
-    let up = if normal[1].abs() < 0.9 {
-        [0.0, 1.0, 0.0]
-    } else {
-        [1.0, 0.0, 0.0]
-    };
-    let tangent = unit(cross(up, normal));
-    let bitangent = cross(normal, tangent);
-    let point = |radius: f32, angle: f32| {
-        add(
-            mul(tangent, radius * angle.cos()),
-            mul(bitangent, radius * angle.sin()),
-        )
-    };
-    for i in 0..circle.segments {
-        let a = std::f32::consts::TAU * i as f32 / circle.segments as f32;
-        let b = std::f32::consts::TAU * (i + 1) as f32 / circle.segments as f32;
-        append_tube(
-            &mut mesh,
-            point(circle.radius, a),
-            point(circle.radius, b),
-            circle.thickness,
-        );
-    }
-    for i in 0..circle.spokes {
-        let angle = std::f32::consts::TAU * i as f32 / circle.spokes as f32;
-        append_tube(
-            &mut mesh,
-            point(circle.radius * 0.15, angle),
-            point(circle.radius * 0.96, angle),
-            circle.thickness * 0.55,
-        );
-    }
-    mesh
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn arbitrary_plane_circle_produces_triangle_mesh() {
-        let circle = Circle {
-            name: "slanted".into(),
-            center: [0.0; 3],
-            normal: [1.0, 1.0, 0.5],
-            radius: 2.0,
+    fn arbitrary_spatial_formula_produces_valid_triangle_mesh() {
+        let formula = Formula {
+            name: "spatial".into(),
+            x: "2*cos(t)".into(),
+            y: "0.8*sin(3*t)".into(),
+            z: "2*sin(t)".into(),
+            segments: 96,
             thickness: 0.03,
-            segments: 32,
-            spokes: 8,
-            color: [1.0; 3],
+            color: [0.2, 0.9, 0.6],
+            trap: None,
         };
-        let mesh = circle_mesh(&circle);
+        let mesh = formula_mesh(&formula).unwrap();
         assert!(!mesh.indices.is_empty());
-        assert!(
-            mesh.indices
-                .iter()
-                .all(|i| (*i as usize) < mesh.positions.len())
-        );
+        assert!(mesh.indices.iter().all(|i| (*i as usize) < mesh.positions.len()));
         assert!(mesh.positions.iter().flatten().all(|v| v.is_finite()));
-        assert_eq!(mesh.positions.len(), mesh.normals.len());
     }
 }
