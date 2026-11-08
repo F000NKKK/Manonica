@@ -52,6 +52,29 @@ impl Simulation {
         Ok(self.materials.balance(&self.field)?)
     }
 
+    /// Bound manon inventories for each geometric formula, in experiment order.
+    /// The same discrete cells are used by the solver and scene geometry.
+    pub fn formula_bound(&self) -> Result<Vec<f64>, ExperimentError> {
+        let shape = self.field.shape();
+        let dimensions = [shape.nx(), shape.ny(), shape.nz()];
+        let dx = self.field.cell_width_metres();
+        self.experiment
+            .formulas
+            .iter()
+            .map(|formula| {
+                if formula.trap.is_none() {
+                    return Ok(0.0);
+                }
+                let cells = crate::experiment::capture_cells(formula, dimensions, dx)?;
+                Ok(cells
+                    .into_iter()
+                    .filter_map(|c| self.materials.at(c[0], c[1], c[2]))
+                    .map(|cell| cell.bound)
+                    .sum())
+            })
+            .collect()
+    }
+
     pub fn elapsed(&self) -> f64 {
         self.time_seconds
     }
@@ -120,25 +143,11 @@ fn build_materials(
         let Some(trap) = &formula.trap else {
             continue;
         };
-        let mut cells = std::collections::HashSet::new();
-        for p in crate::experiment::sample_curve(formula)? {
-            let coords = p.map(|value| value as f64);
-            let indices = [
-                (coords[0] / dx + shape.nx() as f64 * 0.5).floor(),
-                (coords[1] / dx + shape.ny() as f64 * 0.5).floor(),
-                (coords[2] / dx + shape.nz() as f64 * 0.5).floor(),
-            ];
-            if indices[0] < 0.0 || indices[1] < 0.0 || indices[2] < 0.0
-                || indices[0] >= shape.nx() as f64
-                || indices[1] >= shape.ny() as f64
-                || indices[2] >= shape.nz() as f64
-            {
-                return Err(manonica_error::BaseError::new(
-                    manonica_error::ErrorCode::InvalidRange, "formula_outside_grid"
-                ).into());
-            }
-            cells.insert([indices[0] as usize, indices[1] as usize, indices[2] as usize]);
-        }
+        let cells = crate::experiment::capture_cells(
+            formula,
+            [shape.nx(), shape.ny(), shape.nz()],
+            dx,
+        )?;
         if cells.is_empty() {
             return Err(manonica_error::BaseError::new(
                 manonica_error::ErrorCode::InvalidRange, "empty_formula_trap"
