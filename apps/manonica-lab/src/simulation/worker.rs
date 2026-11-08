@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use manonica_physics::FreeManaField;
 
-use super::Simulation;
+use super::{Simulation, gpu_diffusion::GpuDiffusion};
 use crate::experiment::Experiment;
 
 const SNAPSHOT_PERIOD: Duration = Duration::from_millis(50);
@@ -165,6 +165,22 @@ fn run_simulation(
     let mut paused = false;
     let mut error: Option<String> = None;
     let mut cpu_ms = 0.0;
+    let gpu_requested = std::env::var("MANONICA_SIM_BACKEND")
+        .is_ok_and(|mode| mode.eq_ignore_ascii_case("gpu"));
+    let create_gpu = |sim: &Simulation| {
+        if !gpu_requested { return None; }
+        match GpuDiffusion::new(sim.field()) {
+            Ok(gpu) => {
+                eprintln!("Manonica: GPU compute diffusion enabled (hybrid physics)");
+                Some(gpu)
+            }
+            Err(error) => {
+                eprintln!("Manonica: GPU unavailable ({error}); using CPU physics");
+                None
+            }
+        }
+    };
+    let mut gpu = create_gpu(&sim);
 
     loop {
         let now = Instant::now();
@@ -197,6 +213,7 @@ fn run_simulation(
             Ok(Command::Replace(experiment)) => match Simulation::new(experiment) {
                 Ok(next) => {
                     sim = next;
+                    gpu = create_gpu(&sim);
                     period = Duration::from_secs_f64(sim.experiment.physics.dt);
                     max_catch_up = sim.experiment.physics.steps_per_frame;
                     error = None;
@@ -221,7 +238,12 @@ fn run_simulation(
             let mut ran = 0;
             while now >= next_tick && ran < max_catch_up {
                 let started = Instant::now();
-                if let Err(err) = sim.step() {
+                let result = if let Some(device) = gpu.as_mut() {
+                    sim.step_gpu(device)
+                } else {
+                    sim.step()
+                };
+                if let Err(err) = result {
                     error = Some(err.to_string());
                     paused = true;
                     break;
