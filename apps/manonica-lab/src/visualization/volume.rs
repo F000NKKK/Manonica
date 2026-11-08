@@ -94,7 +94,7 @@ impl ManaVolume {
         }
 
         let field = simulation.field();
-        self.peak = field.values().iter().map(|n| n.value()).fold(0.0_f64, f64::max);
+        self.peak = field.densities().iter().map(|n| n.value()).fold(0.0_f64, f64::max);
         scene.renderables.truncate(static_count);
         self.count = 0;
         self.previous_step = Some(simulation.steps());
@@ -225,7 +225,7 @@ fn sample_density(field: &FreeManaField, position: [f64; 3]) -> f64 {
             }
         }
         let index = shape.index(id[0], id[1], id[2]).expect("sample clamped to grid");
-        result += field.values()[index].value() * weight;
+        result += field.densities()[index].value() * weight;
     }
     result
 }

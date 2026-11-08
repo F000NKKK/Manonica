@@ -118,6 +118,13 @@ impl FreeManaField {
         Quantity::nonnegative(density_sum * cell_volume)
     }
 
+    /// Immutable, X-major density grid (x varies fastest, then y, then z).
+    /// Borrowing the slice avoids one indexed method call per interpolation
+    /// sample while retaining validated, typed physical quantities.
+    pub fn densities(&self) -> &[Quantity<ManonDensity>] {
+        &self.values
+    }
+
     pub(crate) fn values(&self) -> &[Quantity<ManonDensity>] {
         &self.concentrations
     }
