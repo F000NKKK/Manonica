@@ -383,7 +383,7 @@ mod tests {
             .gaussian([0.0; 3], 200.0, 0.6)
             .build()
             .unwrap();
-        let (worker, initial) = SimulationWorker::spawn(Simulation::new(exp).unwrap());
+        let (worker, initial) = SimulationWorker::spawn_with_backend(Simulation::new(exp).unwrap(), BackendPreference::Cpu);
         assert_eq!(initial.steps, 0);
         thread::sleep(Duration::from_millis(110));
         let snapshot = worker.poll_latest().expect("worker publishes snapshots");
@@ -407,7 +407,7 @@ mod tests {
             .grid([5, 5, 5], 1.0)
             .build()
             .unwrap();
-        let (worker, _) = SimulationWorker::spawn(Simulation::new(exp).unwrap());
+        let (worker, _) = SimulationWorker::spawn_with_backend(Simulation::new(exp).unwrap(), BackendPreference::Cpu);
         drop(worker);
     }
 }
