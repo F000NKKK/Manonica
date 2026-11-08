@@ -1,6 +1,5 @@
 mod equilibrium;
 mod field;
-mod gpu_diffusion;
 mod flow;
 mod session;
 mod worker;
