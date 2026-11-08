@@ -105,8 +105,57 @@ fn build_materials(
     field: &FreeManaField,
 ) -> Result<MaterialLattice, ExperimentError> {
     let mut materials = MaterialLattice::new(field.shape());
+    let mut occupied = std::collections::HashSet::new();
     for site in &experiment.materials {
+        occupied.insert(site.cell);
         materials.install(site.cell, site.physics())?;
+    }
+    // The physical trap lies on the parametric geometry, not at a
+    // decorative hard-coded centre. Capacity and maximum flux are divided
+    // across distinct touched cells so sampling resolution cannot multiply
+    // the total resource.
+    let shape = field.shape();
+    let dx = field.cell_width_metres();
+    for formula in &experiment.formulas {
+        let Some(trap) = &formula.trap else {
+            continue;
+        };
+        let mut cells = std::collections::HashSet::new();
+        for p in crate::experiment::sample_curve(formula)? {
+            let coords = p.map(|value| value as f64);
+            let indices = [
+                (coords[0] / dx + shape.nx() as f64 * 0.5).floor(),
+                (coords[1] / dx + shape.ny() as f64 * 0.5).floor(),
+                (coords[2] / dx + shape.nz() as f64 * 0.5).floor(),
+            ];
+            if indices[0] < 0.0 || indices[1] < 0.0 || indices[2] < 0.0
+                || indices[0] >= shape.nx() as f64
+                || indices[1] >= shape.ny() as f64
+                || indices[2] >= shape.nz() as f64
+            {
+                return Err(manonica_error::BaseError::new(
+                    manonica_error::ErrorCode::InvalidRange, "formula_outside_grid"
+                ).into());
+            }
+            cells.insert([indices[0] as usize, indices[1] as usize, indices[2] as usize]);
+        }
+        if cells.is_empty() {
+            return Err(manonica_error::BaseError::new(
+                manonica_error::ErrorCode::InvalidRange, "empty_formula_trap"
+            ).into());
+        }
+        for cell in &cells {
+            if !occupied.insert(*cell) {
+                return Err(manonica_error::BaseError::new(
+                    manonica_error::ErrorCode::InvalidRange, "overlapping_formula_trap"
+                ).into());
+            }
+        }
+        let material = trap.material(cells.len());
+        material.validate()?;
+        for cell in cells {
+            materials.install(cell, material)?;
+        }
     }
     for channel in &experiment.channels {
         materials.add_channel(channel.physics())?;
