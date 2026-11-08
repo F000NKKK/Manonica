@@ -35,6 +35,9 @@ pub struct Grid {
 pub struct Diffusion {
     /// Эталонный начальный закон J = -D grad(n).
     pub diffusivity: f64,
+    /// Nearest-neighbour thermal conductance (J / (s · K)).
+    #[serde(default)]
+    pub thermal_conductance: f64,
     pub dt: f64,
     #[serde(default)]
     pub flow: AmbientFlow,
@@ -262,6 +265,7 @@ impl Experiment {
             p.diffusivity.is_finite() && p.diffusivity >= 0.0,
             "diffusivity",
         )?;
+        check(p.thermal_conductance.is_finite() && p.thermal_conductance >= 0.0, "thermal_conductance")?;
         check(p.dt.is_finite() && p.dt > 0.0, "dt")?;
         check((1..=16).contains(&p.steps_per_frame), "steps_per_frame")?;
         match &p.flow {
