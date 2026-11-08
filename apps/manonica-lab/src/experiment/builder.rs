@@ -19,6 +19,7 @@ impl ExperimentBuilder {
                 },
                 physics: Diffusion {
                     diffusivity: 0.25,
+                    thermal_conductance: 0.0,
                     dt: 0.02,
                     flow: AmbientFlow::Still,
                     steps_per_frame: 1,
@@ -43,10 +44,16 @@ impl ExperimentBuilder {
     pub fn diffusion(mut self, diffusivity: f64, dt: f64, steps_per_frame: usize) -> Self {
         self.experiment.physics = Diffusion {
             diffusivity,
+            thermal_conductance: self.experiment.physics.thermal_conductance,
             dt,
             flow: self.experiment.physics.flow.clone(),
             steps_per_frame,
         };
+        self
+    }
+
+    pub fn thermal_conductance(mut self, value: f64) -> Self {
+        self.experiment.physics.thermal_conductance = value;
         self
     }
 
