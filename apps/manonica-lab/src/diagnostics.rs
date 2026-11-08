@@ -28,6 +28,11 @@ pub struct FrameMetrics {
     pub formula_bound: [f64; 3],
     pub formula_count: usize,
     pub material_energy: f64,
+    pub potential_peak: f64,
+    pub field_energy_joules: f64,
+    pub field_heat_joules: f64,
+    pub field_work_joules: f64,
+    pub potential_transport: f64,
     pub initial_total: f64,
     pub peak_density: f64,
     pub shown_slices: usize,
@@ -209,16 +214,26 @@ impl DebugHud {
         canvas.graph(266, 145, 240, 88, &self.frame_samples, [255, 186, 104, 255]);
         canvas.text(13, 246, "MAX MANON DENSITY / TIME", 1, [160, 223, 255, 255]);
         canvas.graph(12, 262, 494, 65, &self.peak_samples, [156, 195, 255, 255]);
-        canvas.text(12, 341, "PHYSICAL CAPTURE BY FORMULA", 1, [160, 223, 255, 255]);
+        canvas.text(
+            12, 341,
+            &format!("FIELD |phi| {:.3}   J {:.3} manons/step", m.potential_peak, m.potential_transport),
+            1, [160, 223, 255, 255],
+        );
         for i in 0..m.formula_count.min(3) {
             canvas.text(
                 12,
-                355 + i as i32 * 16,
+                357 + i as i32 * 13,
                 &format!("FORMULA {} / BOUND {:>14.3} manons", i + 1, m.formula_bound[i]),
                 1,
                 [116, 238, 169, 255],
             );
         }
+        canvas.text(
+            12, 397,
+            &format!("FIELD E {:.2} J  HEAT {:.2}  WORK {:.2}",
+                m.field_energy_joules, m.field_heat_joules, m.field_work_joules),
+            1, [160, 223, 255, 255],
+        );
         canvas.text(
             12,
             409,
@@ -370,6 +385,11 @@ mod tests {
                 formula_bound: [2.0, 0.0, 0.0],
                 formula_count: 1,
                 material_energy: 4.0,
+                potential_peak: 0.0,
+                field_energy_joules: 0.0,
+                field_heat_joules: 0.0,
+                field_work_joules: 0.0,
+                potential_transport: 0.0,
                 initial_total: 10.0,
                 peak_density: 3.0,
                 shown_slices: 20,
