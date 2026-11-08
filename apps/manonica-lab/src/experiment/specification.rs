@@ -15,6 +15,8 @@ pub struct Experiment {
     #[serde(default)]
     pub formulas: Vec<Formula>,
     #[serde(default)]
+    pub field_sources: Vec<FieldSource>,
+    #[serde(default)]
     pub materials: Vec<MaterialSite>,
     #[serde(default)]
     pub channels: Vec<ChannelSpec>,
@@ -38,11 +40,56 @@ pub struct Diffusion {
     /// Nearest-neighbour thermal conductance (J / (s · K)).
     #[serde(default)]
     pub thermal_conductance: f64,
+    /// None keeps legacy experiments physically unchanged.
+    #[serde(default)]
+    pub potential: Option<PotentialConfig>,
     pub dt: f64,
     #[serde(default)]
     pub flow: AmbientFlow,
     #[serde(default = "one")]
     pub steps_per_frame: usize,
+}
+
+/// Screened quasi-static potential: (-permittivity Laplacian + screening) phi = source.
+/// Sources are generated from the same parametric geometry as the visible meshes.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PotentialConfig {
+    /// Velocity response in m²/(J · s) when phi is J/manon.
+    pub mobility: f64,
+    pub permittivity: f64,
+    pub screening: f64,
+    #[serde(default = "default_potential_iterations")]
+    pub iterations: usize,
+    #[serde(default)]
+    pub boundary: PotentialBoundaryKind,
+    /// External energy supplied to establish the initial field (J).
+    pub initial_work_joules: f64,
+    /// Maximum external work rate available to maintain the model (J/s).
+    pub max_power_joules_per_second: f64,
+}
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PotentialBoundaryKind {
+    #[default]
+    Grounded,
+    Insulated,
+}
+impl PotentialBoundaryKind {
+    pub fn physics(self) -> manonica_physics::PotentialBoundary {
+        match self {
+            Self::Grounded => manonica_physics::PotentialBoundary::Grounded,
+            Self::Insulated => manonica_physics::PotentialBoundary::Insulated,
+        }
+    }
+}
+/// Integral source strength distributed along the evaluated geometry.
+/// Negative strengths attract free manons; positive strengths repel them.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldSource {
+    pub formula: usize,
+    pub strength: f64,
 }
 
 /// Prescribed movement of the surrounding medium (not a magic-circle law).
@@ -228,6 +275,9 @@ impl Default for Visualization {
     }
 }
 
+fn default_potential_iterations() -> usize {
+    120
+}
 fn one() -> usize {
     1
 }
@@ -301,6 +351,22 @@ impl Experiment {
             p.thermal_conductance.is_finite() && p.thermal_conductance >= 0.0,
             "thermal_conductance",
         )?;
+        if let Some(potential) = &p.potential {
+            check(
+                potential.mobility.is_finite() && potential.mobility >= 0.0
+                    && potential.permittivity.is_finite() && potential.permittivity > 0.0
+                    && potential.screening.is_finite() && potential.screening > 0.0,
+                "potential_parameters",
+            )?;
+            check((1..=4096).contains(&potential.iterations), "potential_iterations")?;
+            check(
+                potential.initial_work_joules.is_finite()
+                    && potential.initial_work_joules >= 0.0
+                    && potential.max_power_joules_per_second.is_finite()
+                    && potential.max_power_joules_per_second >= 0.0,
+                "potential_work_budget",
+            )?;
+        }
         check(p.dt.is_finite() && p.dt > 0.0, "dt")?;
         check((1..=16).contains(&p.steps_per_frame), "steps_per_frame")?;
         match &p.flow {
@@ -346,6 +412,14 @@ impl Experiment {
             }
         }
         check(self.formulas.len() <= 32, "formulas_count")?;
+        check(self.field_sources.len() <= 64, "field_sources_count")?;
+        if !self.field_sources.is_empty() {
+            check(p.potential.is_some(), "potential_required_for_sources")?;
+        }
+        for source in &self.field_sources {
+            check(source.formula < self.formulas.len(), "field_source_formula")?;
+            check(source.strength.is_finite(), "field_source_strength")?;
+        }
         for formula in &self.formulas {
             check(!formula.name.trim().is_empty(), "formula_name")?;
             check(
