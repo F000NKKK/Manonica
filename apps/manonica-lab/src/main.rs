@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("experiments/mana_flame.toml");
+        .join("experiments/formula_comparison.toml");
     let mut path_given = false;
     let mut formula = None;
     let mut args = std::env::args_os().skip(1);
