@@ -192,6 +192,15 @@ impl PotentialField {
         for value in &mut next.values {
             *value *= factor;
         }
+        for site in &mut next.local {
+            if let Some(condition) = site {
+                match condition {
+                    LocalPotentialBoundary::Dirichlet { value } => *value *= factor,
+                    LocalPotentialBoundary::Robin { reference, .. } => *reference *= factor,
+                    LocalPotentialBoundary::Neumann => {}
+                }
+            }
+        }
         Ok(next)
     }
 
