@@ -15,6 +15,8 @@ pub struct Experiment {
     #[serde(default)]
     pub circles: Vec<Circle>,
     #[serde(default)]
+    pub formulas: Vec<Formula>,
+    #[serde(default)]
     pub materials: Vec<MaterialSite>,
     #[serde(default)]
     pub channels: Vec<ChannelSpec>,
@@ -112,6 +114,54 @@ pub struct Circle {
     pub segments: usize,
     #[serde(default = "default_color")]
     pub color: [f32; 3],
+}
+
+/// Parametric circuit defined by three mathematical functions of t.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Formula {
+    pub name: String,
+    pub x: String,
+    pub y: String,
+    pub z: String,
+    #[serde(default = "default_segments")]
+    pub segments: usize,
+    pub thickness: f32,
+    #[serde(default = "default_color")]
+    pub color: [f32; 3],
+    #[serde(default)]
+    pub trap: Option<FormulaTrap>,
+}
+
+/// Each unique grid cell touched by a circuit receives an equal share of
+/// its total trap capacity and maximum capture flux.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormulaTrap {
+    pub capacity: f64,
+    pub capture_rate: f64,
+    pub release_rate: f64,
+    pub binding_energy: f64,
+    pub heat_capacity: f64,
+    pub reference_temperature: f64,
+    pub activation_temperature: f64,
+    pub max_flux: f64,
+}
+impl FormulaTrap {
+    pub fn material(&self, cells: usize) -> manonica_physics::TrapMaterial {
+        let share = 1.0 / cells as f64;
+        manonica_physics::TrapMaterial {
+            capacity: self.capacity * share,
+            capture_rate: self.capture_rate,
+            release_rate: self.release_rate,
+            binding_energy: self.binding_energy,
+            heat_capacity: self.heat_capacity * share,
+            reference_temperature: self.reference_temperature,
+            activation_temperature: self.activation_temperature,
+            max_flux: self.max_flux * share,
+            conductivity: 0.0,
+        }
+    }
 }
 
 /// Physical trap placed in a numerical grid cell; no decorative effects.
@@ -335,6 +385,22 @@ impl Experiment {
                 circle.color.iter().all(|n| n.is_finite() && *n >= 0.0),
                 "circle_color",
             )?;
+        }
+        check(self.formulas.len() <= 32, "formulas_count")?;
+        for formula in &self.formulas {
+            check(!formula.name.trim().is_empty(), "formula_name")?;
+            check(
+                formula.thickness.is_finite() && formula.thickness > 0.0,
+                "formula_thickness",
+            )?;
+            check(
+                formula.color.iter().all(|c| c.is_finite() && *c >= 0.0),
+                "formula_color",
+            )?;
+            super::sample_curve(formula)?;
+            if let Some(trap) = &formula.trap {
+                trap.material(1).validate()?;
+            }
         }
         check(
             self.materials.len() <= volume.unwrap_or(0),
