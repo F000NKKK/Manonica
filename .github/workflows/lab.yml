@@ -6,6 +6,7 @@ on:
       - 'apps/manonica-lab/**'
       - 'crates/manonica-core/**'
       - 'crates/manonica-physics/**'
+      - 'crates/manonica-compute-gpu/**'
       - 'crates/manonica-error/**'
       - '.github/workflows/lab.yml'
   workflow_dispatch:
@@ -33,3 +34,7 @@ jobs:
         run: cargo check --manifest-path apps/manonica-lab/Cargo.toml
       - name: Test experiment invariants and procedural geometry
         run: cargo test --manifest-path apps/manonica-lab/Cargo.toml
+      - name: GPU compute parity tests (headless adapter when available)
+        run: cargo test --manifest-path crates/manonica-compute-gpu/Cargo.toml
+      - name: Check compute crate formatting
+        run: cargo fmt --manifest-path crates/manonica-compute-gpu/Cargo.toml --all -- --check
