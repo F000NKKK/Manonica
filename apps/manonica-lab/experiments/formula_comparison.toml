@@ -11,6 +11,20 @@ diffusivity = 0.08
 dt = 0.02
 steps_per_frame = 1
 thermal_conductance = 0.03
+ambient_cooling_rate = 0.025
+
+# Parametric geometry drives a real 3D potential, not just capture geometry.
+# All sources below refer to the same formulas as the rendered constructions.
+[physics.potential]
+mobility = 0.1
+permittivity = 1.0
+screening = 0.8
+boundary = "grounded"
+iterations = 128
+initial_work_joules = 20000.0
+max_power_joules_per_second = 10000.0
+shutdown_at_bound_fraction = 0.995
+shutdown_decay_rate = 0.12
 
 [visualization]
 relative_threshold = 0.035
@@ -96,3 +110,16 @@ heat_capacity = 75.0
 reference_temperature = 300.0
 activation_temperature = 250.0
 max_flux = 800.0
+
+# Formula-linked sources are re-rasterized when geometry is edited.
+[[field_sources]]
+formula = 0
+strength = -65.0
+
+[[field_sources]]
+formula = 1
+strength = -65.0
+
+[[field_sources]]
+formula = 2
+strength = -65.0
