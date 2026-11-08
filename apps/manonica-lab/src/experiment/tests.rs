@@ -23,7 +23,7 @@ fn builder_and_parser_share_same_rules() {
     let text = include_str!("../../experiments/mana_flame.toml");
     let parsed = Experiment::parse(text).unwrap();
     assert!(!parsed.seeds.is_empty());
-    assert!(!parsed.circles.is_empty());
+    assert!(!parsed.formulas.is_empty());
 }
 
 #[test]
