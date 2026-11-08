@@ -455,6 +455,7 @@ fn render_loop(
             trap_temperature_kelvin: render_input.snapshot.trap_temperature_kelvin,
             exported_heat_joules: render_input.snapshot.exported_heat_joules,
             field_shutdown: render_input.snapshot.field_shutdown,
+            equilibrium: render_input.snapshot.equilibrium,
             initial_total: initial_manons,
             peak_density: graphics.peak_density(),
             shown_slices: graphics.visible_slices(),
