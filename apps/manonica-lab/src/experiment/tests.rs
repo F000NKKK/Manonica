@@ -467,3 +467,73 @@ fn formula_boundary_overlap_and_bad_parameters_are_rejected() {
     };
     assert!(experiment.validate().is_err());
 }
+
+#[test]
+fn resident_batch_matches_reference_diffusion_only_and_tracks_time() {
+    use manonica_core::{Evolution, Quantity, TimeStep, units::Diffusivity};
+    use manonica_error::BaseError;
+    use manonica_physics::{FreeDiffusion, FreeManaDiffusionBackend, FreeManaField};
+
+    struct CpuReference(FreeDiffusion);
+    impl FreeManaDiffusionBackend for CpuReference {
+        fn evolve_free_diffusion(
+            &mut self,
+            field: &mut FreeManaField,
+            _diffusivity: f64,
+            dt_seconds: f64,
+        ) -> Result<(), BaseError> {
+            self.0.evolve(field, TimeStep::from_seconds(dt_seconds)?)
+        }
+    }
+
+    let experiment = ExperimentBuilder::new("GPU-resident-validity")
+        .grid([8, 8, 8], 0.5)
+        .diffusion(0.12, 0.01, 4)
+        .gaussian([0.0, 0.0, 0.0], 500.0, 0.7)
+        .build()
+        .unwrap();
+    let mut expected = Simulation::new(experiment.clone()).unwrap();
+    let mut actual = Simulation::new(experiment).unwrap();
+    assert!(actual.supports_resident_diffusion());
+    let mut backend = CpuReference(
+        FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(0.12).unwrap()).unwrap()
+    );
+    let original = actual.total().unwrap().value();
+    for _ in 0..20 { expected.step().unwrap(); }
+    actual.step_diffusion_batch(&mut backend, 20).unwrap();
+    assert_eq!(actual.steps(), expected.steps());
+    assert!((actual.elapsed() - expected.elapsed()).abs() < 1e-10);
+    for (i, (a,b)) in actual.field().densities().iter()
+        .zip(expected.field().densities()).enumerate()
+    {
+        assert!((a.value()-b.value()).abs() < 1e-10,
+            "batch and reference mismatch at cell {i}");
+    }
+    assert!((actual.total().unwrap().value()-original).abs() < 1e-7);
+    // One batch = one physical observation, never 20 fake stable samples.
+    assert!(actual.equilibrium_state().stable_steps <= 1);
+}
+
+#[test]
+fn resident_batch_rejects_multiphysics_without_mutating_state() {
+    use manonica_error::BaseError;
+    use manonica_physics::{FreeManaDiffusionBackend, FreeManaField};
+    struct Noop;
+    impl FreeManaDiffusionBackend for Noop {
+        fn evolve_free_diffusion(
+            &mut self,
+            _field: &mut FreeManaField,
+            _diffusivity: f64,
+            _dt: f64,
+        ) -> Result<(), BaseError> { Ok(()) }
+    }
+    let exp = Experiment::parse(
+        include_str!("../../experiments/potential_concentrator.toml")
+    ).unwrap();
+    let mut simulation = Simulation::new(exp).unwrap();
+    assert!(!simulation.supports_resident_diffusion());
+    let before = simulation.total().unwrap().value();
+    assert!(simulation.step_diffusion_batch(&mut Noop, 5).is_err());
+    assert_eq!(simulation.steps(), 0);
+    assert!((simulation.total().unwrap().value()-before).abs() < 1e-10);
+}
