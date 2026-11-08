@@ -131,6 +131,23 @@ impl FreeManaField {
         self.concentrations[index] = density;
     }
 
+    /// Public validated replacement for external compute backends.
+    /// Rejects mismatched grids or non-finite/negative densities without
+    /// modifying the original state. X varies fastest, then Y, then Z.
+    pub fn try_replace_densities(
+        &mut self,
+        next: Vec<Quantity<ManonDensity>>,
+    ) -> Result<(), BaseError> {
+        if next.len() != self.shape.len() {
+            return Err(BaseError::new(ErrorCode::InvalidShape, "density_grid_length"));
+        }
+        if next.iter().any(|value| !value.value().is_finite() || value.value() < 0.0) {
+            return Err(BaseError::new(ErrorCode::InvalidRange, "density_grid_values"));
+        }
+        self.concentrations = next;
+        Ok(())
+    }
+
     pub(crate) fn replace(&mut self, next: Vec<Quantity<ManonDensity>>) {
         debug_assert_eq!(next.len(), self.shape.len());
         self.concentrations = next;
@@ -148,6 +165,26 @@ mod tests {
         let grid = FreeManaField::uniform(shape, 2.0, density).unwrap();
         assert_eq!(grid.total_manons().unwrap().value(), 96.0);
         assert!(grid.at(2, 0, 0).is_none());
+    }
+
+    #[test]
+    fn validated_external_backend_replacement_is_atomic() {
+        let shape = GridShape::new(2, 1, 1).unwrap();
+        let mut grid = FreeManaField::uniform(
+            shape, 1.0, Quantity::<ManonDensity>::nonnegative(3.0).unwrap()
+        ).unwrap();
+        assert!(grid.try_replace_densities(vec![]).is_err());
+        assert_eq!(grid.at(0,0,0).unwrap().value(),3.0);
+        assert!(grid.try_replace_densities(vec![
+            Quantity::<ManonDensity>::new(f64::INFINITY).unwrap(),
+            Quantity::<ManonDensity>::nonnegative(1.0).unwrap()
+        ]).is_err());
+        assert_eq!(grid.at(1,0,0).unwrap().value(),3.0);
+        grid.try_replace_densities(vec![
+            Quantity::<ManonDensity>::nonnegative(2.0).unwrap(),
+            Quantity::<ManonDensity>::nonnegative(4.0).unwrap()
+        ]).unwrap();
+        assert_eq!(grid.total_manons().unwrap().value(),6.0);
     }
 
     #[test]
