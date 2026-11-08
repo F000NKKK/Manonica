@@ -116,6 +116,17 @@ impl PotentialField {
             screening,
         })
     }
+    /// Scale an already solved potential without rerunning the Poisson solve.
+    /// Used for gradual power-down of a quasi-static source.
+    pub fn scaled(&self, factor: f64) -> Result<Self, BaseError> {
+        if !factor.is_finite() || !(0.0..=1.0).contains(&factor) {
+            return Err(bad("potential_scale"));
+        }
+        let mut next = self.clone();
+        for value in &mut next.values { *value *= factor; }
+        Ok(next)
+    }
+
     pub fn values(&self) -> &[f64] {
         &self.values
     }
@@ -353,6 +364,20 @@ mod tests {
         assert_eq!(field.total_manons().unwrap().value(), original);
         assert_eq!(potential.field_energy_joules(), 0.0);
     }
+    #[test]
+    fn decay_reduces_field_energy_quadratically() {
+        let shape = GridShape::new(3, 3, 3).unwrap();
+        let mut source = vec![0.0; shape.len()];
+        source[shape.index(1, 1, 1).unwrap()] = -4.0;
+        let field = PotentialField::solve(shape, 1.0, &source, 1.0, 1.0,
+            PotentialBoundary::Grounded, 80).unwrap();
+        let energy = field.field_energy_joules();
+        assert!(energy > 0.0);
+        let half = field.scaled(0.5).unwrap();
+        assert!((half.field_energy_joules() - energy * 0.25).abs() < 1e-9);
+        assert!(field.scaled(-1.0).is_err());
+    }
+
     #[test]
     fn invalid_parameters_rejected_without_mutation() {
         let shape = GridShape::new(3, 3, 3).unwrap();
