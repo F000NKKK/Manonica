@@ -279,7 +279,8 @@ impl DebugHud {
             433,
             &format!(
                 "PHASE {}  DENSITY RATE {:.2e}",
-                m.equilibrium.phase.label(), m.equilibrium.density_rate
+                m.equilibrium.phase.label(),
+                m.equilibrium.density_rate
             ),
             1,
             [144, 229, 255, 255],
@@ -295,7 +296,8 @@ impl DebugHud {
             [144, 229, 255, 255],
         );
         canvas.text(
-            12, 461,
+            12,
+            461,
             "Solver CPU times; not full GPU frame execution",
             1,
             [118, 147, 177, 255],

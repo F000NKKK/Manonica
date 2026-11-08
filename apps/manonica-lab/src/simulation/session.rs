@@ -7,7 +7,10 @@ use manonica_physics::{
     PotentialField,
 };
 
-use super::{equilibrium::{EquilibriumMonitor, EquilibriumState}, field::seeded_field};
+use super::{
+    equilibrium::{EquilibriumMonitor, EquilibriumState},
+    field::seeded_field,
+};
 use crate::experiment::{AmbientFlow, Experiment, ExperimentError};
 
 /// Energy state of the externally established, quasi-static field.
@@ -244,7 +247,10 @@ impl Simulation {
         self.time_seconds += dt.seconds();
         self.steps += 1;
         let source_active = self.potential.is_some() && !self.shutdown;
-        let potential_peak = self.potential.as_ref().map_or(0.0, PotentialField::peak_absolute);
+        let potential_peak = self
+            .potential
+            .as_ref()
+            .map_or(0.0, PotentialField::peak_absolute);
         self.equilibrium.observe(
             &self.field,
             after.value(),

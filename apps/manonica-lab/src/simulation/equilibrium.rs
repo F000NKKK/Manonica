@@ -56,7 +56,9 @@ pub struct EquilibriumMonitor {
     state: EquilibriumState,
 }
 impl EquilibriumMonitor {
-    pub fn state(&self) -> EquilibriumState { self.state }
+    pub fn state(&self) -> EquilibriumState {
+        self.state
+    }
 
     /// Evaluate the actual latest physical state, comparing consecutive
     /// solver steps. No elapsed-time shortcut can force equilibrium.
@@ -70,23 +72,34 @@ impl EquilibriumMonitor {
         powered_source: bool,
         dt: f64,
     ) {
-        let sample: Vec<f64> = field.densities().iter().map(|value| value.value()).collect();
+        let sample: Vec<f64> = field
+            .densities()
+            .iter()
+            .map(|value| value.value())
+            .collect();
         let scale = sample.iter().copied().fold(1.0_f64, f64::max);
-        let density_rate = self.previous_density.as_ref().map_or(f64::INFINITY, |before| {
-            if before.len() != sample.len() {
-                return f64::INFINITY;
-            }
-            before.iter().zip(&sample)
-                .map(|(a, b)| (b-a).abs() / (scale * dt))
-                .fold(0.0_f64, f64::max)
-        });
+        let density_rate = self
+            .previous_density
+            .as_ref()
+            .map_or(f64::INFINITY, |before| {
+                if before.len() != sample.len() {
+                    return f64::INFINITY;
+                }
+                before
+                    .iter()
+                    .zip(&sample)
+                    .map(|(a, b)| (b - a).abs() / (scale * dt))
+                    .fold(0.0_f64, f64::max)
+            });
         let bound_rate = self.previous_bound.map_or(f64::INFINITY, |before| {
-            (bound_manons-before).abs() / (total_manons.max(1.0) * dt)
+            (bound_manons - before).abs() / (total_manons.max(1.0) * dt)
         });
         self.previous_density = Some(sample);
         self.previous_bound = Some(bound_manons);
-        let stable = !powered_source && density_rate.is_finite()
-            && bound_rate.is_finite() && peak_potential.is_finite()
+        let stable = !powered_source
+            && density_rate.is_finite()
+            && bound_rate.is_finite()
+            && peak_potential.is_finite()
             && temperature_excess_kelvin.is_finite()
             && density_rate <= DENSITY_RATE_LIMIT
             && bound_rate <= BOUND_RATE_LIMIT
@@ -94,7 +107,9 @@ impl EquilibriumMonitor {
             && temperature_excess_kelvin <= TEMPERATURE_EXCESS_LIMIT;
         self.state.stable_steps = if stable {
             self.state.stable_steps.saturating_add(1)
-        } else { 0 };
+        } else {
+            0
+        };
         let phase = if powered_source {
             EquilibriumPhase::Charging
         } else if peak_potential > FIELD_LIMIT {
@@ -124,9 +139,11 @@ mod tests {
 
     fn uniform() -> FreeManaField {
         FreeManaField::uniform(
-            GridShape::new(2, 2, 2).unwrap(), 1.0,
+            GridShape::new(2, 2, 2).unwrap(),
+            1.0,
             Quantity::<ManonDensity>::nonnegative(10.0).unwrap(),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]
