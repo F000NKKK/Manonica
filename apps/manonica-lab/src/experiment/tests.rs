@@ -164,6 +164,7 @@ fn crystal_trap_and_channel_conserve_total_inventory() {
         area: 1.0,
         conductance: 1.0,
         max_flux: 5.0,
+        anisotropy: None,
     });
     let mut sim = Simulation::new(experiment).unwrap();
     let initial = sim.total().unwrap().value();
