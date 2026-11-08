@@ -17,8 +17,8 @@ pub use dynamics::{FreeMotion, ParticleLaw};
 pub use error::PhysicsError;
 pub use field::{
     ConservationReport, FreeAdvection, FreeDiffusion, FreeManaDiffusionBackend, FreeManaField,
-    GridShape, LocalBoundarySite,
-    LocalPotentialBoundary, PotentialBoundary, PotentialField, PotentialStep, VelocityField,
+    GridShape, LocalBoundarySite, LocalPotentialBoundary, PotentialBoundary, PotentialField,
+    PotentialStep, VelocityField,
 };
 pub use manon::{Manon, ManonId, ManonState};
 pub use system::ManonSystem;
