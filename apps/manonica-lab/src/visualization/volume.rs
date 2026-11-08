@@ -517,7 +517,7 @@ mod tests {
         assert_eq!(atlas.height, (8 * (TEXTURE_SIZE + BORDER_ROWS)) as u32);
         assert_eq!(atlas.pixels.len(), atlas.width as usize * atlas.height as usize * 4);
         assert!(atlas.pixels.chunks_exact(4).any(|px| px[3] > 0));
-        assert!(atlas.pixels.chunks_exact(4).any(|px| px[2] == 255));
+        assert!(atlas.pixels.chunks_exact(4).any(|px| px[3] > 0 && px[2] >= 230 && px[2] > px[0]));
     }
 
     #[test]
