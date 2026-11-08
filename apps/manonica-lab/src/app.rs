@@ -431,6 +431,7 @@ fn render_loop(
         let metrics = FrameMetrics {
             frame_ms: dt * 1000.0,
             sim_cpu_ms: render_input.snapshot.sim_cpu_ms,
+            compute: render_input.snapshot.compute,
             draw_cpu_ms: last_draw_cpu_ms,
             field_cpu_ms: graphics.sampling_cpu_ms(),
             sim_time: render_input.snapshot.elapsed,
