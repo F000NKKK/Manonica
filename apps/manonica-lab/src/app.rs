@@ -293,6 +293,8 @@ fn render_loop(
             sim_time: render_input.snapshot.elapsed,
             steps: render_input.snapshot.steps,
             total: render_input.snapshot.total,
+            bound: render_input.snapshot.bound,
+            material_energy: render_input.snapshot.material_energy,
             initial_total: initial_manons,
             peak_density: graphics.peak_density(),
             shown_slices: graphics.visible_slices(),
