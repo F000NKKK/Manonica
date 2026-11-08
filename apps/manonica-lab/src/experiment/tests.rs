@@ -389,3 +389,22 @@ fn powered_concentrator_never_reports_equilibrium_while_field_source_is_active()
     assert_eq!(sim.equilibrium_state().phase, EquilibriumPhase::Charging);
     assert!(sim.equilibrium_state().potential_peak > 0.1);
 }
+
+#[test]
+fn driven_uniform_flow_is_not_mistaken_for_equilibrium() {
+    use crate::simulation::EquilibriumPhase;
+    let experiment = ExperimentBuilder::new("driven-flow")
+        .grid([4, 4, 4], 1.0)
+        .diffusion(0.0, 0.02, 1)
+        .flow(AmbientFlow::Uniform {
+            velocity: [0.1, 0.0, 0.0],
+        })
+        .build()
+        .unwrap();
+    let mut sim = Simulation::new(experiment).unwrap();
+    for _ in 0..50 {
+        sim.step().unwrap();
+    }
+    assert_eq!(sim.equilibrium_state().phase, EquilibriumPhase::Charging);
+    assert_eq!(sim.equilibrium_state().stable_steps, 0);
+}
