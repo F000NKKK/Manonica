@@ -1,0 +1,28 @@
+name: Format separated physics and materials
+on:
+  push:
+    paths: ['.github/workflows/format-materials-once.yml']
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format every Rust workspace
+        run: |
+          cargo fmt --all
+          cargo fmt --manifest-path crates/manonica-compute-gpu/Cargo.toml --all
+          cargo fmt --manifest-path apps/manonica-lab/Cargo.toml --all
+      - name: Commit formatting
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -u
+          if ! git diff --cached --quiet; then
+            git commit -m 'style: format independent materials physics domain'
+            git push origin HEAD:master
+          fi
