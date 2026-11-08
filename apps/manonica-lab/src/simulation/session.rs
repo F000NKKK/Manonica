@@ -144,10 +144,30 @@ impl Simulation {
     }
 
     pub fn step(&mut self) -> Result<ConservationReport, ExperimentError> {
+        self.step_internal(None)
+    }
+
+    /// Hybrid GPU step: the GPU computes free-manon diffusion; conservative
+    /// material exchange, potential interactions and energy audits remain CPU.
+    pub fn step_gpu(
+        &mut self,
+        gpu: &mut super::gpu_diffusion::GpuDiffusion,
+    ) -> Result<ConservationReport, ExperimentError> {
+        self.step_internal(Some(gpu))
+    }
+
+    fn step_internal(
+        &mut self,
+        gpu: Option<&mut super::gpu_diffusion::GpuDiffusion>,
+    ) -> Result<ConservationReport, ExperimentError> {
         let dt = TimeStep::from_seconds(self.experiment.physics.dt)?;
         let before = self.total()?;
         let mut candidate = self.field.clone();
-        self.solver.evolve(&mut candidate, dt)?;
+        if let Some(gpu) = gpu {
+            gpu.evolve(&mut candidate, self.experiment.physics.diffusivity, dt.seconds())?;
+        } else {
+            self.solver.evolve(&mut candidate, dt)?;
+        }
         self.advection.evolve(&mut candidate, dt)?;
         let mut ledger = self.field_ledger;
         let mut next_potential = self.potential.clone();
