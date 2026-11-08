@@ -40,6 +40,9 @@ pub struct Diffusion {
     /// Nearest-neighbour thermal conductance (J / (s · K)).
     #[serde(default)]
     pub thermal_conductance: f64,
+    /// Rate of heat exchange with ambient bath (1/s), disabled by default.
+    #[serde(default)]
+    pub ambient_cooling_rate: f64,
     /// None keeps legacy experiments physically unchanged.
     #[serde(default)]
     pub potential: Option<PotentialConfig>,
@@ -67,6 +70,13 @@ pub struct PotentialConfig {
     pub initial_work_joules: f64,
     /// Maximum external work rate available to maintain the model (J/s).
     pub max_power_joules_per_second: f64,
+    /// Trigger shutdown once the installed material traps reach this filling ratio.
+    /// Zero disables automatic shutdown for legacy experiments.
+    #[serde(default)]
+    pub shutdown_at_bound_fraction: f64,
+    /// Quasi-static potential amplitude decay (1/s) after shutdown.
+    #[serde(default)]
+    pub shutdown_decay_rate: f64,
 }
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -351,6 +361,10 @@ impl Experiment {
             p.thermal_conductance.is_finite() && p.thermal_conductance >= 0.0,
             "thermal_conductance",
         )?;
+        check(
+            p.ambient_cooling_rate.is_finite() && p.ambient_cooling_rate >= 0.0,
+            "ambient_cooling_rate",
+        )?;
         if let Some(potential) = &p.potential {
             check(
                 potential.mobility.is_finite()
@@ -371,6 +385,13 @@ impl Experiment {
                     && potential.max_power_joules_per_second.is_finite()
                     && potential.max_power_joules_per_second >= 0.0,
                 "potential_work_budget",
+            )?;
+            check(
+                potential.shutdown_at_bound_fraction.is_finite()
+                    && (0.0..=1.0).contains(&potential.shutdown_at_bound_fraction)
+                    && potential.shutdown_decay_rate.is_finite()
+                    && potential.shutdown_decay_rate >= 0.0,
+                "potential_shutdown",
             )?;
         }
         check(p.dt.is_finite() && p.dt > 0.0, "dt")?;
