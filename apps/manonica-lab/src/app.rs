@@ -127,6 +127,7 @@ impl App {
         let mut pause = None;
         let mut reset = false;
         let mut apply_formula = None;
+        let mut load_comparison = false;
 
         {
             let mut state = lock_bridge(&self.bridge);
@@ -168,6 +169,9 @@ impl App {
                 window.set_cursor_grabbed(state.mouse_locked);
             }
             if !state.editor.open {
+                if input.was_key_pressed(KeyCode::C) {
+                    load_comparison = true;
+                }
                 if input.was_key_pressed(KeyCode::Space) {
                     state.paused = !state.paused;
                     pause = Some(state.paused);
@@ -230,6 +234,31 @@ impl App {
                 Err(err) => {
                     state.editor.message = format!("ERROR: {err}");
                 }
+            }
+        }
+
+        if load_comparison {
+            let candidate = Experiment::parse(
+                include_str!("../experiments/formula_comparison.toml"),
+            );
+            match candidate.and_then(|exp| Simulation::new(exp.clone()).map(|_| exp)) {
+                Ok(experiment) => {
+                    let mut state = lock_bridge(&self.bridge);
+                    state.experiment = Arc::new(experiment.clone());
+                    state.revision += 1;
+                    state.editor.circuit = 0;
+                    state.editor.load(&experiment.formulas);
+                    state.editor.open = false;
+                    state.mouse_locked = true;
+                    window.set_cursor_grabbed(true);
+                    state.paused = false;
+                    state.threshold = experiment.visualization.relative_threshold;
+                    state.wisps = experiment.visualization.wisps;
+                    self.experiment = experiment.clone();
+                    self.simulation.replace_experiment(experiment);
+                    eprintln!("Manonica: switched to 3-formula comparison (key C)");
+                }
+                Err(err) => eprintln!("Cannot load comparison experiment: {err}"),
             }
         }
 
@@ -340,7 +369,7 @@ fn render_loop(
     let mut last_frame = Instant::now();
     let mut deadline = last_frame;
     let mut last_draw_cpu_ms = 0.0;
-    let initial_manons = lock_bridge(&bridge).snapshot.total;
+    let mut initial_manons = lock_bridge(&bridge).snapshot.total;
     let mut current_size = size;
     eprintln!(
         "Manonica: FIFO VSync + paced render target {:.3} FPS ({rate_source})",
@@ -356,6 +385,7 @@ fn render_loop(
         let render_input = lock_bridge(&bridge).take_render_input();
         if render_input.revision != revision {
             experiment = (*render_input.experiment).clone();
+            initial_manons = experiment.seeds.iter().map(|seed| seed.total_manons).sum();
             if let Err(err) = graphics.replace_formulas(&experiment) {
                 eprintln!("failed to replace formula geometry: {err}");
             }
@@ -408,7 +438,7 @@ fn render_loop(
         }
         let mut overlays = Vec::new();
         if render_input.debug {
-            if let Some(overlay) = debug.overlay(&mut graphics.base, current_size) {
+            if let Some(overlay) = debug.overlay(&mut graphics.base, current_size, render_input.editor.open) {
                 overlays.push(overlay);
             }
         }
