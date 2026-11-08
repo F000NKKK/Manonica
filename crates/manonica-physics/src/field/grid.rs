@@ -131,6 +131,23 @@ impl FreeManaField {
         self.concentrations[index] = density;
     }
 
+    /// Validated single-cell setter for coupled material physics in another
+    /// crate. Invalid indices or densities leave the grid untouched.
+    pub fn set_flat(
+        &mut self,
+        index: usize,
+        density: Quantity<ManonDensity>,
+    ) -> Result<(), BaseError> {
+        if index >= self.shape.len() {
+            return Err(BaseError::new(ErrorCode::InvalidShape, "cell_index"));
+        }
+        if !density.value().is_finite() || density.value() < 0.0 {
+            return Err(BaseError::new(ErrorCode::InvalidRange, "mana_density"));
+        }
+        self.concentrations[index] = density;
+        Ok(())
+    }
+
     /// Public validated replacement for external compute backends.
     /// Rejects mismatched grids or non-finite/negative densities without
     /// modifying the original state. X varies fastest, then Y, then Z.
