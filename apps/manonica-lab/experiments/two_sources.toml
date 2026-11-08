@@ -28,12 +28,22 @@ center = [2.3, 0.0, 0.0]
 sigma = 0.7
 total_manons = 3600.0
 
-[[circles]]
-name = "Сечение для измерений"
-center = [0.0, 0.0, 0.0]
-normal = [1.0, 0.0, 0.0]
-radius = 3.0
-thickness = 0.025
-spokes = 8
+# Physical measurement/capture circuit in the YZ plane, derived from equations.
+[[formulas]]
+name = "Поперечный формульный контур"
+x = "0"
+y = "3*cos(t)"
+z = "3*sin(t)"
 segments = 120
+thickness = 0.025
 color = [0.1, 0.8, 0.9]
+
+[formulas.trap]
+capacity = 1200.0
+capture_rate = 0.25
+release_rate = 0.002
+binding_energy = 0.08
+heat_capacity = 80.0
+reference_temperature = 300.0
+activation_temperature = 300.0
+max_flux = 100.0
