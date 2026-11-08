@@ -16,4 +16,5 @@ manonica-physics = { path = "../../crates/manonica-physics" }
 meridian-sdk = "0.8"
 serde = { version = "1", features = ["derive"] }
 toml = "1.2"
+font8x8 = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread"] }
