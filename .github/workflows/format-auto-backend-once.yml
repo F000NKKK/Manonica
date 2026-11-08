@@ -28,3 +28,4 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m 'style: normalize automatic backend policy and GPU residency tests'
             git push origin HEAD:master
+          fi
