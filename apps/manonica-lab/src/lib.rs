@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod diagnostics;
+pub mod editor;
 pub mod experiment;
 pub mod simulation;
 pub mod visualization;
