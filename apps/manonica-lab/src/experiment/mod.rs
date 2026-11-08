@@ -10,7 +10,7 @@ pub use error::ExperimentError;
 pub use formula::{capture_cells, sample_curve};
 pub use specification::{
     AmbientFlow, ChannelSpec, Diffusion, Experiment, FieldSeed, Grid, MaterialSite,
-    Formula, FormulaTrap, SeedShape, Visualization,
+    FieldSource, Formula, FormulaTrap, PotentialBoundaryKind, PotentialConfig, SeedShape, Visualization,
 };
 
 #[cfg(test)]
