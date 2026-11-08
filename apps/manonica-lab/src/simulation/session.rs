@@ -4,7 +4,7 @@ use manonica_core::{
 };
 use manonica_physics::{
     ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, LocalBoundarySite,
-    MaterialLattice, PotentialField,
+    PotentialField,
 };
 
 use super::{
@@ -12,6 +12,7 @@ use super::{
     field::seeded_field,
 };
 use crate::experiment::{AmbientFlow, Experiment, ExperimentError};
+use manonica_materials::MaterialLattice;
 
 /// Energy state of the externally established, quasi-static field.
 #[derive(Clone, Copy, Debug)]
@@ -81,7 +82,7 @@ impl Simulation {
         &self.field
     }
     /// Total free + bound inventory and the closed thermal/binding ledger.
-    pub fn material_balance(&self) -> Result<manonica_physics::Balance, ExperimentError> {
+    pub fn material_balance(&self) -> Result<manonica_materials::Balance, ExperimentError> {
         Ok(self.materials.balance(&self.field)?)
     }
 
