@@ -18,6 +18,9 @@ jobs:
   lab:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Both independent Cargo workspaces reuse the same compiled Meridian dependencies.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/apps/manonica-lab/target
     steps:
       - uses: actions/checkout@v4
       - name: Linux dependencies for Meridian audio/window backend
