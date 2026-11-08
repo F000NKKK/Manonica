@@ -1,7 +1,7 @@
 //! Conservative free/bound manon exchange in material traps.
 //! A minimal discrete model for specification v0.1 §§3, 6-8, 10.
 //! Units: count (manons), energy (J), temperature (K), time (s).
-use crate::{FreeManaField, GridShape};
+use crate::{DirectionalConductivity, FreeManaField, GridShape};
 use manonica_core::{Quantity, units::ManonDensity};
 use manonica_error::{BaseError, ErrorCode};
 
@@ -228,6 +228,28 @@ impl MaterialLattice {
             work_used_joules: work_used,
             heat_used_joules: heat_used,
         })
+    }
+
+    /// Project a positive-semidefinite crystal conductivity tensor along
+    /// the channel. Uses existing conservative, capacity-limited transport.
+    pub fn add_directional_channel(
+        &mut self,
+        mut channel: ManaChannel,
+        conductivity: DirectionalConductivity,
+    ) -> Result<(), BaseError> {
+        channel.validate(self.shape)?;
+        let direction = [
+            channel.to[0] as f64 - channel.from[0] as f64,
+            channel.to[1] as f64 - channel.from[1] as f64,
+            channel.to[2] as f64 - channel.from[2] as f64,
+        ];
+        let effective = conductivity.along(direction)?;
+        let scaled = channel.conductance * effective;
+        if !scaled.is_finite() || scaled < 0.0 {
+            return Err(invalid("anisotropic_channel_overflow"));
+        }
+        channel.conductance = scaled;
+        self.add_channel(channel)
     }
 
     pub fn add_channel(&mut self, channel: ManaChannel) -> Result<(), BaseError> {
