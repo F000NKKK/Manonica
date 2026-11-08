@@ -2,14 +2,8 @@
 
 //! Manonica Lab: декларативные эксперименты + Meridian SDK / WGPU.
 
-mod app;
-mod experiment;
-mod simulation;
-mod visualization;
-
 use std::path::PathBuf;
-use experiment::Experiment;
-use simulation::Simulation;
+use manonica_lab::{app, experiment::Experiment, simulation::Simulation};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args_os().nth(1).map(PathBuf::from).unwrap_or_else(|| {

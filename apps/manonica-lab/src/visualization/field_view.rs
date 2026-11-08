@@ -4,7 +4,7 @@ use meridian_sdk::{
 };
 
 use crate::experiment::Experiment;
-use crate::simulation::{Simulation, field::cell_center};
+use crate::simulation::{Simulation, cell_center};
 use super::circle_mesh::circle_mesh;
 
 /// Визуализация *концентрации* свободных манонов светящимися объёмными
