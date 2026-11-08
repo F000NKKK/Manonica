@@ -228,16 +228,29 @@ impl Simulation {
         let dt = TimeStep::from_seconds(self.experiment.physics.dt)?;
         let before = self.total()?;
         let mut candidate = self.field.clone();
+        let mut fused_advection = false;
         if let Some(backend) = backend {
-            backend.evolve_free_diffusion(
-                &mut candidate,
-                self.experiment.physics.diffusivity,
-                dt.seconds(),
-            )?;
+            if let AmbientFlow::Uniform { velocity } = &self.experiment.physics.flow {
+                fused_advection = backend.evolve_diffusion_and_uniform_flow(
+                    &mut candidate,
+                    self.experiment.physics.diffusivity,
+                    dt.seconds(),
+                    *velocity,
+                )?;
+            }
+            if !fused_advection {
+                backend.evolve_free_diffusion(
+                    &mut candidate,
+                    self.experiment.physics.diffusivity,
+                    dt.seconds(),
+                )?;
+            }
         } else {
             self.solver.evolve(&mut candidate, dt)?;
         }
-        self.advection.evolve(&mut candidate, dt)?;
+        if !fused_advection {
+            self.advection.evolve(&mut candidate, dt)?;
+        }
         let mut ledger = self.field_ledger;
         let mut next_potential = self.potential.clone();
         let mut shutdown = self.shutdown;
