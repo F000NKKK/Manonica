@@ -27,7 +27,9 @@ impl FieldView {
                 .map_err(|e| format!("formula {}: {e}", formula.name))?;
             let material = base.render.materials.register(Material {
                 base_color_factor: [formula.color[0], formula.color[1], formula.color[2], 1.0],
-                emissive: formula.color.map(|v| v * experiment.visualization.exposure * 1.5),
+                emissive: formula
+                    .color
+                    .map(|v| v * experiment.visualization.exposure * 1.5),
                 unlit: true,
                 ..Default::default()
             });
@@ -71,11 +73,17 @@ impl FieldView {
     pub fn replace_formulas(&mut self, experiment: &Experiment) -> Result<(), String> {
         let mut next = Vec::new();
         for formula in &experiment.formulas {
-            let mesh = self.base.render.meshes.register(formula_mesh(formula)?)
+            let mesh = self
+                .base
+                .render
+                .meshes
+                .register(formula_mesh(formula)?)
                 .map_err(|err| format!("formula {}: {err}", formula.name))?;
             let material = self.base.render.materials.register(Material {
                 base_color_factor: [formula.color[0], formula.color[1], formula.color[2], 1.0],
-                emissive: formula.color.map(|v| v * experiment.visualization.exposure * 1.5),
+                emissive: formula
+                    .color
+                    .map(|v| v * experiment.visualization.exposure * 1.5),
                 unlit: true,
                 ..Default::default()
             });

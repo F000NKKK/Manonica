@@ -14,8 +14,8 @@ pub use binding::{Balance, DischargeReport, ManaChannel, MaterialLattice, TrapCe
 pub use dynamics::{FreeMotion, ParticleLaw};
 pub use error::PhysicsError;
 pub use field::{
-    ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, GridShape, VelocityField,
-    PotentialBoundary, PotentialField, PotentialStep,
+    ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, GridShape, PotentialBoundary,
+    PotentialField, PotentialStep, VelocityField,
 };
 pub use manon::{Manon, ManonId, ManonState};
 pub use system::ManonSystem;

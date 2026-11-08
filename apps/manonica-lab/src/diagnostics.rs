@@ -98,7 +98,12 @@ impl DebugHud {
         }
     }
 
-    pub fn overlay(&mut self, base: &mut GraphicsSession, viewport: [u32; 2], editor_open: bool) -> Option<Overlay2d> {
+    pub fn overlay(
+        &mut self,
+        base: &mut GraphicsSession,
+        viewport: [u32; 2],
+        editor_open: bool,
+    ) -> Option<Overlay2d> {
         let latest = self.latest?;
         let now = Instant::now();
         if self.image.is_none()
@@ -124,8 +129,7 @@ impl DebugHud {
                 frame: Motor3::translation(Vec3::new(
                     12.0 + WIDTH as f32 * 0.5,
                     if editor_open {
-                        (viewport[1] as f32 - HEIGHT as f32 * 0.5 - 12.0)
-                            .max(HEIGHT as f32 * 0.5)
+                        (viewport[1] as f32 - HEIGHT as f32 * 0.5 - 12.0).max(HEIGHT as f32 * 0.5)
                     } else {
                         12.0 + HEIGHT as f32 * 0.5
                     },
@@ -203,7 +207,10 @@ impl DebugHud {
         canvas.text(
             12,
             115,
-            &format!("TOTAL {:.3}  DELTA {:+.4}  ENERGY {:.3} J", m.total, delta, m.material_energy),
+            &format!(
+                "TOTAL {:.3}  DELTA {:+.4}  ENERGY {:.3} J",
+                m.total, delta, m.material_energy
+            ),
             1,
             [190, 236, 236, 255],
         );
@@ -215,24 +222,37 @@ impl DebugHud {
         canvas.text(13, 246, "MAX MANON DENSITY / TIME", 1, [160, 223, 255, 255]);
         canvas.graph(12, 262, 494, 65, &self.peak_samples, [156, 195, 255, 255]);
         canvas.text(
-            12, 341,
-            &format!("FIELD |phi| {:.3}   J {:.3} manons/step", m.potential_peak, m.potential_transport),
-            1, [160, 223, 255, 255],
+            12,
+            341,
+            &format!(
+                "FIELD |phi| {:.3}   J {:.3} manons/step",
+                m.potential_peak, m.potential_transport
+            ),
+            1,
+            [160, 223, 255, 255],
         );
         for i in 0..m.formula_count.min(3) {
             canvas.text(
                 12,
                 357 + i as i32 * 13,
-                &format!("FORMULA {} / BOUND {:>14.3} manons", i + 1, m.formula_bound[i]),
+                &format!(
+                    "FORMULA {} / BOUND {:>14.3} manons",
+                    i + 1,
+                    m.formula_bound[i]
+                ),
                 1,
                 [116, 238, 169, 255],
             );
         }
         canvas.text(
-            12, 397,
-            &format!("FIELD E {:.2} J  HEAT {:.2}  WORK {:.2}",
-                m.field_energy_joules, m.field_heat_joules, m.field_work_joules),
-            1, [160, 223, 255, 255],
+            12,
+            397,
+            &format!(
+                "FIELD E {:.2} J  HEAT {:.2}  WORK {:.2}",
+                m.field_energy_joules, m.field_heat_joules, m.field_work_joules
+            ),
+            1,
+            [160, 223, 255, 255],
         );
         canvas.text(
             12,

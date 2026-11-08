@@ -16,7 +16,7 @@ use meridian_sdk::{
 
 use crate::{
     diagnostics::{DebugHud, FrameMetrics},
-    editor::{FormulaEditor, EditorOverlay, FormulaLegend},
+    editor::{EditorOverlay, FormulaEditor, FormulaLegend},
     experiment::Experiment,
     simulation::{Simulation, SimulationSnapshot, SimulationWorker},
     visualization::FieldView,
@@ -158,9 +158,12 @@ impl App {
                 } else if input.was_key_pressed(KeyCode::Backspace) {
                     state.editor.backspace();
                 } else if input.was_key_pressed(KeyCode::Enter) {
-                    apply_formula = Some((state.editor.circuit, state.editor.update_formula(
-                        self.experiment.formulas.get(state.editor.circuit)
-                    )));
+                    apply_formula = Some((
+                        state.editor.circuit,
+                        state
+                            .editor
+                            .update_formula(self.experiment.formulas.get(state.editor.circuit)),
+                    ));
                 } else {
                     // Text is committed by Meridian/Winit; don't treat navigation
                     // keys as text or move the camera while editing.
@@ -241,9 +244,8 @@ impl App {
         }
 
         if load_comparison {
-            let candidate = Experiment::parse(
-                include_str!("../experiments/formula_comparison.toml"),
-            );
+            let candidate =
+                Experiment::parse(include_str!("../experiments/formula_comparison.toml"));
             match candidate.and_then(|exp| Simulation::new(exp.clone()).map(|_| exp)) {
                 Ok(experiment) => {
                     let mut state = lock_bridge(&self.bridge);
@@ -259,7 +261,9 @@ impl App {
                     state.wisps = experiment.visualization.wisps;
                     self.experiment = experiment.clone();
                     self.simulation.replace_experiment(experiment);
-                    window.surface_target().set_title("Manonica Lab — Сравнение трёх формул");
+                    window
+                        .surface_target()
+                        .set_title("Manonica Lab — Сравнение трёх формул");
                     eprintln!("Manonica: switched to 3-formula comparison (key C)");
                 }
                 Err(err) => eprintln!("Cannot load comparison experiment: {err}"),
@@ -329,7 +333,14 @@ fn target_render_rate(window: &Window) -> (f64, &'static str) {
         .and_then(|monitor| monitor.refresh_rate_millihertz())
         .filter(|&mhz| (30_000..=500_000).contains(&mhz))
         .map(|mhz| f64::from(mhz) / 1000.0);
-    (refresh.unwrap_or(60.0), if refresh.is_some() { "monitor" } else { "fallback" })
+    (
+        refresh.unwrap_or(60.0),
+        if refresh.is_some() {
+            "monitor"
+        } else {
+            "fallback"
+        },
+    )
 }
 
 /// Paces frame submission, retaining FIFO presentation as a separate guarantee.
@@ -426,7 +437,14 @@ fn render_loop(
             steps: render_input.snapshot.steps,
             total: render_input.snapshot.total,
             bound: render_input.snapshot.bound,
-            formula_bound: std::array::from_fn(|i| render_input.snapshot.formula_bound.get(i).copied().unwrap_or(0.0)),
+            formula_bound: std::array::from_fn(|i| {
+                render_input
+                    .snapshot
+                    .formula_bound
+                    .get(i)
+                    .copied()
+                    .unwrap_or(0.0)
+            }),
             formula_count: render_input.snapshot.formula_bound.len(),
             material_energy: render_input.snapshot.material_energy,
             potential_peak: render_input.snapshot.potential_peak,
@@ -447,15 +465,15 @@ fn render_loop(
         }
         let mut overlays = Vec::new();
         if render_input.debug {
-            if let Some(overlay) = debug.overlay(&mut graphics.base, current_size, render_input.editor.open) {
+            if let Some(overlay) =
+                debug.overlay(&mut graphics.base, current_size, render_input.editor.open)
+            {
                 overlays.push(overlay);
             }
         }
-        if let Some(overlay) = editor_overlay.draw(
-            &mut graphics.base,
-            &render_input.editor,
-            current_size,
-        ) {
+        if let Some(overlay) =
+            editor_overlay.draw(&mut graphics.base, &render_input.editor, current_size)
+        {
             overlays.push(overlay);
         }
         if let Some(overlay) = formula_legend.draw(

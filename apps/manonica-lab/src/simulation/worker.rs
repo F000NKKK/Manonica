@@ -40,9 +40,13 @@ impl SimulationSnapshot {
             elapsed: sim.elapsed(),
             steps: sim.steps(),
             total: sim.total().map_or(f64::NAN, |amount| amount.value()),
-            bound: sim.material_balance().map_or(f64::NAN, |balance| balance.bound),
+            bound: sim
+                .material_balance()
+                .map_or(f64::NAN, |balance| balance.bound),
             formula_bound: sim.formula_bound().unwrap_or_default(),
-            material_energy: sim.material_balance().map_or(f64::NAN, |balance| balance.energy()),
+            material_energy: sim
+                .material_balance()
+                .map_or(f64::NAN, |balance| balance.energy()),
             potential_peak: sim.field_ledger().map_or(0.0, |p| p.peak_potential),
             field_energy_joules: sim.field_ledger().map_or(0.0, |p| p.field_energy_joules),
             field_heat_joules: sim.field_ledger().map_or(0.0, |p| p.dissipated_heat_joules),
@@ -182,26 +186,24 @@ fn run_simulation(
                 }
                 publish(&updates, &sim, cpu_ms, paused, &error);
             }
-            Ok(Command::Replace(experiment)) => {
-                match Simulation::new(experiment) {
-                    Ok(next) => {
-                        sim = next;
-                        period = Duration::from_secs_f64(sim.experiment.physics.dt);
-                        max_catch_up = sim.experiment.physics.steps_per_frame;
-                        error = None;
-                        paused = false;
-                        cpu_ms = 0.0;
-                        next_tick = Instant::now() + period;
-                        next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
-                        publish(&updates, &sim, cpu_ms, paused, &error);
-                    }
-                    Err(err) => {
-                        error = Some(err.to_string());
-                        paused = true;
-                        publish(&updates, &sim, cpu_ms, paused, &error);
-                    }
+            Ok(Command::Replace(experiment)) => match Simulation::new(experiment) {
+                Ok(next) => {
+                    sim = next;
+                    period = Duration::from_secs_f64(sim.experiment.physics.dt);
+                    max_catch_up = sim.experiment.physics.steps_per_frame;
+                    error = None;
+                    paused = false;
+                    cpu_ms = 0.0;
+                    next_tick = Instant::now() + period;
+                    next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
+                    publish(&updates, &sim, cpu_ms, paused, &error);
                 }
-            }
+                Err(err) => {
+                    error = Some(err.to_string());
+                    paused = true;
+                    publish(&updates, &sim, cpu_ms, paused, &error);
+                }
+            },
             Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {}
         }

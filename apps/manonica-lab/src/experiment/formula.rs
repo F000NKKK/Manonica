@@ -33,7 +33,11 @@ pub fn sample_curve(formula: &Formula) -> Result<Vec<[f32; 3]>, ExperimentError>
     }
     // The renderer closes the last edge to the first point. Refuse a
     // non-periodic parameterization rather than inventing a long edge.
-    let end = [x(std::f64::consts::TAU), y(std::f64::consts::TAU), z(std::f64::consts::TAU)];
+    let end = [
+        x(std::f64::consts::TAU),
+        y(std::f64::consts::TAU),
+        z(std::f64::consts::TAU),
+    ];
     let start = [x(0.0), y(0.0), z(0.0)];
     if end.iter().chain(start.iter()).any(|v| !v.is_finite()) {
         return Err(invalid());
@@ -45,7 +49,8 @@ pub fn sample_curve(formula: &Formula) -> Result<Vec<[f32; 3]>, ExperimentError>
         .fold(1.0_f64, f64::max);
     let closing_error = (0..3)
         .map(|i| (end[i] - start[i]).powi(2))
-        .sum::<f64>().sqrt();
+        .sum::<f64>()
+        .sqrt();
     if closing_error > max_coord * 1e-3 {
         return Err(invalid());
     }
@@ -84,8 +89,7 @@ pub fn capture_cells(
             let t = j as f64 / steps as f64;
             let mut cell = [0_usize; 3];
             for axis in 0..3 {
-                let coordinate = (f64::from(from[axis]) * (1.0 - t)
-                    + f64::from(to[axis]) * t) / dx
+                let coordinate = (f64::from(from[axis]) * (1.0 - t) + f64::from(to[axis]) * t) / dx
                     + dimensions[axis] as f64 * 0.5;
                 if !coordinate.is_finite()
                     || coordinate < 0.0
@@ -117,12 +121,14 @@ mod tests {
             color: [1.0, 1.0, 1.0],
             trap: None,
         };
-        let cells = capture_cells(&formula, [24,24,24], 0.25).unwrap();
-        assert!(cells.len() > 8, "segments must populate intermediate physical cells");
+        let cells = capture_cells(&formula, [24, 24, 24], 0.25).unwrap();
+        assert!(
+            cells.len() > 8,
+            "segments must populate intermediate physical cells"
+        );
         let unique = cells.iter().collect::<std::collections::HashSet<_>>();
         assert_eq!(unique.len(), cells.len());
     }
-
 
     use super::*;
     #[test]

@@ -99,7 +99,11 @@ mod tests {
         };
         let mesh = formula_mesh(&formula).unwrap();
         assert!(!mesh.indices.is_empty());
-        assert!(mesh.indices.iter().all(|i| (*i as usize) < mesh.positions.len()));
+        assert!(
+            mesh.indices
+                .iter()
+                .all(|i| (*i as usize) < mesh.positions.len())
+        );
         assert!(mesh.positions.iter().flatten().all(|v| v.is_finite()));
     }
 }

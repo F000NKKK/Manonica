@@ -1,10 +1,10 @@
 //! Lightweight in-window editor for a live parametric mana circuit.
+use crate::experiment::{Experiment, Formula, FormulaTrap, sample_curve};
 use font8x8::{BASIC_FONTS, UnicodeFonts};
 use meridian_sdk::{
     Camera2d, GraphicsSession, ImageAsset, Motor3, Overlay2d, Scene2d, Sprite, TextureHandle,
     TextureStore, Vec3,
 };
-use crate::experiment::{sample_curve, Experiment, Formula, FormulaTrap};
 use std::time::{Duration, Instant};
 
 const WIDTH: usize = 820;
@@ -74,8 +74,13 @@ impl FormulaEditor {
         };
     }
     pub fn switch(&mut self, formulas: &[Formula], delta: isize) {
-        if formulas.is_empty() { return; }
-        self.circuit = self.circuit.saturating_add_signed(delta).min(formulas.len() - 1);
+        if formulas.is_empty() {
+            return;
+        }
+        self.circuit = self
+            .circuit
+            .saturating_add_signed(delta)
+            .min(formulas.len() - 1);
         self.load(formulas);
     }
     /// Three mathematically distinct user-editable presets. All positions
@@ -141,11 +146,19 @@ pub struct EditorOverlay {
     signature: String,
 }
 impl EditorOverlay {
-    pub fn draw(&mut self, base: &mut GraphicsSession, editor: &FormulaEditor, viewport: [u32; 2]) -> Option<Overlay2d> {
+    pub fn draw(
+        &mut self,
+        base: &mut GraphicsSession,
+        editor: &FormulaEditor,
+        viewport: [u32; 2],
+    ) -> Option<Overlay2d> {
         if !editor.open {
             return None;
         }
-        let signature = format!("{:?}|{}|{}", editor.expressions, editor.selected, editor.message);
+        let signature = format!(
+            "{:?}|{}|{}",
+            editor.expressions, editor.selected, editor.message
+        );
         if self.texture.is_none() || self.signature != signature {
             let next = base.render.recorder.upload(&editor.image());
             if let Some(old) = self.texture.replace(next) {
@@ -175,63 +188,100 @@ impl FormulaEditor {
     fn image(&self) -> ImageAsset {
         let mut pixels = vec![0u8; WIDTH * HEIGHT * 4];
         fn rect(p: &mut [u8], x: usize, y: usize, w: usize, h: usize, rgba: [u8; 4]) {
-            for yy in y..(y+h).min(HEIGHT) {
-                for xx in x..(x+w).min(WIDTH) {
-                    let at = (yy*WIDTH+xx)*4;
-                    p[at..at+4].copy_from_slice(&rgba);
+            for yy in y..(y + h).min(HEIGHT) {
+                for xx in x..(x + w).min(WIDTH) {
+                    let at = (yy * WIDTH + xx) * 4;
+                    p[at..at + 4].copy_from_slice(&rgba);
                 }
             }
         }
         fn text(p: &mut [u8], x: usize, y: usize, value: &str, color: [u8; 4]) {
             for (i, ch) in value.chars().enumerate() {
-                if x+i*8+8 >= WIDTH { break; }
+                if x + i * 8 + 8 >= WIDTH {
+                    break;
+                }
                 if let Some(glyph) = BASIC_FONTS.get(ch) {
                     for (gy, row) in glyph.iter().enumerate() {
                         for gx in 0..8 {
                             if row & (1 << gx) != 0 {
-                                rect(p, x+i*8+gx, y+gy, 1, 1, color);
+                                rect(p, x + i * 8 + gx, y + gy, 1, 1, color);
                             }
                         }
                     }
                 }
             }
         }
-        fn line(p: &mut [u8], a: (i32,i32), b: (i32,i32), rgba: [u8;4]) {
-            let (mut x,mut y)=a;
-            let dx=(b.0-x).abs();
-            let sx=if x<b.0 {1} else {-1};
-            let dy=-(b.1-y).abs();
-            let sy=if y<b.1 {1} else {-1};
-            let mut err=dx+dy;
+        fn line(p: &mut [u8], a: (i32, i32), b: (i32, i32), rgba: [u8; 4]) {
+            let (mut x, mut y) = a;
+            let dx = (b.0 - x).abs();
+            let sx = if x < b.0 { 1 } else { -1 };
+            let dy = -(b.1 - y).abs();
+            let sy = if y < b.1 { 1 } else { -1 };
+            let mut err = dx + dy;
             loop {
-                if x>=0 && y>=0 && (x as usize)<WIDTH && (y as usize)<HEIGHT {
-                    let at=(y as usize*WIDTH+x as usize)*4;
-                    p[at..at+4].copy_from_slice(&rgba);
+                if x >= 0 && y >= 0 && (x as usize) < WIDTH && (y as usize) < HEIGHT {
+                    let at = (y as usize * WIDTH + x as usize) * 4;
+                    p[at..at + 4].copy_from_slice(&rgba);
                 }
-                if x==b.0 && y==b.1 { break; }
-                let e2=err*2;
-                if e2>=dy { err+=dy; x+=sx; }
-                if e2<=dx { err+=dx; y+=sy; }
+                if x == b.0 && y == b.1 {
+                    break;
+                }
+                let e2 = err * 2;
+                if e2 >= dy {
+                    err += dy;
+                    x += sx;
+                }
+                if e2 <= dx {
+                    err += dx;
+                    y += sy;
+                }
             }
         }
         rect(&mut pixels, 0, 0, WIDTH, HEIGHT, [9, 17, 31, 245]);
         rect(&mut pixels, 0, 0, WIDTH, 28, [18, 52, 77, 255]);
-        text(&mut pixels, 12, 10,
-            &format!("MANONICA / CIRCUIT {}/{} - LIVE FORMULA", self.circuit+1, self.circuits),
-            [225,245,255,255]);
+        text(
+            &mut pixels,
+            12,
+            10,
+            &format!(
+                "MANONICA / CIRCUIT {}/{} - LIVE FORMULA",
+                self.circuit + 1,
+                self.circuits
+            ),
+            [225, 245, 255, 255],
+        );
         for (i, expr) in self.expressions.iter().enumerate() {
-            let y = 40+i*43;
-            rect(&mut pixels, 12, y, 425, 35, if i==self.selected {
-                [41,78,102,255]
-            } else {
-                [20,37,57,255]
-            });
+            let y = 40 + i * 43;
+            rect(
+                &mut pixels,
+                12,
+                y,
+                425,
+                35,
+                if i == self.selected {
+                    [41, 78, 102, 255]
+                } else {
+                    [20, 37, 57, 255]
+                },
+            );
             let displayed: String = expr.chars().take(40).collect();
-            text(&mut pixels, 21, y+13,
-                &format!("{}(t) = {}", ["x","y","z"][i],displayed), [220,240,255,255]);
+            text(
+                &mut pixels,
+                21,
+                y + 13,
+                &format!("{}(t) = {}", ["x", "y", "z"][i], displayed),
+                [220, 240, 255, 255],
+            );
             if i == self.selected {
-                let cursor_x = 21 + (7+displayed.len())*8;
-                rect(&mut pixels, cursor_x.min(427), y+11, 2, 12, [255,255,255,255]);
+                let cursor_x = 21 + (7 + displayed.len()) * 8;
+                rect(
+                    &mut pixels,
+                    cursor_x.min(427),
+                    y + 11,
+                    2,
+                    12,
+                    [255, 255, 255, 255],
+                );
             }
         }
         // Immediate mathematical preview of both independent projections.
@@ -239,45 +289,72 @@ impl FormulaEditor {
         // before committing the formula to the physical simulation.
         match sample_curve(&self.formula()) {
             Ok(samples) => {
-                text(&mut pixels, 462, 37, "X / Y (FRONT)", [165,228,244,255]);
-                text(&mut pixels, 641, 37, "X / Z (TOP)", [165,228,244,255]);
-                for (view, axes) in [[0,1],[0,2]].into_iter().enumerate() {
-                    let x0=453+view*181;
-                    let y0=54;
-                    let w=173_usize;
-                    let h=146_usize;
-                    rect(&mut pixels, x0, y0, w, h, [17,34,53,255]);
-                    let mut min=[f32::INFINITY;2];
-                    let mut max=[f32::NEG_INFINITY;2];
+                text(&mut pixels, 462, 37, "X / Y (FRONT)", [165, 228, 244, 255]);
+                text(&mut pixels, 641, 37, "X / Z (TOP)", [165, 228, 244, 255]);
+                for (view, axes) in [[0, 1], [0, 2]].into_iter().enumerate() {
+                    let x0 = 453 + view * 181;
+                    let y0 = 54;
+                    let w = 173_usize;
+                    let h = 146_usize;
+                    rect(&mut pixels, x0, y0, w, h, [17, 34, 53, 255]);
+                    let mut min = [f32::INFINITY; 2];
+                    let mut max = [f32::NEG_INFINITY; 2];
                     for p in &samples {
                         for j in 0..2 {
-                            min[j]=min[j].min(p[axes[j]]);
-                            max[j]=max[j].max(p[axes[j]]);
+                            min[j] = min[j].min(p[axes[j]]);
+                            max[j] = max[j].max(p[axes[j]]);
                         }
                     }
-                    let extent=(max[0]-min[0]).max(max[1]-min[1]).max(0.05);
-                    let cx=(min[0]+max[0])*0.5;
-                    let cy=(min[1]+max[1])*0.5;
-                    let map=|p: &[f32;3]| {
-                        let px=(x0 as f32+w as f32*0.5+(p[axes[0]]-cx)/extent*134.0).round() as i32;
-                        let py=(y0 as f32+h as f32*0.5-(p[axes[1]]-cy)/extent*114.0).round() as i32;
-                        (px,py)
+                    let extent = (max[0] - min[0]).max(max[1] - min[1]).max(0.05);
+                    let cx = (min[0] + max[0]) * 0.5;
+                    let cy = (min[1] + max[1]) * 0.5;
+                    let map = |p: &[f32; 3]| {
+                        let px = (x0 as f32 + w as f32 * 0.5 + (p[axes[0]] - cx) / extent * 134.0)
+                            .round() as i32;
+                        let py = (y0 as f32 + h as f32 * 0.5 - (p[axes[1]] - cy) / extent * 114.0)
+                            .round() as i32;
+                        (px, py)
                     };
                     for i in 0..samples.len() {
-                        line(&mut pixels, map(&samples[i]),
-                            map(&samples[(i+1)%samples.len()]), [81,240,164,255]);
+                        line(
+                            &mut pixels,
+                            map(&samples[i]),
+                            map(&samples[(i + 1) % samples.len()]),
+                            [81, 240, 164, 255],
+                        );
                     }
                 }
-                text(&mut pixels, 462, 212, "PREVIEW: VALID", [104,247,166,255]);
+                text(
+                    &mut pixels,
+                    462,
+                    212,
+                    "PREVIEW: VALID",
+                    [104, 247, 166, 255],
+                );
             }
-            Err(_) => text(&mut pixels, 462, 90, "INVALID FORMULA", [255,120,120,255]),
+            Err(_) => text(
+                &mut pixels,
+                462,
+                90,
+                "INVALID FORMULA",
+                [255, 120, 120, 255],
+            ),
         }
         let message: String = self.message.chars().take(93).collect();
-        text(&mut pixels, 13, 227, &message, [153,224,190,255]);
-        text(&mut pixels, 13, 246, "1/2/3 PRESETS   TAB FIELD   LEFT/RIGHT CIRCUIT   ENTER APPLY   ESC THEN C: COMPARE", [167,191,213,255]);
-        ImageAsset { width: WIDTH as u32, height: HEIGHT as u32, pixels }
+        text(&mut pixels, 13, 227, &message, [153, 224, 190, 255]);
+        text(
+            &mut pixels,
+            13,
+            246,
+            "1/2/3 PRESETS   TAB FIELD   LEFT/RIGHT CIRCUIT   ENTER APPLY   ESC THEN C: COMPARE",
+            [167, 191, 213, 255],
+        );
+        ImageAsset {
+            width: WIDTH as u32,
+            height: HEIGHT as u32,
+            pixels,
+        }
     }
-
 }
 /// A compact legend, independent from F3, that makes the physical
 /// difference between active mathematical contours visible at all times.
@@ -303,58 +380,84 @@ impl FormulaLegend {
         }
         let now = Instant::now();
         let revision = experiment.formulas.iter().fold(0_usize, |state, formula| {
-            state.wrapping_mul(31)
+            state
+                .wrapping_mul(31)
                 .wrapping_add(formula.x.len())
                 .wrapping_add(formula.y.len())
                 .wrapping_add(formula.z.len())
         });
-        if self.texture.is_none() || self.last_revision != revision ||
-            self.last_upload.is_none_or(|last| now.duration_since(last) >= Duration::from_millis(250))
+        if self.texture.is_none()
+            || self.last_revision != revision
+            || self
+                .last_upload
+                .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(250))
         {
             let mut pixels = vec![0_u8; W * H * 4];
-            let mut rect = |x: usize, y: usize, w: usize, h: usize, color: [u8;4]| {
-                for yy in y..(y+h).min(H) {
-                    for xx in x..(x+w).min(W) {
-                        let i=(yy*W+xx)*4;
-                        pixels[i..i+4].copy_from_slice(&color);
+            let mut rect = |x: usize, y: usize, w: usize, h: usize, color: [u8; 4]| {
+                for yy in y..(y + h).min(H) {
+                    for xx in x..(x + w).min(W) {
+                        let i = (yy * W + xx) * 4;
+                        pixels[i..i + 4].copy_from_slice(&color);
                     }
                 }
             };
             rect(0, 0, W, H, [9, 19, 32, 234]);
             rect(0, 0, W, 23, [24, 49, 71, 248]);
             // End rect's mutable borrow before drawing individual glyphs.
-            fn write(p: &mut [u8], x: usize, y: usize, label: &str, color: [u8;4]) {
+            fn write(p: &mut [u8], x: usize, y: usize, label: &str, color: [u8; 4]) {
                 for (i, ch) in label.chars().enumerate() {
-                    if x + 8 * (i + 1) >= W { break; }
+                    if x + 8 * (i + 1) >= W {
+                        break;
+                    }
                     if let Some(glyph) = BASIC_FONTS.get(ch) {
                         for (gy, bits) in glyph.iter().enumerate() {
                             for gx in 0..8 {
                                 if bits & (1 << gx) != 0 {
-                                    let index=((y+gy)*W+x+i*8+gx)*4;
-                                    p[index..index+4].copy_from_slice(&color);
+                                    let index = ((y + gy) * W + x + i * 8 + gx) * 4;
+                                    p[index..index + 4].copy_from_slice(&color);
                                 }
                             }
                         }
                     }
                 }
             }
-            write(&mut pixels, 10, 8, "ACTIVE MATHEMATICAL CIRCUITS", [212,240,255,255]);
+            write(
+                &mut pixels,
+                10,
+                8,
+                "ACTIVE MATHEMATICAL CIRCUITS",
+                [212, 240, 255, 255],
+            );
             for (index, formula) in experiment.formulas.iter().take(3).enumerate() {
                 let y = 31 + 27 * index;
-                let rgb = formula.color.map(|c| (c.clamp(0.0,1.0)*255.0) as u8);
-                for yy in y..y+12 {
+                let rgb = formula.color.map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8);
+                for yy in y..y + 12 {
                     for xx in 10..24 {
-                        let i=(yy*W+xx)*4;
-                        pixels[i..i+4].copy_from_slice(&[rgb[0],rgb[1],rgb[2],255]);
+                        let i = (yy * W + xx) * 4;
+                        pixels[i..i + 4].copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
                     }
                 }
                 let expression: String = formula.x.chars().take(33).collect();
-                write(&mut pixels, 34, y+2, &format!("{}: x(t)={}",index+1,expression),[216,235,245,255]);
-                write(&mut pixels, 369, y+2,
+                write(
+                    &mut pixels,
+                    34,
+                    y + 2,
+                    &format!("{}: x(t)={}", index + 1, expression),
+                    [216, 235, 245, 255],
+                );
+                write(
+                    &mut pixels,
+                    369,
+                    y + 2,
                     &format!("B:{:.0}", bound.get(index).copied().unwrap_or(0.0)),
-                    [121,246,172,255]);
+                    [121, 246, 172, 255],
+                );
             }
-            let image = ImageAsset {width:W as u32,height:H as u32,pixels};
+            let image = ImageAsset {
+                width: W as u32,
+                height: H as u32,
+                pixels,
+            };
             let next = base.render.recorder.upload(&image);
             if let Some(old) = self.texture.replace(next) {
                 base.render.recorder.release(old);
@@ -367,8 +470,8 @@ impl FormulaLegend {
             sprites: vec![Sprite {
                 texture: self.texture?,
                 source_rect: None,
-                size: [W as f32,H as f32],
-                tint: [1.0;4],
+                size: [W as f32, H as f32],
+                tint: [1.0; 4],
                 frame: Motor3::translation(Vec3::new(
                     viewport[0] as f32 - W as f32 * 0.5 - 12.0,
                     H as f32 * 0.5 + 12.0,
@@ -400,14 +503,14 @@ mod tests {
 
     #[test]
     fn editor_retains_formula_and_limits_text() {
-        let mut editor=FormulaEditor::default();
+        let mut editor = FormulaEditor::default();
         editor.expressions[0].clear();
         editor.input("2*cos(t)");
-        assert_eq!(editor.formula().x,"2*cos(t)");
+        assert_eq!(editor.formula().x, "2*cos(t)");
         editor.backspace();
-        assert_eq!(editor.expressions[0],"2*cos(t");
+        assert_eq!(editor.expressions[0], "2*cos(t");
         editor.next();
-        assert_eq!(editor.selected,1);
-        assert_eq!(editor.image().pixels.len(),WIDTH*HEIGHT*4);
+        assert_eq!(editor.selected, 1);
+        assert_eq!(editor.image().pixels.len(), WIDTH * HEIGHT * 4);
     }
 }

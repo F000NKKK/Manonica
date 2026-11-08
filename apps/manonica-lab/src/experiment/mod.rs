@@ -9,8 +9,8 @@ pub use builder::ExperimentBuilder;
 pub use error::ExperimentError;
 pub use formula::{capture_cells, sample_curve};
 pub use specification::{
-    AmbientFlow, ChannelSpec, Diffusion, Experiment, FieldSeed, Grid, MaterialSite,
-    FieldSource, Formula, FormulaTrap, PotentialBoundaryKind, PotentialConfig, SeedShape, Visualization,
+    AmbientFlow, ChannelSpec, Diffusion, Experiment, FieldSeed, FieldSource, Formula, FormulaTrap,
+    Grid, MaterialSite, PotentialBoundaryKind, PotentialConfig, SeedShape, Visualization,
 };
 
 #[cfg(test)]

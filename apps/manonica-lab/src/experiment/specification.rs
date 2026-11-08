@@ -353,12 +353,18 @@ impl Experiment {
         )?;
         if let Some(potential) = &p.potential {
             check(
-                potential.mobility.is_finite() && potential.mobility >= 0.0
-                    && potential.permittivity.is_finite() && potential.permittivity > 0.0
-                    && potential.screening.is_finite() && potential.screening > 0.0,
+                potential.mobility.is_finite()
+                    && potential.mobility >= 0.0
+                    && potential.permittivity.is_finite()
+                    && potential.permittivity > 0.0
+                    && potential.screening.is_finite()
+                    && potential.screening > 0.0,
                 "potential_parameters",
             )?;
-            check((1..=4096).contains(&potential.iterations), "potential_iterations")?;
+            check(
+                (1..=4096).contains(&potential.iterations),
+                "potential_iterations",
+            )?;
             check(
                 potential.initial_work_joules.is_finite()
                     && potential.initial_work_joules >= 0.0

@@ -191,7 +191,10 @@ fn formula_constructs_real_capture_sites_and_conserves_inventory() {
         sim.step().unwrap();
     }
     let final_balance = sim.material_balance().unwrap();
-    assert!(final_balance.bound > 0.0, "parametric ring must capture mana");
+    assert!(
+        final_balance.bound > 0.0,
+        "parametric ring must capture mana"
+    );
     assert!((initial.manons() - final_balance.manons()).abs() < 1e-6);
     assert!((initial.energy() - final_balance.energy()).abs() < 1e-6);
     sim.reset().unwrap();
@@ -204,12 +207,14 @@ fn three_formula_demo_has_distinct_geometry_and_independent_capture() {
     let experiment = Experiment::parse(include_str!("../../experiments/formula_comparison.toml"))
         .expect("comparison experiment parses");
     assert_eq!(experiment.formulas.len(), 3);
-    let shapes: Vec<_> = experiment.formulas.iter()
-        .map(|formula| sample_curve(formula).unwrap()).collect();
+    let shapes: Vec<_> = experiment
+        .formulas
+        .iter()
+        .map(|formula| sample_curve(formula).unwrap())
+        .collect();
 
-    let center_x = |points: &Vec<[f32; 3]>| {
-        points.iter().map(|p| p[0]).sum::<f32>() / points.len() as f32
-    };
+    let center_x =
+        |points: &Vec<[f32; 3]>| points.iter().map(|p| p[0]).sum::<f32>() / points.len() as f32;
     assert!(center_x(&shapes[0]) < -3.0);
     assert!(center_x(&shapes[1]).abs() < 0.5);
     assert!(center_x(&shapes[2]) > 3.0);
@@ -217,7 +222,10 @@ fn three_formula_demo_has_distinct_geometry_and_independent_capture() {
     // a substantial physical depth extent.
     let depth_range = |points: &Vec<[f32; 3]>| {
         let min = points.iter().map(|p| p[2]).fold(f32::INFINITY, f32::min);
-        let max = points.iter().map(|p| p[2]).fold(f32::NEG_INFINITY, f32::max);
+        let max = points
+            .iter()
+            .map(|p| p[2])
+            .fold(f32::NEG_INFINITY, f32::max);
         max - min
     };
     assert!(depth_range(&shapes[0]) < 0.01);
@@ -239,8 +247,10 @@ fn three_formula_demo_has_distinct_geometry_and_independent_capture() {
 
 #[test]
 fn powered_potential_concentrator_changes_the_real_free_mana_distribution() {
-    let experiment = Experiment::parse(include_str!("../../experiments/potential_concentrator.toml"))
-        .expect("powered field configuration must parse");
+    let experiment = Experiment::parse(include_str!(
+        "../../experiments/potential_concentrator.toml"
+    ))
+    .expect("powered field configuration must parse");
     let mut control = experiment.clone();
     control.physics.potential.as_mut().unwrap().mobility = 0.0;
     let mut active = Simulation::new(experiment).unwrap();
@@ -255,35 +265,51 @@ fn powered_potential_concentrator_changes_the_real_free_mana_distribution() {
         active.step().unwrap();
         passive.step().unwrap();
     }
-    let profile_difference: f64 = active.field().densities()
+    let profile_difference: f64 = active
+        .field()
+        .densities()
         .iter()
         .zip(passive.field().densities())
-        .map(|(a,b)| (a.value()-b.value()).abs())
+        .map(|(a, b)| (a.value() - b.value()).abs())
         .sum();
-    assert!(profile_difference > 0.1, "potential must change actual field, not mesh");
-    assert!((active.total().unwrap().value()-initial_manons).abs() < 1e-6);
+    assert!(
+        profile_difference > 0.1,
+        "potential must change actual field, not mesh"
+    );
+    assert!((active.total().unwrap().value() - initial_manons).abs() < 1e-6);
     let work = active.field_ledger().unwrap().operating_work_joules - initial_work;
-    assert!((active.tracked_energy().unwrap()-initial_energy-work).abs() < 1e-5);
+    assert!((active.tracked_energy().unwrap() - initial_energy - work).abs() < 1e-5);
 }
 
 #[test]
 fn potential_source_requires_explicit_field_installation_budget() {
-    let mut experiment =
-        Experiment::parse(include_str!("../../experiments/potential_concentrator.toml")).unwrap();
-    experiment.physics.potential.as_mut().unwrap().initial_work_joules = 0.0;
+    let mut experiment = Experiment::parse(include_str!(
+        "../../experiments/potential_concentrator.toml"
+    ))
+    .unwrap();
+    experiment
+        .physics
+        .potential
+        .as_mut()
+        .unwrap()
+        .initial_work_joules = 0.0;
     assert!(Simulation::new(experiment).is_err());
 }
 
 #[test]
 fn changing_source_formula_changes_potential_distribution() {
-    let mut experiment =
-        Experiment::parse(include_str!("../../experiments/potential_concentrator.toml")).unwrap();
+    let mut experiment = Experiment::parse(include_str!(
+        "../../experiments/potential_concentrator.toml"
+    ))
+    .unwrap();
     let first = Simulation::new(experiment.clone()).unwrap();
     let centre = first.potential().unwrap().at(16, 12, 16).unwrap();
     experiment.formulas[0].x = "0.8*cos(t)".into();
     experiment.formulas[0].z = "0.8*sin(t)".into();
     let second = Simulation::new(experiment).unwrap();
     let new_centre = second.potential().unwrap().at(16, 12, 16).unwrap();
-    assert!((centre-new_centre).abs()>1e-5,
-        "same formula geometry must drive both render and potential source");
+    assert!(
+        (centre - new_centre).abs() > 1e-5,
+        "same formula geometry must drive both render and potential source"
+    );
 }

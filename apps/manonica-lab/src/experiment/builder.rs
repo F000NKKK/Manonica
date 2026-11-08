@@ -1,6 +1,5 @@
 use super::{
-    AmbientFlow, Diffusion, Experiment, ExperimentError, FieldSeed, Grid, SeedShape,
-    Visualization,
+    AmbientFlow, Diffusion, Experiment, ExperimentError, FieldSeed, Grid, SeedShape, Visualization,
 };
 
 /// Rust-строитель воспроизводимых экспериментов; эквивалент TOML-схемы.

@@ -156,8 +156,10 @@ impl Simulation {
             let change = potential_after - potential_before;
             if !change.is_finite() {
                 return Err(manonica_error::BaseError::new(
-                    manonica_error::ErrorCode::InvalidRange, "potential_energy_overflow"
-                ).into());
+                    manonica_error::ErrorCode::InvalidRange,
+                    "potential_energy_overflow",
+                )
+                .into());
             }
             if change < 0.0 {
                 state.dissipated_heat_joules += -change;
@@ -166,8 +168,10 @@ impl Simulation {
                 let external = (change - heat_used).max(0.0);
                 if external > settings.max_power_joules_per_second * dt.seconds() + 1e-10 {
                     return Err(manonica_error::BaseError::new(
-                        manonica_error::ErrorCode::InvalidRange, "field_external_power"
-                    ).into());
+                        manonica_error::ErrorCode::InvalidRange,
+                        "field_external_power",
+                    )
+                    .into());
                 }
                 state.dissipated_heat_joules -= heat_used;
                 state.operating_work_joules += external;
@@ -225,21 +229,22 @@ fn build_materials(
         let Some(trap) = &formula.trap else {
             continue;
         };
-        let cells = crate::experiment::capture_cells(
-            formula,
-            [shape.nx(), shape.ny(), shape.nz()],
-            dx,
-        )?;
+        let cells =
+            crate::experiment::capture_cells(formula, [shape.nx(), shape.ny(), shape.nz()], dx)?;
         if cells.is_empty() {
             return Err(manonica_error::BaseError::new(
-                manonica_error::ErrorCode::InvalidRange, "empty_formula_trap"
-            ).into());
+                manonica_error::ErrorCode::InvalidRange,
+                "empty_formula_trap",
+            )
+            .into());
         }
         for cell in &cells {
             if !occupied.insert(*cell) {
                 return Err(manonica_error::BaseError::new(
-                    manonica_error::ErrorCode::InvalidRange, "overlapping_formula_trap"
-                ).into());
+                    manonica_error::ErrorCode::InvalidRange,
+                    "overlapping_formula_trap",
+                )
+                .into());
             }
         }
         let material = trap.material(cells.len());
@@ -270,28 +275,35 @@ fn build_potential(
         let cells = crate::experiment::capture_cells(formula, dims, dx)?;
         if cells.is_empty() {
             return Err(manonica_error::BaseError::new(
-                manonica_error::ErrorCode::InvalidRange, "empty_field_source"
-            ).into());
+                manonica_error::ErrorCode::InvalidRange,
+                "empty_field_source",
+            )
+            .into());
         }
         // Source magnitude is integrated across the whole construction, not
         // multiplied by its tessellation or number of occupied cells.
         let density = source.strength / (cells.len() as f64 * dx.powi(3));
-        for [x,y,z] in cells {
-            let index = shape.index(x,y,z).unwrap();
+        for [x, y, z] in cells {
+            let index = shape.index(x, y, z).unwrap();
             sources[index] += density;
         }
     }
     let potential = PotentialField::solve(
-        shape, dx, &sources, settings.permittivity, settings.screening,
-        settings.boundary.physics(), settings.iterations,
+        shape,
+        dx,
+        &sources,
+        settings.permittivity,
+        settings.screening,
+        settings.boundary.physics(),
+        settings.iterations,
     )?;
     let setup_energy = potential.field_energy_joules();
-    if !setup_energy.is_finite()
-        || setup_energy > settings.initial_work_joules + 1e-9
-    {
+    if !setup_energy.is_finite() || setup_energy > settings.initial_work_joules + 1e-9 {
         return Err(manonica_error::BaseError::new(
-            manonica_error::ErrorCode::InvalidRange, "field_initial_work_budget"
-        ).into());
+            manonica_error::ErrorCode::InvalidRange,
+            "field_initial_work_budget",
+        )
+        .into());
     }
     let ledger = FieldLedger {
         field_energy_joules: setup_energy,
