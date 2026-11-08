@@ -19,7 +19,7 @@ pub enum EquilibriumPhase {
 impl EquilibriumPhase {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Charging => "CHARGING",
+            Self::Charging => "DRIVEN",
             Self::Decaying => "FIELD DECAY",
             Self::Relaxing => "RELAXING",
             Self::Equilibrium => "EQUILIBRIUM",
