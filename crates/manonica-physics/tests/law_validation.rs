@@ -10,8 +10,8 @@ use manonica_core::{
     units::{Diffusivity, ManonDensity},
 };
 use manonica_physics::{
-    FreeDiffusion, FreeManaField, GridShape, MaterialLattice, PotentialBoundary,
-    PotentialField, TrapMaterial,
+    FreeDiffusion, FreeManaField, GridShape, MaterialLattice, PotentialBoundary, PotentialField,
+    TrapMaterial,
 };
 
 fn close(label: &str, measured: f64, expected: f64, tolerance: f64) {
@@ -43,10 +43,10 @@ fn law_diffusion_discrete_cosine_eigenmode_matches_analytic_amplitude() {
     }
     let solver = FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(d).unwrap()).unwrap();
     let before = field.total_manons().unwrap().value();
-    solver.evolve(&mut field, TimeStep::from_seconds(dt).unwrap()).unwrap();
-    let eigenvalue = -4.0
-        * (std::f64::consts::PI / (2.0 * N as f64)).sin().powi(2)
-        / (dx * dx);
+    solver
+        .evolve(&mut field, TimeStep::from_seconds(dt).unwrap())
+        .unwrap();
+    let eigenvalue = -4.0 * (std::f64::consts::PI / (2.0 * N as f64)).sin().powi(2) / (dx * dx);
     let amplitude = 2.0 * (1.0 + d * dt * eigenvalue);
     for x in 0..N {
         close(
@@ -56,7 +56,12 @@ fn law_diffusion_discrete_cosine_eigenmode_matches_analytic_amplitude() {
             1e-11,
         );
     }
-    close("diffusion conservation", field.total_manons().unwrap().value(), before, 1e-11);
+    close(
+        "diffusion conservation",
+        field.total_manons().unwrap().value(),
+        before,
+        1e-11,
+    );
 }
 
 /// LAW-POT-001: -epsilon ∆phi + screening phi = rho.
@@ -80,7 +85,12 @@ fn law_screened_poisson_uniform_insulated_source_matches_constant_solution() {
     }
     // With zero spatial gradient, field energy is just screening * phi² / 2.
     let expected_energy = 0.5 * 2.0 * 9.0 * shape.len() as f64;
-    close("screened potential energy", field.field_energy_joules(), expected_energy, 1e-8);
+    close(
+        "screened potential energy",
+        field.field_energy_joules(),
+        expected_energy,
+        1e-8,
+    );
 }
 
 /// LAW-DRIFT-001: J = -mu n grad(phi).
@@ -101,7 +111,10 @@ fn law_upwind_drift_face_flux_matches_gradient_and_preserves_manons() {
     .unwrap();
     let phi0 = potential.at(0, 0, 0).unwrap();
     let phi1 = potential.at(1, 0, 0).unwrap();
-    assert!(phi0 < phi1, "negative source attracts manons into first cell");
+    assert!(
+        phi0 < phi1,
+        "negative source attracts manons into first cell"
+    );
     let mobility = 0.25;
     let dt = 0.1;
     let initial = 10.0;
@@ -110,10 +123,30 @@ fn law_upwind_drift_face_flux_matches_gradient_and_preserves_manons() {
     let mut field = FreeManaField::uniform(shape, 1.0, density(0.0)).unwrap();
     field.set(1, 0, 0, density(initial)).unwrap();
     let report = potential.drift(&mut field, mobility, dt).unwrap();
-    close("left receives flux", field.at(0, 0, 0).unwrap().value(), expected, 1e-11);
-    close("right loses flux", field.at(1, 0, 0).unwrap().value(), initial - expected, 1e-11);
-    close("transported manons", report.transported_manons, expected, 1e-11);
-    close("drift conservation", report.after_manons, report.before_manons, 1e-11);
+    close(
+        "left receives flux",
+        field.at(0, 0, 0).unwrap().value(),
+        expected,
+        1e-11,
+    );
+    close(
+        "right loses flux",
+        field.at(1, 0, 0).unwrap().value(),
+        initial - expected,
+        1e-11,
+    );
+    close(
+        "transported manons",
+        report.transported_manons,
+        expected,
+        1e-11,
+    );
+    close(
+        "drift conservation",
+        report.after_manons,
+        report.before_manons,
+        1e-11,
+    );
 }
 
 /// LAW-HEAT-001: dQ/dt = -k Q for coupling to a fixed-temperature bath.
@@ -149,8 +182,18 @@ fn law_bath_cooling_matches_exponential_solution_and_energy_export() {
     let remaining = sites.at(0, 0, 0).unwrap().heat;
     let expected = initial * (-k * dt * 20.0).exp();
     close("exponential cooling", remaining, expected, 1e-11);
-    close("exported heat balance", remaining + exported, initial, 1e-11);
-    close("manons unaffected by cooling", sites.balance(&field).unwrap().manons(), count_before, 1e-11);
+    close(
+        "exported heat balance",
+        remaining + exported,
+        initial,
+        1e-11,
+    );
+    close(
+        "manons unaffected by cooling",
+        sites.balance(&field).unwrap().manons(),
+        count_before,
+        1e-11,
+    );
     close(
         "temperature from specific heat",
         sites.peak_temperature_kelvin().unwrap(),
