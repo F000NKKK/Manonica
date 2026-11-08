@@ -72,6 +72,7 @@ impl Simulation {
         self.advection.evolve(&mut candidate, dt)?;
         let mut next_materials = self.materials.clone();
         next_materials.step(&mut candidate, dt.seconds())?;
+        next_materials.conduct_heat(dt.seconds(), self.experiment.physics.thermal_conductance)?;
         let after =
             Quantity::<ManonCount>::nonnegative(next_materials.balance(&candidate)?.manons())?;
         let absolute_error =
