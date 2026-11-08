@@ -1,9 +1,7 @@
 //! Independent numerical reference experiments for materials laws.
 //! Each constitutive equation is checked against a quantitative reference.
 use manonica_core::{Quantity, units::ManonDensity};
-use manonica_materials::{
-    DirectionalConductivity, ManaChannel, MaterialLattice, TrapMaterial,
-};
+use manonica_materials::{DirectionalConductivity, ManaChannel, MaterialLattice, TrapMaterial};
 use manonica_physics::{FreeManaField, GridShape};
 
 fn close(label: &str, measured: f64, expected: f64, tolerance: f64) {
@@ -68,7 +66,6 @@ fn law_bath_cooling_matches_exponential_solution_and_energy_export() {
         1e-11,
     );
 }
-
 
 /// LAW-MAT-ANISO-001: J=-K grad(n) projected onto a channel.
 /// For principal K=[4,1,1], u_x^T K u_x=4 and u_y^T K u_y=1.

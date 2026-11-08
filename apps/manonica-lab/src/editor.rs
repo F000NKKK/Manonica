@@ -45,7 +45,8 @@ impl FormulaEditor {
     /// Replace active selection with keyboard or clipboard text. All
     /// insertions share the same ASCII and maximum-length constraints.
     pub fn input(&mut self, value: &str) {
-        let filtered: String = value.chars()
+        let filtered: String = value
+            .chars()
             .filter(|ch| ch.is_ascii() && !ch.is_control())
             .take(MAX_EXPRESSION)
             .collect();
@@ -63,7 +64,8 @@ impl FormulaEditor {
     /// Copy text only when an explicit selection exists, matching usual
     /// single-line text-field behavior.
     pub fn selected_text(&self) -> Option<&str> {
-        self.selection_all.then_some(&self.expressions[self.selected])
+        self.selection_all
+            .then_some(&self.expressions[self.selected])
     }
     pub fn paste(&mut self, text: &str) {
         self.input(text);
@@ -225,7 +227,11 @@ impl EditorOverlay {
         }
         let signature = format!(
             "{:?}|{}|{}|{}|{:?}",
-            editor.expressions, editor.selected, editor.selection_all, editor.message, editor.preview_error
+            editor.expressions,
+            editor.selected,
+            editor.selection_all,
+            editor.message,
+            editor.preview_error
         );
         if self.texture.is_none() || self.signature != signature {
             let next = base.render.recorder.upload(&editor.image());
@@ -410,10 +416,22 @@ impl FormulaEditor {
                     }
                 }
                 if let Some(error) = &self.preview_error {
-                    text(&mut pixels, 462, 212, "PREVIEW: GRID CONFLICT", [255, 141, 121, 255]);
+                    text(
+                        &mut pixels,
+                        462,
+                        212,
+                        "PREVIEW: GRID CONFLICT",
+                        [255, 141, 121, 255],
+                    );
                     text(&mut pixels, 13, 227, error, [255, 141, 121, 255]);
                 } else {
-                    text(&mut pixels, 462, 212, "PREVIEW: VALID", [104, 247, 166, 255]);
+                    text(
+                        &mut pixels,
+                        462,
+                        212,
+                        "PREVIEW: VALID",
+                        [104, 247, 166, 255],
+                    );
                 }
             }
             Err(_) => text(

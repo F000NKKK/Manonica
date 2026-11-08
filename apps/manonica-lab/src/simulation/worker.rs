@@ -315,8 +315,9 @@ fn run_simulation(
                 let started = Instant::now();
                 // Coalesce only overdue steps, and only if no material,
                 // advection or potential law requires intermediate states.
-                let overdue = (now.duration_since(next_tick).as_secs_f64()
-                    / period.as_secs_f64()).floor() as usize + 1;
+                let overdue = (now.duration_since(next_tick).as_secs_f64() / period.as_secs_f64())
+                    .floor() as usize
+                    + 1;
                 let steps = if gpu.is_some() && sim.supports_resident_diffusion() {
                     overdue.min(max_catch_up - ran).min(u32::MAX as usize)
                 } else {
@@ -350,7 +351,9 @@ fn run_simulation(
                                 break;
                             }
                         }
-                        if paused { break; }
+                        if paused {
+                            break;
+                        }
                     } else if gpu.is_some() && backend == BackendPreference::Gpu {
                         eprintln!("Manonica: forced GPU backend failed: {err}");
                         std::process::exit(3);

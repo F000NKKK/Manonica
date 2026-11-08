@@ -2,9 +2,9 @@
 //! A minimal discrete model for specification v0.1 §§3, 6-8, 10.
 //! Units: count (manons), energy (J), temperature (K), time (s).
 use crate::DirectionalConductivity;
-use manonica_physics::{FreeManaField, GridShape};
 use manonica_core::{Quantity, units::ManonDensity};
 use manonica_error::{BaseError, ErrorCode};
+use manonica_physics::{FreeManaField, GridShape};
 
 fn invalid(name: &'static str) -> BaseError {
     BaseError::new(ErrorCode::InvalidRange, name)
@@ -456,7 +456,10 @@ impl MaterialLattice {
             cell.bound += capture - release;
             cell.heat += (capture - release) * m.binding_energy;
             cell.heat = cell.heat.max(0.0);
-            next.set_flat(i, Quantity::<ManonDensity>::nonnegative(final_free / volume)?)?;
+            next.set_flat(
+                i,
+                Quantity::<ManonDensity>::nonnegative(final_free / volume)?,
+            )?;
         }
         // Passive geometry-dependent transport. Working on the candidate
         // field means channels cannot transport more than actually available.
@@ -480,8 +483,14 @@ impl MaterialLattice {
                 .min(if proposed >= 0.0 { fa } else { fb })
                 .min((fa - fb).abs() * 0.5);
             let signed = proposed.signum() * amount;
-            next.set_flat(a, Quantity::<ManonDensity>::nonnegative((fa - signed) / volume)?)?;
-            next.set_flat(b, Quantity::<ManonDensity>::nonnegative((fb + signed) / volume)?)?;
+            next.set_flat(
+                a,
+                Quantity::<ManonDensity>::nonnegative((fa - signed) / volume)?,
+            )?;
+            next.set_flat(
+                b,
+                Quantity::<ManonDensity>::nonnegative((fb + signed) / volume)?,
+            )?;
         }
         let after = Balance {
             free: next.total_manons()?.value(),

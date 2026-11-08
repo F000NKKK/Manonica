@@ -333,4 +333,3 @@ fn overlapping_or_nonphysical_local_constraints_are_rejected() {
         .is_err()
     );
 }
-

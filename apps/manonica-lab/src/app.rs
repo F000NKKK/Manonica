@@ -160,8 +160,9 @@ impl App {
                         match self.clipboard.as_mut() {
                             Some(clipboard) => match clipboard.set_text(text.to_owned()) {
                                 Ok(()) => state.editor.message = "COPIED SELECTION".into(),
-                                Err(err) => state.editor.message =
-                                    format!("CLIPBOARD COPY ERROR: {err}"),
+                                Err(err) => {
+                                    state.editor.message = format!("CLIPBOARD COPY ERROR: {err}")
+                                }
                             },
                             None => state.editor.message = "OS CLIPBOARD UNAVAILABLE".into(),
                         }
@@ -176,8 +177,9 @@ impl App {
                                 state.editor.paste(&value);
                                 state.editor.message = "PASTED INTO SELECTED FORMULA".into();
                             }
-                            Err(err) => state.editor.message =
-                                format!("CLIPBOARD PASTE ERROR: {err}"),
+                            Err(err) => {
+                                state.editor.message = format!("CLIPBOARD PASTE ERROR: {err}")
+                            }
                         },
                         None => state.editor.message = "OS CLIPBOARD UNAVAILABLE".into(),
                     }

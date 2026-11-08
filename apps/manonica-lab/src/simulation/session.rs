@@ -179,13 +179,17 @@ impl Simulation {
             return Err(manonica_error::BaseError::new(
                 manonica_error::ErrorCode::InvalidRange,
                 "resident_batch_requires_diffusion_only",
-            ).into());
+            )
+            .into());
         }
         let dt = TimeStep::from_seconds(self.experiment.physics.dt)?;
         let before = self.total()?;
         let mut candidate = self.field.clone();
         backend.evolve_diffusion_batch(
-            &mut candidate, self.experiment.physics.diffusivity, dt.seconds(), steps,
+            &mut candidate,
+            self.experiment.physics.diffusivity,
+            dt.seconds(),
+            steps,
         )?;
         let after = candidate.total_manons()?;
         let error = (after.value() - before.value()).abs();
@@ -193,7 +197,8 @@ impl Simulation {
             return Err(manonica_error::BaseError::new(
                 manonica_error::ErrorCode::NumericalInstability,
                 "resident_diffusion_conservation",
-            ).into());
+            )
+            .into());
         }
         self.field = candidate;
         self.time_seconds += dt.seconds() * steps as f64;
@@ -201,7 +206,12 @@ impl Simulation {
         // A batch provides one real observation; it must not manufacture
         // the 40 distinct observations required by the equilibrium monitor.
         self.equilibrium.observe(
-            &self.field, after.value(), 0.0, 0.0, 0.0, false,
+            &self.field,
+            after.value(),
+            0.0,
+            0.0,
+            0.0,
+            false,
             dt.seconds() * steps as f64,
         );
         Ok(ConservationReport {

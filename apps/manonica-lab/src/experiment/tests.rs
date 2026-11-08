@@ -482,11 +482,14 @@ fn resident_batch_matches_reference_diffusion_only_and_tracks_time() {
             _diffusivity: f64,
             dt_seconds: f64,
         ) -> Result<(), BaseError> {
-            self.0.evolve(field, TimeStep::from_seconds(dt_seconds)?)
-                .map_err(|_| BaseError::new(
-                    manonica_error::ErrorCode::NumericalInstability,
-                    "cpu_reference_diffusion",
-                ))?;
+            self.0
+                .evolve(field, TimeStep::from_seconds(dt_seconds)?)
+                .map_err(|_| {
+                    BaseError::new(
+                        manonica_error::ErrorCode::NumericalInstability,
+                        "cpu_reference_diffusion",
+                    )
+                })?;
             Ok(())
         }
     }
@@ -501,20 +504,28 @@ fn resident_batch_matches_reference_diffusion_only_and_tracks_time() {
     let mut actual = Simulation::new(experiment).unwrap();
     assert!(actual.supports_resident_diffusion());
     let mut backend = CpuReference(
-        FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(0.12).unwrap()).unwrap()
+        FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(0.12).unwrap()).unwrap(),
     );
     let original = actual.total().unwrap().value();
-    for _ in 0..20 { expected.step().unwrap(); }
+    for _ in 0..20 {
+        expected.step().unwrap();
+    }
     actual.step_diffusion_batch(&mut backend, 20).unwrap();
     assert_eq!(actual.steps(), expected.steps());
     assert!((actual.elapsed() - expected.elapsed()).abs() < 1e-10);
-    for (i, (a,b)) in actual.field().densities().iter()
-        .zip(expected.field().densities()).enumerate()
+    for (i, (a, b)) in actual
+        .field()
+        .densities()
+        .iter()
+        .zip(expected.field().densities())
+        .enumerate()
     {
-        assert!((a.value()-b.value()).abs() < 1e-10,
-            "batch and reference mismatch at cell {i}");
+        assert!(
+            (a.value() - b.value()).abs() < 1e-10,
+            "batch and reference mismatch at cell {i}"
+        );
     }
-    assert!((actual.total().unwrap().value()-original).abs() < 1e-7);
+    assert!((actual.total().unwrap().value() - original).abs() < 1e-7);
     // One batch = one physical observation, never 20 fake stable samples.
     assert!(actual.equilibrium_state().stable_steps <= 1);
 }
@@ -530,15 +541,18 @@ fn resident_batch_rejects_multiphysics_without_mutating_state() {
             _field: &mut FreeManaField,
             _diffusivity: f64,
             _dt: f64,
-        ) -> Result<(), BaseError> { Ok(()) }
+        ) -> Result<(), BaseError> {
+            Ok(())
+        }
     }
-    let exp = Experiment::parse(
-        include_str!("../../experiments/potential_concentrator.toml")
-    ).unwrap();
+    let exp = Experiment::parse(include_str!(
+        "../../experiments/potential_concentrator.toml"
+    ))
+    .unwrap();
     let mut simulation = Simulation::new(exp).unwrap();
     assert!(!simulation.supports_resident_diffusion());
     let before = simulation.total().unwrap().value();
     assert!(simulation.step_diffusion_batch(&mut Noop, 5).is_err());
     assert_eq!(simulation.steps(), 0);
-    assert!((simulation.total().unwrap().value()-before).abs() < 1e-10);
+    assert!((simulation.total().unwrap().value() - before).abs() < 1e-10);
 }
