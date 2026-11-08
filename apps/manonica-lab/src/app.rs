@@ -134,10 +134,7 @@ impl App {
                 state.editor.open = true;
                 state.mouse_locked = false;
                 window.set_cursor_grabbed(false);
-                // Show the first editable existing formula, where present.
-                if let Some(formula) = self.experiment.formulas.first() {
-                    state.editor.expressions = [formula.x.clone(), formula.y.clone(), formula.z.clone()];
-                }
+                state.editor.load(&self.experiment.formulas);
             } else if state.editor.open {
                 if input.was_key_pressed(KeyCode::Escape) {
                     state.editor.open = false;
@@ -145,10 +142,22 @@ impl App {
                     window.set_cursor_grabbed(true);
                 } else if input.was_key_pressed(KeyCode::Tab) {
                     state.editor.next();
+                } else if input.was_key_pressed(KeyCode::ArrowLeft) {
+                    state.editor.switch(&self.experiment.formulas, -1);
+                } else if input.was_key_pressed(KeyCode::ArrowRight) {
+                    state.editor.switch(&self.experiment.formulas, 1);
+                } else if input.was_key_pressed(KeyCode::Digit1) {
+                    state.editor.preset(1);
+                } else if input.was_key_pressed(KeyCode::Digit2) {
+                    state.editor.preset(2);
+                } else if input.was_key_pressed(KeyCode::Digit3) {
+                    state.editor.preset(3);
                 } else if input.was_key_pressed(KeyCode::Backspace) {
                     state.editor.backspace();
                 } else if input.was_key_pressed(KeyCode::Enter) {
-                    apply_formula = Some(state.editor.formula());
+                    apply_formula = Some((state.editor.circuit, state.editor.update_formula(
+                        self.experiment.formulas.get(state.editor.circuit)
+                    )));
                 } else {
                     // Text is committed by Meridian/Winit; don't treat navigation
                     // keys as text or move the camera while editing.
@@ -194,14 +203,14 @@ impl App {
             }
         }
 
-        if let Some(formula) = apply_formula {
+        if let Some((formula_index, formula)) = apply_formula {
             let mut experiment = self.experiment.clone();
             if experiment.formulas.is_empty() {
                 experiment.formulas.push(formula);
             } else {
                 // Editing the first circuit must not silently destroy the
                 // other independently defined physical constructions.
-                experiment.formulas[0] = formula;
+                experiment.formulas[formula_index] = formula;
             }
             // Validate geometry and cell occupancy before modifying either
             // simulation or renderer; invalid input leaves the old state live.
