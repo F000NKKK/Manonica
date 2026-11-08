@@ -260,6 +260,14 @@ impl MaterialLattice {
             .reduce(f64::max)
     }
 
+    /// Maximum temperature above each material's own reference bath, in K.
+    /// This is a temperature difference, not a heat-energy reservoir.
+    pub fn peak_temperature_excess_kelvin(&self) -> f64 {
+        self.cells.iter().filter_map(|cell| {
+            cell.material.map(|m| (cell.heat / m.heat_capacity).abs())
+        }).fold(0.0_f64, f64::max)
+    }
+
     pub fn total_capacity(&self) -> f64 {
         self.cells
             .iter()
