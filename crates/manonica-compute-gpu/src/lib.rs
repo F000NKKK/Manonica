@@ -137,6 +137,17 @@ impl GpuDiffusion {
     }
 }
 
+impl manonica_physics::FreeManaDiffusionBackend for GpuDiffusion {
+    fn evolve_free_diffusion(
+        &mut self,
+        field: &mut FreeManaField,
+        diffusivity: f64,
+        dt_seconds: f64,
+    ) -> Result<(), BaseError> {
+        self.evolve(field, diffusivity, dt_seconds)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
