@@ -339,7 +339,7 @@ fn build_materials(
         }
     }
     for channel in &experiment.channels {
-        materials.add_channel(channel.physics())?;
+        channel.install(&mut materials)?;
     }
     Ok(materials)
 }
