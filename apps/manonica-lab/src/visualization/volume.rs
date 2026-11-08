@@ -221,6 +221,13 @@ impl ManaVolume {
         })
     }
 
+    /// Discard cached atlas metadata after a live experiment reconfiguration.
+    pub fn invalidate(&mut self) {
+        self.last_requested = None;
+        self.last_submitted = None;
+        self.count = 0;
+    }
+
     pub fn visible_slices(&self) -> usize {
         self.count
     }
