@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use manonica_physics::FreeManaField;
 
 use super::Simulation;
+use crate::experiment::Experiment;
 
 const SNAPSHOT_PERIOD: Duration = Duration::from_millis(50);
 
@@ -43,10 +44,11 @@ impl SimulationSnapshot {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 enum Command {
     Pause(bool),
     Reset,
+    Replace(Experiment),
 }
 
 /// Owned by the app; only the worker owns `Simulation`.
@@ -88,6 +90,12 @@ impl SimulationWorker {
         }
     }
 
+    pub fn replace_experiment(&self, experiment: Experiment) {
+        if let Some(tx) = &self.commands {
+            let _ = tx.send(Command::Replace(experiment));
+        }
+    }
+
     pub fn poll_latest(&self) -> Option<SimulationSnapshot> {
         let mut newest = None;
         while let Ok(snapshot) = self.snapshots.try_recv() {
@@ -126,9 +134,8 @@ fn run_simulation(
     commands: Receiver<Command>,
     updates: SyncSender<SimulationSnapshot>,
 ) {
-    let dt = sim.experiment.physics.dt;
-    let period = Duration::from_secs_f64(dt);
-    let max_catch_up = sim.experiment.physics.steps_per_frame;
+    let mut period = Duration::from_secs_f64(sim.experiment.physics.dt);
+    let mut max_catch_up = sim.experiment.physics.steps_per_frame;
     let mut next_tick = Instant::now() + period;
     let mut next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
     let mut paused = false;
@@ -162,6 +169,26 @@ fn run_simulation(
                     }
                 }
                 publish(&updates, &sim, cpu_ms, paused, &error);
+            }
+            Ok(Command::Replace(experiment)) => {
+                match Simulation::new(experiment) {
+                    Ok(next) => {
+                        sim = next;
+                        period = Duration::from_secs_f64(sim.experiment.physics.dt);
+                        max_catch_up = sim.experiment.physics.steps_per_frame;
+                        error = None;
+                        paused = false;
+                        cpu_ms = 0.0;
+                        next_tick = Instant::now() + period;
+                        next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
+                        publish(&updates, &sim, cpu_ms, paused, &error);
+                    }
+                    Err(err) => {
+                        error = Some(err.to_string());
+                        paused = true;
+                        publish(&updates, &sim, cpu_ms, paused, &error);
+                    }
+                }
             }
             Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {}
