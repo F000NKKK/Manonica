@@ -108,6 +108,8 @@ pub struct App {
     bridge: Arc<Mutex<InputBridge>>,
     running: Arc<AtomicBool>,
     render_thread: Option<JoinHandle<()>>,
+    /// Clipboard ownership must persist on Linux after Ctrl+C.
+    clipboard: Option<arboard::Clipboard>,
 }
 
 impl App {
@@ -127,6 +129,7 @@ impl App {
             bridge: Arc::new(Mutex::new(InputBridge::new(initial, &experiment))),
             running: Arc::new(AtomicBool::new(true)),
             render_thread: None,
+            clipboard: None,
         }
     }
 
@@ -145,7 +148,40 @@ impl App {
                 window.set_cursor_grabbed(false);
                 state.editor.load(&self.experiment.formulas);
             } else if state.editor.open {
-                if input.was_key_pressed(KeyCode::Escape) {
+                let ctrl = input.is_key_down(KeyCode::ControlLeft)
+                    || input.is_key_down(KeyCode::ControlRight);
+                if ctrl && input.was_key_pressed(KeyCode::A) {
+                    state.editor.select_all();
+                } else if ctrl && input.was_key_pressed(KeyCode::C) {
+                    if let Some(text) = state.editor.selected_text() {
+                        if self.clipboard.is_none() {
+                            self.clipboard = arboard::Clipboard::new().ok();
+                        }
+                        match self.clipboard.as_mut() {
+                            Some(clipboard) => match clipboard.set_text(text.to_owned()) {
+                                Ok(()) => state.editor.message = "COPIED SELECTION".into(),
+                                Err(err) => state.editor.message =
+                                    format!("CLIPBOARD COPY ERROR: {err}"),
+                            },
+                            None => state.editor.message = "OS CLIPBOARD UNAVAILABLE".into(),
+                        }
+                    }
+                } else if ctrl && input.was_key_pressed(KeyCode::V) {
+                    if self.clipboard.is_none() {
+                        self.clipboard = arboard::Clipboard::new().ok();
+                    }
+                    match self.clipboard.as_mut() {
+                        Some(clipboard) => match clipboard.get_text() {
+                            Ok(value) => {
+                                state.editor.paste(&value);
+                                state.editor.message = "PASTED INTO SELECTED FORMULA".into();
+                            }
+                            Err(err) => state.editor.message =
+                                format!("CLIPBOARD PASTE ERROR: {err}"),
+                        },
+                        None => state.editor.message = "OS CLIPBOARD UNAVAILABLE".into(),
+                    }
+                } else if input.was_key_pressed(KeyCode::Escape) {
                     state.editor.open = false;
                     window.set_ime_allowed(false);
                     state.mouse_locked = true;
@@ -171,9 +207,8 @@ impl App {
                             .editor
                             .update_formula(self.experiment.formulas.get(state.editor.circuit)),
                     ));
-                } else {
-                    // Text is committed by Meridian/Winit; don't treat navigation
-                    // keys as text or move the camera while editing.
+                } else if !ctrl {
+                    // Ignore committed shortcut characters while Control is held.
                     state.editor.input(input.text());
                 }
             } else if input.was_key_pressed(KeyCode::Escape) {
