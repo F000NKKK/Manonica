@@ -93,7 +93,7 @@ impl DebugHud {
         }
     }
 
-    pub fn overlay(&mut self, base: &mut GraphicsSession, viewport: [u32; 2]) -> Option<Overlay2d> {
+    pub fn overlay(&mut self, base: &mut GraphicsSession, viewport: [u32; 2], editor_open: bool) -> Option<Overlay2d> {
         let latest = self.latest?;
         let now = Instant::now();
         if self.image.is_none()
@@ -118,7 +118,12 @@ impl DebugHud {
                 tint: [1.0; 4],
                 frame: Motor3::translation(Vec3::new(
                     12.0 + WIDTH as f32 * 0.5,
-                    12.0 + HEIGHT as f32 * 0.5,
+                    if editor_open {
+                        (viewport[1] as f32 - HEIGHT as f32 * 0.5 - 12.0)
+                            .max(HEIGHT as f32 * 0.5)
+                    } else {
+                        12.0 + HEIGHT as f32 * 0.5
+                    },
                     0.0,
                 )),
                 layer: 0,
