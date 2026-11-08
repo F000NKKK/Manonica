@@ -103,6 +103,14 @@ impl ManaChannel {
     }
 }
 
+/// External work and heat spent to release bound manons.
+#[derive(Debug, Clone, Copy)]
+pub struct DischargeReport {
+    pub released: f64,
+    pub work_used_joules: f64,
+    pub heat_used_joules: f64,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Balance {
     pub free: f64,
@@ -158,6 +166,70 @@ impl MaterialLattice {
         self.cells[index].material = Some(material);
         Ok(())
     }
+    /// Controlled crystal discharge, supplying explicit external work.
+    /// Work is consumed only when the cell's heat cannot pay the binding
+    /// energy. No manons are created; the operation is transactional.
+    pub fn release_with_work(
+        &mut self,
+        field: &mut FreeManaField,
+        at: [usize; 3],
+        requested: f64,
+        work_budget_joules: f64,
+        dt: f64,
+    ) -> Result<DischargeReport, BaseError> {
+        nonnegative(requested, "requested_release")?;
+        nonnegative(work_budget_joules, "discharge_work_budget")?;
+        positive(dt, "discharge_dt")?;
+        if field.shape() != self.shape {
+            return Err(invalid("material_grid_shape"));
+        }
+        let i = self
+            .shape
+            .index(at[0], at[1], at[2])
+            .ok_or(invalid("discharge_coordinates"))?;
+        let cell = &self.cells[i];
+        let material = cell.material.ok_or(invalid("missing_discharge_trap"))?;
+        material.validate()?;
+        nonnegative(cell.bound, "bound_manons")?;
+        nonnegative(cell.heat, "stored_heat")?;
+        if cell.bound > material.capacity {
+            return Err(invalid("trap_saturation"));
+        }
+        let budget = cell.heat + work_budget_joules;
+        if !budget.is_finite() {
+            return Err(invalid("discharge_energy_overflow"));
+        }
+        let affordable = if material.binding_energy > 0.0 {
+            budget / material.binding_energy
+        } else {
+            cell.bound
+        };
+        let released = requested
+            .min(cell.bound)
+            .min(material.max_flux * dt)
+            .min(affordable);
+        let needed = released * material.binding_energy;
+        let heat_used = needed.min(cell.heat);
+        let work_used = needed - heat_used;
+        let volume = field.cell_width_metres().powi(3);
+        let free = field.densities()[i].value() * volume;
+        let new_density = Quantity::<ManonDensity>::nonnegative((free + released) / volume)?;
+        // Validate all prospective scalars before committing either state.
+        nonnegative(cell.bound - released, "discharge_bound")?;
+        nonnegative(cell.heat - heat_used, "discharge_heat")?;
+        if !work_used.is_finite() || work_used > work_budget_joules {
+            return Err(invalid("discharge_work_budget"));
+        }
+        field.replace_density_at(i, new_density);
+        self.cells[i].bound -= released;
+        self.cells[i].heat -= heat_used;
+        Ok(DischargeReport {
+            released,
+            work_used_joules: work_used,
+            heat_used_joules: heat_used,
+        })
+    }
+
     pub fn add_channel(&mut self, channel: ManaChannel) -> Result<(), BaseError> {
         channel.validate(self.shape)?;
         self.channels.push(channel);
@@ -335,6 +407,32 @@ mod tests {
         assert!((field.at(1, 0, 0).unwrap().value() - 1.0).abs() < 1e-8);
         assert!((sites.balance(&field).unwrap().manons() - before.manons()).abs() < 1e-8);
     }
+    #[test]
+    fn controlled_discharge_consumes_work_and_preserves_energy() {
+        let shape = GridShape::new(1, 1, 1).unwrap();
+        let mut field = FreeManaField::uniform(
+            shape, 1.0, Quantity::nonnegative(20.0).unwrap(),
+        ).unwrap();
+        let mut sites = MaterialLattice::new(shape);
+        let mut m = material();
+        m.release_rate = 0.0;
+        sites.install([0, 0, 0], m).unwrap();
+        sites.step(&mut field, 1.0).unwrap();
+        let before = sites.balance(&field).unwrap();
+        assert!(before.bound > 0.0);
+        let requested = before.bound.min(2.0);
+        let report = sites.release_with_work(
+            &mut field, [0, 0, 0], requested, 10.0, 1.0,
+        ).unwrap();
+        let after = sites.balance(&field).unwrap();
+        assert!((before.manons() - after.manons()).abs() < 1e-8);
+        assert!((before.energy() + report.work_used_joules - after.energy()).abs() < 1e-8);
+        assert!((report.released - requested).abs() < 1e-8);
+        let snapshot = sites.balance(&field).unwrap();
+        assert!(sites.release_with_work(&mut field, [0, 0, 0], 1.0, -1.0, 1.0).is_err());
+        assert_eq!(sites.balance(&field).unwrap().manons(), snapshot.manons());
+    }
+
     #[test]
     fn failed_step_does_not_mutate_state() {
         let shape = GridShape::new(1, 1, 1).unwrap();
