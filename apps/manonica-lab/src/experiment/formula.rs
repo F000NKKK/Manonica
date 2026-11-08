@@ -31,6 +31,24 @@ pub fn sample_curve(formula: &Formula) -> Result<Vec<[f32; 3]>, ExperimentError>
         }
         samples.push([p[0] as f32, p[1] as f32, p[2] as f32]);
     }
+    // The renderer closes the last edge to the first point. Refuse a
+    // non-periodic parameterization rather than inventing a long edge.
+    let end = [x(std::f64::consts::TAU), y(std::f64::consts::TAU), z(std::f64::consts::TAU)];
+    let start = [x(0.0), y(0.0), z(0.0)];
+    if end.iter().chain(start.iter()).any(|v| !v.is_finite()) {
+        return Err(invalid());
+    }
+    let max_coord = samples
+        .iter()
+        .flatten()
+        .map(|v| f64::from(v.abs()))
+        .fold(1.0_f64, f64::max);
+    let closing_error = (0..3)
+        .map(|i| (end[i] - start[i]).powi(2))
+        .sum::<f64>().sqrt();
+    if closing_error > max_coord * 1e-3 {
+        return Err(invalid());
+    }
     if samples.windows(2).all(|p| p[0] == p[1]) {
         return Err(invalid());
     }
@@ -40,6 +58,21 @@ pub fn sample_curve(formula: &Formula) -> Result<Vec<[f32; 3]>, ExperimentError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nonperiodic_formula_does_not_invent_closing_segment() {
+        let formula = Formula {
+            name: "open".into(),
+            x: "t".into(),
+            y: "0".into(),
+            z: "0".into(),
+            segments: 64,
+            thickness: 0.03,
+            color: [0.5, 0.8, 1.0],
+            trap: None,
+        };
+        assert!(sample_curve(&formula).is_err());
+    }
+
     #[test]
     fn parametrized_circle_is_closed_with_finite_coordinates() {
         let formula = Formula {
