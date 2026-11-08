@@ -11,7 +11,7 @@ use meridian_sdk::{
 };
 
 const WIDTH: usize = 520;
-const HEIGHT: usize = 448;
+const HEIGHT: usize = 472;
 const HISTORY: usize = 180;
 const UPDATE_PERIOD: Duration = Duration::from_millis(200);
 
@@ -36,6 +36,7 @@ pub struct FrameMetrics {
     pub trap_temperature_kelvin: f64,
     pub exported_heat_joules: f64,
     pub field_shutdown: bool,
+    pub equilibrium: crate::simulation::EquilibriumState,
     pub initial_total: f64,
     pub peak_density: f64,
     pub shown_slices: usize,
@@ -275,8 +276,27 @@ impl DebugHud {
         );
         canvas.text(
             12,
-            437,
-            "CPU frame interval and solver timings; not GPU execution",
+            433,
+            &format!(
+                "PHASE {}  DENSITY RATE {:.2e}",
+                m.equilibrium.phase.label(), m.equilibrium.density_rate
+            ),
+            1,
+            [144, 229, 255, 255],
+        );
+        canvas.text(
+            12,
+            449,
+            &format!(
+                "BOUND RATE {:.2e}/s  STABLE {} steps",
+                m.equilibrium.bound_rate, m.equilibrium.stable_steps
+            ),
+            1,
+            [144, 229, 255, 255],
+        );
+        canvas.text(
+            12, 461,
+            "Solver CPU times; not full GPU frame execution",
             1,
             [118, 147, 177, 255],
         );
@@ -432,6 +452,7 @@ mod tests {
                 trap_temperature_kelvin: 300.0,
                 exported_heat_joules: 0.0,
                 field_shutdown: false,
+                equilibrium: crate::simulation::EquilibriumState::default(),
                 initial_total: 10.0,
                 peak_density: 3.0,
                 shown_slices: 20,
