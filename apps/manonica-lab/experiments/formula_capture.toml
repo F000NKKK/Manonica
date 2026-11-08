@@ -1,75 +1,50 @@
-# Начальные условия и геометрия. Списка заклинаний нет.
-name = "Формульный контур поглощения манонов"
+# Отдельный демонстрационный опыт: физическая формула захватывает маноны
+# из кольцевого облака. Никаких декоративных старых кругов.
+name = "Формульная ловушка — захват манонов"
 
 [grid]
 dimensions = [28, 24, 28]
 cell_size = 0.45
 
 [physics]
-diffusivity = 0.22
+diffusivity = 0.08
 dt = 0.02
 steps_per_frame = 1
 thermal_conductance = 0.05
 
 [visualization]
-relative_threshold = 0.075
+relative_threshold = 0.035
 max_points = 1100
 exposure = 2.4
-optical_density = 0.18
+optical_density = 0.22
 wisps = true
 
-[[seeds]]
-shape = "gaussian"
-center = [0.0, 0.15, 0.0]
-sigma = 0.75
-total_manons = 9500.0
-
+# Исходный запас размещён вдоль будущей кольцевой ловушки.
 [[seeds]]
 shape = "ring"
-center = [0.0, -0.5, 0.0]
+center = [0.0, -0.45, 0.0]
 normal = [0.0, 1.0, 0.0]
-radius = 1.95
-sigma = 0.28
-total_manons = 1800.0
+radius = 2.2
+sigma = 0.38
+total_manons = 12000.0
 
-[[circles]]
-name = "Внешний контур"
-center = [0.0, -0.8, 0.0]
-normal = [0.0, 1.0, 0.0]
-radius = 2.15
-thickness = 0.035
-segments = 128
-spokes = 12
-color = [0.25, 0.55, 1.0]
-
-[[circles]]
-name = "Внутренний контур"
-center = [0.0, -0.78, 0.0]
-normal = [0.0, 1.0, 0.0]
-radius = 1.35
-thickness = 0.022
-segments = 96
-spokes = 0
-color = [0.55, 0.2, 1.0]
-
-# A mathematical equation draws an actual capturing physical circuit.
-# Each point of the curve is projected to a material trap cell.
-# The bound inventory is visible in F3 and depletes the free field.
+# Действующая магическая формула: замкнутый круг в горизонтальной плоскости.
 [[formulas]]
 name = "Поглощающий контур"
 x = "2.2*cos(t)"
-y = "-0.8"
+y = "-0.45"
 z = "2.2*sin(t)"
 segments = 96
-thickness = 0.035
-color = [0.2, 0.9, 0.6]
+thickness = 0.055
+color = [0.15, 1.0, 0.45]
 
+# Поглощение не создаёт новых манонов. FREE падает, BOUND растёт.
 [formulas.trap]
-capacity = 2500.0
-capture_rate = 0.18
-release_rate = 0.002
+capacity = 8000.0
+capture_rate = 3.0
+release_rate = 0.0
 binding_energy = 0.08
 heat_capacity = 100.0
 reference_temperature = 300.0
 activation_temperature = 300.0
-max_flux = 75.0
+max_flux = 3500.0
