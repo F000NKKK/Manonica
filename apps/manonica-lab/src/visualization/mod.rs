@@ -2,5 +2,6 @@
 
 mod circle_mesh;
 mod field_view;
+mod volume;
 
 pub use field_view::FieldView;
