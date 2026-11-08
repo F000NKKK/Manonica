@@ -1,0 +1,35 @@
+name: Manonica Lab (Meridian SDK)
+
+on:
+  push:
+    paths:
+      - 'apps/manonica-lab/**'
+      - 'crates/manonica-core/**'
+      - 'crates/manonica-physics/**'
+      - 'crates/manonica-error/**'
+      - '.github/workflows/lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux dependencies for Meridian audio/window backend
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev pkg-config libx11-dev libwayland-dev libxkbcommon-dev
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache compilation
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/manonica-lab
+      - name: Check graphic app
+        run: cargo check --manifest-path apps/manonica-lab/Cargo.toml
+      - name: Test experiment invariants and procedural geometry
+        run: cargo test --manifest-path apps/manonica-lab/Cargo.toml
