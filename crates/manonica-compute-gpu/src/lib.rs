@@ -496,6 +496,32 @@ mod tests {
         );
     }
 
+    /// LAW-GPU-ADV-001: exact upwind transfer, no exterior leakage.
+    /// On three unit cells, v=+1, dt=0.25: [100,0,0] -> [75,25,0].
+    #[test]
+    fn gpu_uniform_advection_matches_exact_face_flux() {
+        if std::env::var_os("CI").is_some()
+            && std::env::var("MANONICA_GPU_TEST").as_deref() != Ok("1")
+        {
+            return;
+        }
+        let shape = GridShape::new(3, 1, 1).unwrap();
+        let mut field = FreeManaField::uniform(
+            shape, 1.0, Quantity::<ManonDensity>::nonnegative(0.0).unwrap()
+        ).unwrap();
+        field.set(0, 0, 0, Quantity::nonnegative(100.0).unwrap()).unwrap();
+        let mut gpu = GpuDiffusion::new(&field).expect("GPU compute required");
+        let before = field.total_manons().unwrap().value();
+        gpu.evolve_uniform_flow(&mut field, 0.0, 0.25, [1.0, 0.0, 0.0]).unwrap();
+        for (x, expected) in [75.0, 25.0, 0.0].into_iter().enumerate() {
+            assert!(
+                (field.at(x, 0, 0).unwrap().value() - expected).abs() <= 1e-5,
+                "upwind conservation failure at x={x}"
+            );
+        }
+        assert!((field.total_manons().unwrap().value() - before).abs() < 1e-6);
+    }
+
     /// Manual performance comparison; skipped in CI without an adapter.
     /// Measures real end-to-end wall time, including every transfer.
     #[test]
