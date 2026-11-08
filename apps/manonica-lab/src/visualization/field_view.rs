@@ -4,7 +4,7 @@ use meridian_sdk::{GraphicsSession, Light, Material, Motor3, Renderable3d, Scale
 use crate::experiment::Experiment;
 use crate::simulation::SimulationSnapshot;
 
-use super::circle_mesh::{circle_mesh, formula_mesh};
+use super::circle_mesh::formula_mesh;
 use super::volume::ManaVolume;
 
 /// The magic circles are scene geometry, while the free-manon density is
@@ -19,36 +19,6 @@ pub struct FieldView {
 impl FieldView {
     pub fn new(mut base: GraphicsSession, experiment: &Experiment) -> Result<Self, String> {
         let mut renderables = Vec::new();
-        for circle in &experiment.circles {
-            let mesh = base
-                .render
-                .meshes
-                .register(circle_mesh(circle))
-                .map_err(|e| format!("circle {}: {e}", circle.name))?;
-            let material = base.render.materials.register(Material {
-                base_color_factor: [circle.color[0], circle.color[1], circle.color[2], 1.0],
-                emissive: circle
-                    .color
-                    .map(|v| v * experiment.visualization.exposure * 1.5),
-                unlit: true,
-                ..Default::default()
-            });
-            renderables.push(Renderable3d {
-                mesh,
-                material,
-                frame: Motor3::translation(Vec3::new(
-                    circle.center[0],
-                    circle.center[1],
-                    circle.center[2],
-                )),
-                scale: Scale3::UNIT,
-                billboard: false,
-                casts_shadow: false,
-                palette: None,
-                morph_weights: Vec::new(),
-            });
-        }
-
         for formula in &experiment.formulas {
             let mesh = base
                 .render
@@ -94,6 +64,41 @@ impl FieldView {
             volume,
             static_count,
         })
+    }
+
+    /// Atomically replace visible formula geometry while retaining the
+    /// volume sampler, WGPU surface and rendering thread.
+    pub fn replace_formulas(&mut self, experiment: &Experiment) -> Result<(), String> {
+        let mut next = Vec::new();
+        for formula in &experiment.formulas {
+            let mesh = self.base.render.meshes.register(formula_mesh(formula)?)
+                .map_err(|err| format!("formula {}: {err}", formula.name))?;
+            let material = self.base.render.materials.register(Material {
+                base_color_factor: [formula.color[0], formula.color[1], formula.color[2], 1.0],
+                emissive: formula.color.map(|v| v * experiment.visualization.exposure * 1.5),
+                unlit: true,
+                ..Default::default()
+            });
+            next.push(Renderable3d {
+                mesh,
+                material,
+                frame: Motor3::translation(Vec3::ZERO),
+                scale: Scale3::UNIT,
+                billboard: false,
+                casts_shadow: false,
+                palette: None,
+                morph_weights: Vec::new(),
+            });
+        }
+        for old in self.scene.renderables.drain(..self.static_count) {
+            self.base.render.meshes.unregister(old.mesh);
+            self.base.render.materials.unregister(old.material);
+        }
+        self.scene.renderables.clear();
+        self.static_count = next.len();
+        self.scene.renderables = next;
+        self.volume.invalidate();
+        Ok(())
     }
 
     pub fn update(&mut self, snapshot: &SimulationSnapshot, experiment: &Experiment) {
