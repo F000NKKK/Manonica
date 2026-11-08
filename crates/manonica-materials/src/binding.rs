@@ -221,7 +221,7 @@ impl MaterialLattice {
         if !work_used.is_finite() || work_used > work_budget_joules {
             return Err(invalid("discharge_work_budget"));
         }
-        field.replace_density_at(i, new_density);
+        field.set_flat(i, new_density)?;
         self.cells[i].bound -= released;
         self.cells[i].heat -= heat_used;
         Ok(DischargeReport {
