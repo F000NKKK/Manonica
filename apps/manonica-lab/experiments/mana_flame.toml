@@ -31,22 +31,41 @@ radius = 1.95
 sigma = 0.28
 total_manons = 1800.0
 
-[[circles]]
-name = "Внешний контур"
-center = [0.0, -0.8, 0.0]
-normal = [0.0, 1.0, 0.0]
-radius = 2.15
-thickness = 0.035
+# Physical geometric elements derive exclusively from parametric equations.
+[[formulas]]
+name = "Внешний формульный контур"
+x = "2.15*cos(t)"
+y = "-0.8"
+z = "2.15*sin(t)"
 segments = 128
-spokes = 12
+thickness = 0.035
 color = [0.25, 0.55, 1.0]
 
-[[circles]]
-name = "Внутренний контур"
-center = [0.0, -0.78, 0.0]
-normal = [0.0, 1.0, 0.0]
-radius = 1.35
-thickness = 0.022
+[formulas.trap]
+capacity = 1800.0
+capture_rate = 0.35
+release_rate = 0.001
+binding_energy = 0.08
+heat_capacity = 90.0
+reference_temperature = 300.0
+activation_temperature = 300.0
+max_flux = 250.0
+
+[[formulas]]
+name = "Внутренний формульный контур"
+x = "1.35*cos(t)"
+y = "-0.78"
+z = "1.35*sin(t)"
 segments = 96
-spokes = 0
+thickness = 0.022
 color = [0.55, 0.2, 1.0]
+
+[formulas.trap]
+capacity = 800.0
+capture_rate = 0.25
+release_rate = 0.002
+binding_energy = 0.08
+heat_capacity = 50.0
+reference_temperature = 300.0
+activation_temperature = 300.0
+max_flux = 100.0
