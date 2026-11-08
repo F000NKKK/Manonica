@@ -4,7 +4,8 @@ use meridian_sdk::{
     Camera2d, GraphicsSession, ImageAsset, Motor3, Overlay2d, Scene2d, Sprite, TextureHandle,
     TextureStore, Vec3,
 };
-use crate::experiment::{sample_curve, Formula, FormulaTrap};
+use crate::experiment::{sample_curve, Experiment, Formula, FormulaTrap};
+use std::time::{Duration, Instant};
 
 const WIDTH: usize = 820;
 const HEIGHT: usize = 264;
@@ -274,6 +275,107 @@ impl FormulaEditor {
     }
 
 }
+/// A compact legend, independent from F3, that makes the physical
+/// difference between active mathematical contours visible at all times.
+#[derive(Default)]
+pub struct FormulaLegend {
+    texture: Option<TextureHandle>,
+    last_upload: Option<Instant>,
+    last_revision: usize,
+}
+impl FormulaLegend {
+    pub fn draw(
+        &mut self,
+        base: &mut GraphicsSession,
+        experiment: &Experiment,
+        bound: &[f64],
+        viewport: [u32; 2],
+        editor_open: bool,
+    ) -> Option<Overlay2d> {
+        const W: usize = 500;
+        const H: usize = 116;
+        if editor_open || experiment.formulas.len() < 2 {
+            return None;
+        }
+        let now = Instant::now();
+        let revision = experiment.formulas.iter().fold(0_usize, |state, formula| {
+            state.wrapping_mul(31)
+                .wrapping_add(formula.x.len())
+                .wrapping_add(formula.y.len())
+                .wrapping_add(formula.z.len())
+        });
+        if self.texture.is_none() || self.last_revision != revision ||
+            self.last_upload.is_none_or(|last| now.duration_since(last) >= Duration::from_millis(250))
+        {
+            let mut pixels = vec![0_u8; W * H * 4];
+            let mut rect = |x: usize, y: usize, w: usize, h: usize, color: [u8;4]| {
+                for yy in y..(y+h).min(H) {
+                    for xx in x..(x+w).min(W) {
+                        let i=(yy*W+xx)*4;
+                        pixels[i..i+4].copy_from_slice(&color);
+                    }
+                }
+            };
+            rect(0, 0, W, H, [9, 19, 32, 234]);
+            rect(0, 0, W, 23, [24, 49, 71, 248]);
+            // End rect's mutable borrow before drawing individual glyphs.
+            fn write(p: &mut [u8], x: usize, y: usize, label: &str, color: [u8;4]) {
+                for (i, ch) in label.chars().enumerate() {
+                    if x + 8 * (i + 1) >= W { break; }
+                    if let Some(glyph) = BASIC_FONTS.get(ch) {
+                        for (gy, bits) in glyph.iter().enumerate() {
+                            for gx in 0..8 {
+                                if bits & (1 << gx) != 0 {
+                                    let index=((y+gy)*W+x+i*8+gx)*4;
+                                    p[index..index+4].copy_from_slice(&color);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            write(&mut pixels, 10, 8, "ACTIVE MATHEMATICAL CIRCUITS", [212,240,255,255]);
+            for (index, formula) in experiment.formulas.iter().take(3).enumerate() {
+                let y = 31 + 27 * index;
+                let rgb = formula.color.map(|c| (c.clamp(0.0,1.0)*255.0) as u8);
+                for yy in y..y+12 {
+                    for xx in 10..24 {
+                        let i=(yy*W+xx)*4;
+                        pixels[i..i+4].copy_from_slice(&[rgb[0],rgb[1],rgb[2],255]);
+                    }
+                }
+                let expression: String = formula.x.chars().take(33).collect();
+                write(&mut pixels, 34, y+2, &format!("{}: x(t)={}",index+1,expression),[216,235,245,255]);
+                write(&mut pixels, 369, y+2,
+                    &format!("B:{:.0}", bound.get(index).copied().unwrap_or(0.0)),
+                    [121,246,172,255]);
+            }
+            let image = ImageAsset {width:W as u32,height:H as u32,pixels};
+            let next = base.render.recorder.upload(&image);
+            if let Some(old) = self.texture.replace(next) {
+                base.render.recorder.release(old);
+            }
+            self.last_upload = Some(now);
+            self.last_revision = revision;
+        }
+        Some(Overlay2d::new(Scene2d {
+            camera: Camera2d::from_surface_size(viewport[0] as f32, viewport[1] as f32),
+            sprites: vec![Sprite {
+                texture: self.texture?,
+                source_rect: None,
+                size: [W as f32,H as f32],
+                tint: [1.0;4],
+                frame: Motor3::translation(Vec3::new(
+                    viewport[0] as f32 - W as f32 * 0.5 - 12.0,
+                    H as f32 * 0.5 + 12.0,
+                    0.0,
+                )),
+                layer: 20,
+            }],
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
