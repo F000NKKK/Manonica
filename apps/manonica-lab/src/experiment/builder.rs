@@ -25,6 +25,8 @@ impl ExperimentBuilder {
                 },
                 seeds: Vec::new(),
                 circles: Vec::new(),
+                materials: Vec::new(),
+                channels: Vec::new(),
                 visualization: Visualization::default(),
             },
         }
