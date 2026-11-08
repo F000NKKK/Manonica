@@ -16,7 +16,7 @@ use crate::experiment::Experiment;
 use crate::simulation::SimulationSnapshot;
 
 // Soft, low-frequency appearance intentionally chosen for Manonica Lab.
-const TEXTURE_SIZE: usize = 4;
+const TEXTURE_SIZE: usize = 64;
 const BORDER_ROWS: usize = 2;
 // Rendering resolution along the depth axis is independent of physics cells.
 // Each plane samples the physical field with trilinear interpolation.
