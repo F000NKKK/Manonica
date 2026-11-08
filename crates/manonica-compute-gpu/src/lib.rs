@@ -241,6 +241,16 @@ impl manonica_physics::FreeManaDiffusionBackend for GpuDiffusion {
     ) -> Result<(), BaseError> {
         self.evolve(field, diffusivity, dt_seconds)
     }
+
+    fn evolve_diffusion_batch(
+        &mut self,
+        field: &mut FreeManaField,
+        diffusivity: f64,
+        dt_seconds: f64,
+        steps: u32,
+    ) -> Result<(), BaseError> {
+        self.evolve_resident_batch(field, diffusivity, dt_seconds, steps)
+    }
 }
 
 #[cfg(test)]
