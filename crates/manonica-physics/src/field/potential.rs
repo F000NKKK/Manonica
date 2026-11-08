@@ -86,7 +86,10 @@ impl PotentialField {
             &[],
         )
     }
-    #[allow(clippy::too_many_arguments, reason = "keeps a typed extension of the existing screened solver")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps a typed extension of the existing screened solver"
+    )]
     pub fn solve_with_local(
         shape: GridShape,
         dx: f64,
