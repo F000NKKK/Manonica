@@ -13,8 +13,6 @@ pub struct Experiment {
     #[serde(default)]
     pub seeds: Vec<FieldSeed>,
     #[serde(default)]
-    pub circles: Vec<Circle>,
-    #[serde(default)]
     pub formulas: Vec<Formula>,
     #[serde(default)]
     pub materials: Vec<MaterialSite>,
@@ -98,22 +96,6 @@ pub struct FieldSeed {
 pub enum SeedShape {
     Gaussian,
     Ring,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Circle {
-    pub name: String,
-    pub center: [f32; 3],
-    pub normal: [f32; 3],
-    pub radius: f32,
-    pub thickness: f32,
-    #[serde(default)]
-    pub spokes: usize,
-    #[serde(default = "default_segments")]
-    pub segments: usize,
-    #[serde(default = "default_color")]
-    pub color: [f32; 3],
 }
 
 /// Parametric circuit defined by three mathematical functions of t.
@@ -362,29 +344,6 @@ impl Experiment {
                 let sq: f64 = seed.normal.iter().map(|v| v * v).sum();
                 check(good_position(seed.normal) && sq > 1e-12, "seed_normal")?;
             }
-        }
-        check(self.circles.len() <= 64, "circles_count")?;
-        for circle in &self.circles {
-            check(!circle.name.trim().is_empty(), "circle_name")?;
-            check(circle.center.iter().all(|n| n.is_finite()), "circle_center")?;
-            let n2: f32 = circle.normal.iter().map(|n| n * n).sum();
-            check(n2.is_finite() && n2 > 1e-12, "circle_normal")?;
-            check(
-                circle.radius.is_finite() && circle.radius > 0.0,
-                "circle_radius",
-            )?;
-            check(
-                circle.thickness.is_finite()
-                    && circle.thickness > 0.0
-                    && circle.thickness < circle.radius,
-                "circle_thickness",
-            )?;
-            check((8..=256).contains(&circle.segments), "circle_segments")?;
-            check(circle.spokes <= 64, "circle_spokes")?;
-            check(
-                circle.color.iter().all(|n| n.is_finite() && *n >= 0.0),
-                "circle_color",
-            )?;
         }
         check(self.formulas.len() <= 32, "formulas_count")?;
         for formula in &self.formulas {
