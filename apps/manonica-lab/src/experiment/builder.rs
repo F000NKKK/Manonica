@@ -19,6 +19,7 @@ impl ExperimentBuilder {
                 physics: Diffusion {
                     diffusivity: 0.25,
                     thermal_conductance: 0.0,
+                    ambient_cooling_rate: 0.0,
                     potential: None,
                     dt: 0.02,
                     flow: AmbientFlow::Still,
@@ -46,6 +47,7 @@ impl ExperimentBuilder {
         self.experiment.physics = Diffusion {
             diffusivity,
             thermal_conductance: self.experiment.physics.thermal_conductance,
+            ambient_cooling_rate: self.experiment.physics.ambient_cooling_rate,
             potential: self.experiment.physics.potential.clone(),
             dt,
             flow: self.experiment.physics.flow.clone(),
