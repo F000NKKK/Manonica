@@ -187,9 +187,15 @@ mod tests {
         cpu.set(6, 4, 3, Quantity::nonnegative(45.0).unwrap())
             .unwrap();
         let mut accelerated = cpu.clone();
-        let Some(mut gpu) = GpuDiffusion::new(&accelerated).ok() else {
-            eprintln!("Skipping hardware parity: no GPU compute adapter in CI");
-            return;
+        let mut gpu = match GpuDiffusion::new(&accelerated) {
+            Ok(device) => device,
+            Err(error) if std::env::var("MANONICA_GPU_TEST").as_deref() == Ok("1") => {
+                panic!("GPU parity explicitly required, but no usable compute device: {error}");
+            }
+            Err(error) => {
+                eprintln!("Skipping optional hardware parity: {error}");
+                return;
+            }
         };
         let before = accelerated.total_manons().unwrap().value();
         let diffusivity = 0.25;
