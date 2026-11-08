@@ -11,7 +11,7 @@ use meridian_sdk::{
 };
 
 const WIDTH: usize = 520;
-const HEIGHT: usize = 344;
+const HEIGHT: usize = 418;
 const HISTORY: usize = 180;
 const UPDATE_PERIOD: Duration = Duration::from_millis(200);
 
@@ -25,6 +25,8 @@ pub struct FrameMetrics {
     pub steps: u64,
     pub total: f64,
     pub bound: f64,
+    pub formula_bound: [f64; 3],
+    pub formula_count: usize,
     pub material_energy: f64,
     pub initial_total: f64,
     pub peak_density: f64,
@@ -202,10 +204,20 @@ impl DebugHud {
         canvas.graph(266, 145, 240, 88, &self.frame_samples, [255, 186, 104, 255]);
         canvas.text(13, 246, "MAX MANON DENSITY / TIME", 1, [160, 223, 255, 255]);
         canvas.graph(12, 262, 494, 65, &self.peak_samples, [156, 195, 255, 255]);
+        canvas.text(12, 341, "PHYSICAL CAPTURE BY FORMULA", 1, [160, 223, 255, 255]);
+        for i in 0..m.formula_count.min(3) {
+            canvas.text(
+                12,
+                355 + i as i32 * 16,
+                &format!("FORMULA {} / BOUND {:>14.3} manons", i + 1, m.formula_bound[i]),
+                1,
+                [116, 238, 169, 255],
+            );
+        }
         canvas.text(
             12,
-            334,
-            "CPU frame interval and solver timings; not total GPU execution",
+            409,
+            "CPU frame interval and solver timings; not GPU execution",
             1,
             [118, 147, 177, 255],
         );
@@ -350,6 +362,8 @@ mod tests {
                 steps: 0,
                 total: 10.0,
                 bound: 2.0,
+                formula_bound: [2.0, 0.0, 0.0],
+                formula_count: 1,
                 material_energy: 4.0,
                 initial_total: 10.0,
                 peak_density: 3.0,
