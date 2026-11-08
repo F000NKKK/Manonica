@@ -14,6 +14,9 @@ use meridian_gpu_wgpu::{BindGroup, Buffer, BufferUsage, ComputePipeline};
 use meridian_sdk::GpuComputeDevice;
 use std::time::Instant;
 
+mod potential;
+pub use potential::GpuPotential;
+
 const SHADER: &str = include_str!("gpu_diffusion.wgsl");
 
 fn invalid(name: &'static str) -> BaseError {
