@@ -1,5 +1,5 @@
 use super::{
-    AmbientFlow, Circle, Diffusion, Experiment, ExperimentError, FieldSeed, Grid, SeedShape,
+    AmbientFlow, Diffusion, Experiment, ExperimentError, FieldSeed, Grid, SeedShape,
     Visualization,
 };
 
@@ -25,7 +25,6 @@ impl ExperimentBuilder {
                     steps_per_frame: 1,
                 },
                 seeds: Vec::new(),
-                circles: Vec::new(),
                 formulas: Vec::new(),
                 materials: Vec::new(),
                 channels: Vec::new(),
@@ -90,8 +89,8 @@ impl ExperimentBuilder {
         })
     }
 
-    pub fn circle(mut self, circle: Circle) -> Self {
-        self.experiment.circles.push(circle);
+    pub fn formula(mut self, formula: super::Formula) -> Self {
+        self.experiment.formulas.push(formula);
         self
     }
 
