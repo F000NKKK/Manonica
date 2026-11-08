@@ -3,8 +3,8 @@ use manonica_core::{
     units::{Diffusivity, ManonCount},
 };
 use manonica_physics::{
-    ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, MaterialLattice,
-    PotentialField,
+    ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, LocalBoundarySite,
+    MaterialLattice, PotentialField,
 };
 
 use super::{
@@ -373,7 +373,26 @@ fn build_potential(
             sources[index] += density;
         }
     }
-    let potential = PotentialField::solve(
+    let mut boundary_sites = Vec::<LocalBoundarySite>::new();
+    let mut occupied = std::collections::HashSet::new();
+    for boundary in &experiment.local_boundaries {
+        let formula = &experiment.formulas[boundary.formula];
+        let cells = crate::experiment::capture_cells(formula, dims, dx)?;
+        for [x, y, z] in cells {
+            let index = shape.index(x, y, z).unwrap();
+            if !occupied.insert(index) {
+                return Err(manonica_error::BaseError::new(
+                    manonica_error::ErrorCode::InvalidRange,
+                    "local_boundary_overlap",
+                ).into());
+            }
+            boundary_sites.push(LocalBoundarySite {
+                index,
+                condition: boundary.condition.physics(),
+            });
+        }
+    }
+    let potential = PotentialField::solve_with_local(
         shape,
         dx,
         &sources,
@@ -381,6 +400,7 @@ fn build_potential(
         settings.screening,
         settings.boundary.physics(),
         settings.iterations,
+        &boundary_sites,
     )?;
     let setup_energy = potential.field_energy_joules();
     if !setup_energy.is_finite() || setup_energy > settings.initial_work_joules + 1e-9 {
