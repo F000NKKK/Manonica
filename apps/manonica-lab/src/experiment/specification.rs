@@ -15,6 +15,10 @@ pub struct Experiment {
     #[serde(default)]
     pub circles: Vec<Circle>,
     #[serde(default)]
+    pub materials: Vec<MaterialSite>,
+    #[serde(default)]
+    pub channels: Vec<ChannelSpec>,
+    #[serde(default)]
     pub visualization: Visualization,
 }
 
@@ -105,6 +109,59 @@ pub struct Circle {
     pub segments: usize,
     #[serde(default = "default_color")]
     pub color: [f32; 3],
+}
+
+/// Physical trap placed in a numerical grid cell; no decorative effects.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterialSite {
+    pub cell: [usize; 3],
+    pub capacity: f64,
+    pub capture_rate: f64,
+    pub release_rate: f64,
+    pub binding_energy: f64,
+    pub heat_capacity: f64,
+    pub reference_temperature: f64,
+    pub activation_temperature: f64,
+    pub max_flux: f64,
+    pub conductivity: f64,
+}
+impl MaterialSite {
+    pub fn physics(&self) -> manonica_physics::TrapMaterial {
+        manonica_physics::TrapMaterial {
+            capacity: self.capacity,
+            capture_rate: self.capture_rate,
+            release_rate: self.release_rate,
+            binding_energy: self.binding_energy,
+            heat_capacity: self.heat_capacity,
+            reference_temperature: self.reference_temperature,
+            activation_temperature: self.activation_temperature,
+            max_flux: self.max_flux,
+            conductivity: self.conductivity,
+        }
+    }
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelSpec {
+    pub from: [usize; 3],
+    pub to: [usize; 3],
+    pub length: f64,
+    pub area: f64,
+    pub conductance: f64,
+    pub max_flux: f64,
+}
+impl ChannelSpec {
+    pub fn physics(&self) -> manonica_physics::ManaChannel {
+        manonica_physics::ManaChannel {
+            from: self.from,
+            to: self.to,
+            length: self.length,
+            area: self.area,
+            conductance: self.conductance,
+            max_flux: self.max_flux,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -271,6 +328,19 @@ impl Experiment {
                 circle.color.iter().all(|n| n.is_finite() && *n >= 0.0),
                 "circle_color",
             )?;
+        }
+        check(self.materials.len() <= volume.unwrap_or(0), "materials_count")?;
+        check(self.channels.len() <= 4096, "channels_count")?;
+        let mut occupied = std::collections::HashSet::new();
+        for site in &self.materials {
+            check(site.cell[0] < nx && site.cell[1] < ny && site.cell[2] < nz, "material_cell")?;
+            check(occupied.insert(site.cell), "duplicate_material_cell")?;
+            site.physics().validate()?;
+        }
+        let shape = manonica_physics::GridShape::new(nx, ny, nz)?;
+        let mut lattice = manonica_physics::MaterialLattice::new(shape);
+        for channel in &self.channels {
+            lattice.add_channel(channel.physics())?;
         }
         let v = &self.visualization;
         check(
