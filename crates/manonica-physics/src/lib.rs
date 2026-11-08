@@ -3,8 +3,6 @@
 //! Фундаментальные маноны, движение и численные поля.
 //! Нет кристаллов, руд, биологии, игровых объектов или готовых заклинаний.
 
-pub mod binding;
-pub mod conductivity;
 pub mod dynamics;
 pub mod error;
 pub mod field;
