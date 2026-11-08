@@ -7,7 +7,7 @@ mod specification;
 
 pub use builder::ExperimentBuilder;
 pub use error::ExperimentError;
-pub use formula::sample_curve;
+pub use formula::{capture_cells, sample_curve};
 pub use specification::{
     AmbientFlow, ChannelSpec, Diffusion, Experiment, FieldSeed, Grid, MaterialSite,
     Formula, FormulaTrap, SeedShape, Visualization,
