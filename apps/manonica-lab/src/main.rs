@@ -63,10 +63,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("Experiment: {} ({})", experiment.name, path.display());
     println!(
-        "Grid: {:?}, dt: {}s, circles: {}, formulas: {}, seeds: {}",
+        "Grid: {:?}, dt: {}s, formulas: {}, seeds: {}",
         experiment.grid.dimensions,
         experiment.physics.dt,
-        experiment.circles.len(),
         experiment.formulas.len(),
         experiment.seeds.len(),
     );
