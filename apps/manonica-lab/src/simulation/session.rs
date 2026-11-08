@@ -384,7 +384,8 @@ fn build_potential(
                 return Err(manonica_error::BaseError::new(
                     manonica_error::ErrorCode::InvalidRange,
                     "local_boundary_overlap",
-                ).into());
+                )
+                .into());
             }
             boundary_sites.push(LocalBoundarySite {
                 index,

@@ -76,7 +76,14 @@ impl PotentialField {
             return Err(bad("potential_parameters"));
         }
         Self::solve_with_local(
-            shape, dx, sources, permittivity, screening, boundary, iterations, &[],
+            shape,
+            dx,
+            sources,
+            permittivity,
+            screening,
+            boundary,
+            iterations,
+            &[],
         )
     }
     pub fn solve_with_local(
@@ -89,11 +96,18 @@ impl PotentialField {
         iterations: usize,
         sites: &[LocalBoundarySite],
     ) -> Result<Self, BaseError> {
-        if !dx.is_finite() || dx <= 0.0 || !permittivity.is_finite()
-            || permittivity <= 0.0 || !screening.is_finite() || screening <= 0.0
-            || !(1..=4096).contains(&iterations) || sources.len() != shape.len()
+        if !dx.is_finite()
+            || dx <= 0.0
+            || !permittivity.is_finite()
+            || permittivity <= 0.0
+            || !screening.is_finite()
+            || screening <= 0.0
+            || !(1..=4096).contains(&iterations)
+            || sources.len() != shape.len()
             || sources.iter().any(|v| !v.is_finite())
-        { return Err(bad("potential_parameters")); }
+        {
+            return Err(bad("potential_parameters"));
+        }
         let mut local = vec![None; shape.len()];
         for site in sites {
             if site.index >= shape.len() || local[site.index].is_some() {
@@ -102,10 +116,14 @@ impl PotentialField {
             let valid = match site.condition {
                 LocalPotentialBoundary::Dirichlet { value } => value.is_finite(),
                 LocalPotentialBoundary::Neumann => true,
-                LocalPotentialBoundary::Robin { reference, exchange } =>
-                    reference.is_finite() && exchange.is_finite() && exchange > 0.0,
+                LocalPotentialBoundary::Robin {
+                    reference,
+                    exchange,
+                } => reference.is_finite() && exchange.is_finite() && exchange > 0.0,
             };
-            if !valid { return Err(bad("local_boundary_parameters")); }
+            if !valid {
+                return Err(bad("local_boundary_parameters"));
+            }
             local[site.index] = Some(site.condition);
         }
         let alpha = permittivity / (dx * dx);
@@ -146,7 +164,10 @@ impl PotentialField {
                                     // An embedded Neumann surface carries no
                                     // normal coupling across its discrete interface.
                                     if matches!(local[index], Some(LocalPotentialBoundary::Neumann))
-                                        || matches!(local[neighbour], Some(LocalPotentialBoundary::Neumann))
+                                        || matches!(
+                                            local[neighbour],
+                                            Some(LocalPotentialBoundary::Neumann)
+                                        )
                                     {
                                         continue;
                                     }
@@ -158,8 +179,10 @@ impl PotentialField {
                             }
                         }
                         let (exchange, reference) = match local[index] {
-                            Some(LocalPotentialBoundary::Robin { reference, exchange }) =>
-                                (exchange / dx, reference),
+                            Some(LocalPotentialBoundary::Robin {
+                                reference,
+                                exchange,
+                            }) => (exchange / dx, reference),
                             _ => (0.0, 0.0),
                         };
                         next[index] = (sources[index] + alpha * neighbours + exchange * reference)
@@ -235,8 +258,10 @@ impl PotentialField {
                             if !matches!(self.local[i], Some(LocalPotentialBoundary::Neumann))
                                 && !matches!(self.local[j], Some(LocalPotentialBoundary::Neumann))
                             {
-                                energy += 0.5 * self.permittivity
-                                    * (self.values[j] - self.values[i]).powi(2) * self.dx;
+                                energy += 0.5
+                                    * self.permittivity
+                                    * (self.values[j] - self.values[i]).powi(2)
+                                    * self.dx;
                             }
                         } else if self.boundary == PotentialBoundary::Grounded {
                             energy += 0.5 * self.permittivity * self.values[i].powi(2) * self.dx;
@@ -259,9 +284,12 @@ impl PotentialField {
         // Robin coupling contributes a nonnegative reservoir-interface
         // energy; the reference potential is externally imposed.
         for (i, boundary) in self.local.iter().enumerate() {
-            if let Some(LocalPotentialBoundary::Robin { exchange, reference }) = boundary {
-                energy += 0.5 * exchange / self.dx
-                    * (self.values[i] - reference).powi(2) * volume;
+            if let Some(LocalPotentialBoundary::Robin {
+                exchange,
+                reference,
+            }) = boundary
+            {
+                energy += 0.5 * exchange / self.dx * (self.values[i] - reference).powi(2) * volume;
             }
         }
         energy

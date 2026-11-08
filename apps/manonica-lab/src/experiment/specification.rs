@@ -126,19 +126,27 @@ pub enum LocalBoundaryKind {
 impl LocalBoundaryKind {
     pub fn physics(&self) -> manonica_physics::LocalPotentialBoundary {
         match *self {
-            Self::Dirichlet { value } =>
-                manonica_physics::LocalPotentialBoundary::Dirichlet { value },
+            Self::Dirichlet { value } => {
+                manonica_physics::LocalPotentialBoundary::Dirichlet { value }
+            }
             Self::Neumann => manonica_physics::LocalPotentialBoundary::Neumann,
-            Self::Robin { reference, exchange } =>
-                manonica_physics::LocalPotentialBoundary::Robin { reference, exchange },
+            Self::Robin {
+                reference,
+                exchange,
+            } => manonica_physics::LocalPotentialBoundary::Robin {
+                reference,
+                exchange,
+            },
         }
     }
     fn valid(&self) -> bool {
         match self {
             Self::Dirichlet { value } => value.is_finite(),
             Self::Neumann => true,
-            Self::Robin { reference, exchange } =>
-                reference.is_finite() && exchange.is_finite() && *exchange > 0.0,
+            Self::Robin {
+                reference,
+                exchange,
+            } => reference.is_finite() && exchange.is_finite() && *exchange > 0.0,
         }
     }
 }
@@ -482,10 +490,16 @@ impl Experiment {
         check(self.formulas.len() <= 32, "formulas_count")?;
         check(self.local_boundaries.len() <= 64, "local_boundaries_count")?;
         if !self.local_boundaries.is_empty() {
-            check(p.potential.is_some(), "potential_required_for_local_boundaries")?;
+            check(
+                p.potential.is_some(),
+                "potential_required_for_local_boundaries",
+            )?;
         }
         for boundary in &self.local_boundaries {
-            check(boundary.formula < self.formulas.len(), "local_boundary_formula")?;
+            check(
+                boundary.formula < self.formulas.len(),
+                "local_boundary_formula",
+            )?;
             check(boundary.condition.valid(), "local_boundary_parameters")?;
         }
         check(self.field_sources.len() <= 64, "field_sources_count")?;

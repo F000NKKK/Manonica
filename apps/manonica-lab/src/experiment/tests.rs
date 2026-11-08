@@ -380,8 +380,10 @@ fn physical_equilibrium_is_observed_only_after_consecutive_stable_solver_steps()
 #[test]
 fn powered_concentrator_never_reports_equilibrium_while_field_source_is_active() {
     use crate::simulation::EquilibriumPhase;
-    let experiment =
-        Experiment::parse(include_str!("../../experiments/potential_concentrator.toml")).unwrap();
+    let experiment = Experiment::parse(include_str!(
+        "../../experiments/potential_concentrator.toml"
+    ))
+    .unwrap();
     let mut sim = Simulation::new(experiment).unwrap();
     for _ in 0..30 {
         sim.step().unwrap();
@@ -411,9 +413,10 @@ fn driven_uniform_flow_is_not_mistaken_for_equilibrium() {
 
 #[test]
 fn formula_rasterization_installs_real_local_boundary_potential() {
-    let constrained = Experiment::parse(
-        include_str!("../../experiments/local_boundary_conductor.toml")
-    ).unwrap();
+    let constrained = Experiment::parse(include_str!(
+        "../../experiments/local_boundary_conductor.toml"
+    ))
+    .unwrap();
     assert_eq!(constrained.local_boundaries.len(), 1);
     let mut baseline = constrained.clone();
     baseline.local_boundaries.clear();
@@ -424,31 +427,44 @@ fn formula_rasterization_installs_real_local_boundary_potential() {
     let shape = a.shape();
     let dx = constrained_sim.field().cell_width_metres();
     let formula = &constrained_sim.experiment.formulas[0];
-    let cells = super::capture_cells(formula, [shape.nx(),shape.ny(),shape.nz()], dx).unwrap();
+    let cells = super::capture_cells(formula, [shape.nx(), shape.ny(), shape.nz()], dx).unwrap();
     assert!(!cells.is_empty());
-    for [x,y,z] in cells {
+    for [x, y, z] in cells {
         assert!(
-            (a.at(x,y,z).unwrap() + 4.0).abs() < 1e-9,
+            (a.at(x, y, z).unwrap() + 4.0).abs() < 1e-9,
             "fixed local potential is imposed at every sampled circuit cell"
         );
     }
-    let deviation = a.values().iter().zip(b.values())
-        .map(|(x,y)| (x-y).abs()).sum::<f64>();
-    assert!(deviation > 1.0, "local condition must alter physics, not just rendered mesh");
+    let deviation = a
+        .values()
+        .iter()
+        .zip(b.values())
+        .map(|(x, y)| (x - y).abs())
+        .sum::<f64>();
+    assert!(
+        deviation > 1.0,
+        "local condition must alter physics, not just rendered mesh"
+    );
 }
 
 #[test]
 fn formula_boundary_overlap_and_bad_parameters_are_rejected() {
     use super::{LocalBoundaryKind, LocalBoundarySpec};
-    let mut experiment = Experiment::parse(
-        include_str!("../../experiments/local_boundary_conductor.toml")
-    ).unwrap();
-    experiment.local_boundaries.push(experiment.local_boundaries[0].clone());
+    let mut experiment = Experiment::parse(include_str!(
+        "../../experiments/local_boundary_conductor.toml"
+    ))
+    .unwrap();
+    experiment
+        .local_boundaries
+        .push(experiment.local_boundaries[0].clone());
     assert!(Simulation::new(experiment.clone()).is_err());
     experiment.local_boundaries.truncate(1);
     experiment.local_boundaries[0] = LocalBoundarySpec {
         formula: 0,
-        condition: LocalBoundaryKind::Robin {reference: 0.0, exchange: -1.0},
+        condition: LocalBoundaryKind::Robin {
+            reference: 0.0,
+            exchange: -1.0,
+        },
     };
     assert!(experiment.validate().is_err());
 }

@@ -6,4 +6,6 @@ mod potential;
 pub use advection::{FreeAdvection, VelocityField};
 pub use diffusion::{ConservationReport, FreeDiffusion};
 pub use grid::{FreeManaField, GridShape};
-pub use potential::{LocalBoundarySite, LocalPotentialBoundary, PotentialBoundary, PotentialField, PotentialStep};
+pub use potential::{
+    LocalBoundarySite, LocalPotentialBoundary, PotentialBoundary, PotentialField, PotentialStep,
+};
