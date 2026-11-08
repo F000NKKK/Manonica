@@ -198,7 +198,9 @@ fn formula_constructs_real_capture_sites_and_conserves_inventory() {
         "parametric ring must capture mana"
     );
     assert!((initial.manons() - final_balance.manons()).abs() < 1e-6);
-    let supplied_work = sim.field_ledger().map_or(0.0, |ledger| ledger.operating_work_joules);
+    let supplied_work = sim
+        .field_ledger()
+        .map_or(0.0, |ledger| ledger.operating_work_joules);
     assert!((sim.tracked_energy().unwrap() - initial_energy - supplied_work).abs() < 1e-6);
     sim.reset().unwrap();
     assert_eq!(sim.material_balance().unwrap().bound, 0.0);
@@ -246,7 +248,8 @@ fn three_formula_demo_has_distinct_geometry_and_independent_capture() {
     assert!(captures.iter().all(|&amount| amount > 0.0), "{captures:?}");
     let final_balance = simulation.material_balance().unwrap();
     assert!((final_balance.manons() - initial.manons()).abs() < 1e-6);
-    let supplied_work = simulation.field_ledger()
+    let supplied_work = simulation
+        .field_ledger()
         .map_or(0.0, |ledger| ledger.operating_work_joules);
     assert!(
         (simulation.tracked_energy().unwrap() - initial_energy - supplied_work).abs() < 1e-6,

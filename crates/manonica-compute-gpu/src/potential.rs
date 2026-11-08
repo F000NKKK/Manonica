@@ -165,7 +165,11 @@ impl GpuPotential {
         for iteration in 0..iterations {
             commands.dispatch_compute_with_bind_group(
                 &self.pipeline,
-                if iteration % 2 == 0 { &self.forward } else { &self.reverse },
+                if iteration % 2 == 0 {
+                    &self.forward
+                } else {
+                    &self.reverse
+                },
                 (self.shape.len() as u32).div_ceil(64),
             );
         }
@@ -226,16 +230,36 @@ mod tests {
             },
         ];
         let cpu = PotentialField::solve_with_local(
-            shape, 0.5, &source, 1.2, 0.9,
-            PotentialBoundary::Grounded, 140, &sites,
-        ).unwrap();
+            shape,
+            0.5,
+            &source,
+            1.2,
+            0.9,
+            PotentialBoundary::Grounded,
+            140,
+            &sites,
+        )
+        .unwrap();
         let mut gpu = GpuPotential::new(shape).expect("GPU device required for physics parity");
-        let values = gpu.solve(
-            0.5, &source, 1.2, 0.9, PotentialBoundary::Grounded, 140, &sites,
-        ).unwrap();
-        let max_error = values.iter().zip(cpu.values())
-            .map(|(a,b)| (a-b).abs())
+        let values = gpu
+            .solve(
+                0.5,
+                &source,
+                1.2,
+                0.9,
+                PotentialBoundary::Grounded,
+                140,
+                &sites,
+            )
+            .unwrap();
+        let max_error = values
+            .iter()
+            .zip(cpu.values())
+            .map(|(a, b)| (a - b).abs())
             .fold(0.0_f64, f64::max);
-        assert!(max_error < 3e-4, "GPU screened potential reference error: {max_error}");
+        assert!(
+            max_error < 3e-4,
+            "GPU screened potential reference error: {max_error}"
+        );
     }
 }

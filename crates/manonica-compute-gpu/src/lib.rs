@@ -64,16 +64,13 @@ impl GpuDiffusion {
             "manonica-uniform-advection",
             include_str!("gpu_advection.wgsl"),
         );
-        let advection_pipeline =
-            raw.create_compute_pipeline(&advection_shader, "advect_uniform");
+        let advection_pipeline = raw.create_compute_pipeline(&advection_shader, "advect_uniform");
         let advection_parameters = raw.create_buffer(24, BufferUsage::Storage);
         let advection_layout = advection_pipeline.wgpu_pipeline().get_bind_group_layout(0);
         // The advection step reads the diffusion output and writes the input
         // buffer; both physical operations happen in one GPU submission.
-        let advection_bind = raw.create_bind_group(
-            &advection_layout,
-            &[&output, &input, &advection_parameters],
-        );
+        let advection_bind =
+            raw.create_bind_group(&advection_layout, &[&output, &input, &advection_parameters]);
         Ok(Self {
             runtime,
             device,
@@ -207,7 +204,9 @@ impl GpuDiffusion {
         let before = field.total_manons()?.value();
         let raw = self.device.gpu_driver_device();
         let mut bytes = Vec::with_capacity(source.len() * 4);
-        for number in source { bytes.extend_from_slice(&number.to_le_bytes()); }
+        for number in source {
+            bytes.extend_from_slice(&number.to_le_bytes());
+        }
         raw.write_buffer(&self.input, &bytes);
         let mut diffusion_params = Vec::with_capacity(16);
         for n in self.dimensions {
@@ -239,7 +238,8 @@ impl GpuDiffusion {
         if result.len() != shape.len() * 4 {
             return Err(invalid("gpu_uniform_flow_readback"));
         }
-        let densities: Vec<f64> = result.chunks_exact(4)
+        let densities: Vec<f64> = result
+            .chunks_exact(4)
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64)
             .collect();
         if densities.iter().any(|n| !n.is_finite() || *n < -1e-5) {
@@ -253,7 +253,8 @@ impl GpuDiffusion {
             return Err(invalid("gpu_uniform_flow_conservation"));
         }
         let scale = if after > 0.0 { before / after } else { 1.0 };
-        let updated = densities.into_iter()
+        let updated = densities
+            .into_iter()
             .map(|n| Quantity::<ManonDensity>::nonnegative(n.max(0.0) * scale))
             .collect::<Result<Vec<_>, _>>()?;
         field.try_replace_densities(updated)?;
@@ -507,12 +508,18 @@ mod tests {
         }
         let shape = GridShape::new(3, 1, 1).unwrap();
         let mut field = FreeManaField::uniform(
-            shape, 1.0, Quantity::<ManonDensity>::nonnegative(0.0).unwrap()
-        ).unwrap();
-        field.set(0, 0, 0, Quantity::nonnegative(100.0).unwrap()).unwrap();
+            shape,
+            1.0,
+            Quantity::<ManonDensity>::nonnegative(0.0).unwrap(),
+        )
+        .unwrap();
+        field
+            .set(0, 0, 0, Quantity::nonnegative(100.0).unwrap())
+            .unwrap();
         let mut gpu = GpuDiffusion::new(&field).expect("GPU compute required");
         let before = field.total_manons().unwrap().value();
-        gpu.evolve_uniform_flow(&mut field, 0.0, 0.25, [1.0, 0.0, 0.0]).unwrap();
+        gpu.evolve_uniform_flow(&mut field, 0.0, 0.25, [1.0, 0.0, 0.0])
+            .unwrap();
         for (x, expected) in [75.0, 25.0, 0.0].into_iter().enumerate() {
             assert!(
                 (field.at(x, 0, 0).unwrap().value() - expected).abs() <= 1e-5,
