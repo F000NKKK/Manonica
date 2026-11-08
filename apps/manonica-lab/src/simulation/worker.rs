@@ -335,6 +335,14 @@ mod tests {
     use crate::experiment::ExperimentBuilder;
 
     #[test]
+    fn backend_labels_are_explicit_and_unambiguous() {
+        assert_eq!(ComputeBackend::Cpu.label(), "CPU");
+        assert_eq!(ComputeBackend::GpuHybrid.label(), "GPU HYBRID");
+        assert_eq!(ComputeBackend::CpuFallback.label(), "CPU FALLBACK");
+        assert_eq!(ComputeTelemetry::default().diffusion_wall_ms, 0.0);
+    }
+
+    #[test]
     fn physics_advances_independently_of_renderer_then_pauses() {
         let exp = ExperimentBuilder::new("worker")
             .grid([8, 8, 8], 0.5)
