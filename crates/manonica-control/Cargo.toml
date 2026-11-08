@@ -3,3 +3,7 @@ name = "manonica-control"
 version.workspace = true
 edition.workspace = true
 publish = false
+
+[dependencies]
+manonica-core = { path = "../manonica-core" }
+manonica-error = { path = "../manonica-error" }

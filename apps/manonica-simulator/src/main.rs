@@ -1,28 +1,41 @@
-use manonica_physics::{Crystal, Reservoir, diffuse_1d, step_crystal};
+use manonica_core::{
+    Evolution, Quantity, TimeStep, Vec3,
+    units::{Diffusivity, Joules, ManonDensity, Metres, MetresPerSecond},
+};
+use manonica_physics::{FreeDiffusion, FreeManaField, GridShape, Manon, ManonId, ManonSystem};
 
-fn main() {
-    let mut state = Reservoir {
-        free: 100.0,
-        bound: 0.0,
-    };
-    let crystal = Crystal {
-        capacity: 80.0,
-        binding_rate: 0.5,
-        release_rate: 0.03,
-    };
-    let initial = state.total();
-    for _ in 0..1000 {
-        step_crystal(&mut state, crystal, 0.02).expect("valid crystal model");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Микроэксперимент: один свободный манон без внешних воздействий.
+    let mut particles = ManonSystem::new();
+    particles.insert(Manon::free(
+        ManonId(1),
+        Vec3::<Metres>::try_values(0.0, 0.0, 0.0)?,
+        Vec3::<MetresPerSecond>::try_values(1.0, 0.0, 0.0)?,
+        Quantity::<Joules>::nonnegative(5.0)?,
+    )?)?;
+    for _ in 0..100 {
+        particles.advance(TimeStep::from_seconds(0.01)?)?;
+    }
+    for manon in particles.manons() {
+        println!(
+            "free manon id={} x={:.4}m",
+            manon.id().0,
+            manon.position().x.value()
+        );
+    }
+
+    // Макроэксперимент: 3D-поле БЕЗ моделирования каждого манона.
+    let shape = GridShape::new(8, 8, 8)?;
+    let mut field =
+        FreeManaField::uniform(shape, 1.0, Quantity::<ManonDensity>::nonnegative(0.0)?)?;
+    field.set(4, 4, 4, Quantity::<ManonDensity>::nonnegative(1_000.0)?)?;
+    let diffusion = FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(0.25)?)?;
+    for _ in 0..100 {
+        diffusion.evolve(&mut field, TimeStep::from_seconds(0.05)?)?;
     }
     println!(
-        "free={:.6}, bound={:.6}, conservation_error={:.12}",
-        state.free,
-        state.bound,
-        (state.total() - initial).abs()
+        "free mana field total={:.6} manons",
+        field.total_manons()?.value()
     );
-    let mut field = vec![100.0, 0.0, 0.0, 0.0, 0.0];
-    for _ in 0..100 {
-        diffuse_1d(&mut field, 0.25, 1.0, 0.1).expect("stable diffusion step");
-    }
-    println!("mana field: {field:?}");
+    Ok(())
 }

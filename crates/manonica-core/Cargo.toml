@@ -1,0 +1,8 @@
+[package]
+name = "manonica-core"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+manonica-error = { path = "../manonica-error" }

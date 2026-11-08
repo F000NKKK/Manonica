@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/manonica-physics", "crates/manonica-control", "apps/manonica-simulator"]
+members = [
+    "crates/manonica-error",
+    "crates/manonica-core",
+    "crates/manonica-physics",
+    "crates/manonica-control",
+    "apps/manonica-simulator",
+]
 
 [workspace.package]
 version = "0.1.0"
