@@ -17,6 +17,8 @@ pub struct FormulaEditor {
     pub selected: usize,
     pub circuit: usize,
     pub circuits: usize,
+    /// Geometric centre of the selected circuit; presets keep its position.
+    pub center: [f64; 3],
     pub message: String,
 }
 impl Default for FormulaEditor {
@@ -27,6 +29,7 @@ impl Default for FormulaEditor {
             selected: 0,
             circuit: 0,
             circuits: 1,
+            center: [0.0; 3],
             message: "TAB: next field   ENTER: apply   ESC: close".into(),
         }
     }
@@ -53,6 +56,15 @@ impl FormulaEditor {
         self.circuit = self.circuit.min(self.circuits - 1);
         if let Some(formula) = formulas.get(self.circuit) {
             self.expressions = [formula.x.clone(), formula.y.clone(), formula.z.clone()];
+            if let Ok(points) = sample_curve(formula) {
+                let mut center = [0.0_f64; 3];
+                for point in &points {
+                    for axis in 0..3 {
+                        center[axis] += f64::from(point[axis]) / points.len() as f64;
+                    }
+                }
+                self.center = center;
+            }
         }
         self.message = "TAB: field  LEFT/RIGHT: circuit  ENTER: apply".into();
     }
@@ -78,7 +90,9 @@ impl FormulaEditor {
             ],
             _ => return,
         };
-        self.expressions = expressions.map(str::to_owned);
+        self.expressions = std::array::from_fn(|axis| {
+            format!("({})+({:.4})", expressions[axis], self.center[axis])
+        });
         self.message = format!("PRESET {preset}: preview updated. ENTER to apply");
     }
 
@@ -263,6 +277,21 @@ impl FormulaEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn presets_keep_the_selected_circuit_position() {
+        let mut editor = FormulaEditor::default();
+        let mut left = editor.formula();
+        left.x = "-4.2+1.35*cos(t)".into();
+        left.y = "1.35*sin(t)".into();
+        left.z = "0".into();
+        editor.load(&[left]);
+        editor.preset(3);
+        let points = sample_curve(&editor.formula()).unwrap();
+        let mean_x = points.iter().map(|p| p[0]).sum::<f32>() / points.len() as f32;
+        assert!((mean_x + 4.2).abs() < 0.01, "{mean_x}");
+        assert!(points.iter().any(|p| p[2].abs() > 0.7));
+    }
+
     #[test]
     fn editor_retains_formula_and_limits_text() {
         let mut editor=FormulaEditor::default();
