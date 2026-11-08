@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(grid.at(0, 0, 0).unwrap().value(), 3.0);
         assert!(
             grid.try_replace_densities(vec![
-                Quantity::<ManonDensity>::new(f64::INFINITY).unwrap(),
+                Quantity::<ManonDensity>::new(-1.0).unwrap(),
                 Quantity::<ManonDensity>::nonnegative(1.0).unwrap()
             ])
             .is_err()
