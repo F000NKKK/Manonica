@@ -1,5 +1,5 @@
 //! Геометрические окружности как тонкие трубки; не физический закон.
-use crate::experiment::Circle;
+use crate::experiment::{Circle, Formula, sample_curve};
 use meridian_sdk::MeshSource;
 
 fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -54,6 +54,32 @@ fn append_tube(mesh: &mut MeshSource, start: [f32; 3], end: [f32; 3], thickness:
         let d = b + SIDES as u32;
         mesh.indices.extend_from_slice(&[a, b, c, b, d, c]);
     }
+}
+
+/// Geometry is sampled from the same equation used for installing physical
+/// sites. Coincident points are skipped to avoid zero-length tube normals.
+pub fn formula_mesh(formula: &Formula) -> Result<MeshSource, String> {
+    let positions = sample_curve(formula).map_err(|e| e.to_string())?;
+    let mut mesh = MeshSource {
+        positions: Vec::new(),
+        normals: Vec::new(),
+        uvs: Vec::new(),
+        indices: Vec::new(),
+        skin: None,
+        morph: None,
+    };
+    for i in 0..positions.len() {
+        let a = positions[i];
+        let b = positions[(i + 1) % positions.len()];
+        let d = sub(b, a);
+        if dot(d, d) > 1e-10 {
+            append_tube(&mut mesh, a, b, formula.thickness);
+        }
+    }
+    if mesh.indices.is_empty() {
+        return Err("formula has no non-degenerate segments".into());
+    }
+    Ok(mesh)
 }
 
 pub fn circle_mesh(circle: &Circle) -> MeshSource {
