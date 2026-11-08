@@ -18,7 +18,7 @@ use crate::{
     diagnostics::{DebugHud, FrameMetrics},
     editor::{EditorOverlay, FormulaEditor, FormulaLegend},
     experiment::Experiment,
-    simulation::{Simulation, SimulationSnapshot, SimulationWorker},
+    simulation::{BackendPreference, Simulation, SimulationSnapshot, SimulationWorker},
     visualization::FieldView,
 };
 
@@ -112,8 +112,15 @@ pub struct App {
 
 impl App {
     pub fn new(simulation: Simulation) -> Self {
+        let backend = BackendPreference::resolve(
+            None, std::env::var("MANONICA_SIM_BACKEND").ok().as_deref()
+        ).expect("Invalid MANONICA_SIM_BACKEND");
+        Self::with_backend(simulation, backend)
+    }
+
+    pub fn with_backend(simulation: Simulation, backend: BackendPreference) -> Self {
         let experiment = simulation.experiment.clone();
-        let (simulation, initial) = SimulationWorker::spawn(simulation);
+        let (simulation, initial) = SimulationWorker::spawn_with_backend(simulation, backend);
         Self {
             simulation,
             experiment: experiment.clone(),
