@@ -19,6 +19,7 @@ impl ExperimentBuilder {
                 physics: Diffusion {
                     diffusivity: 0.25,
                     thermal_conductance: 0.0,
+                    potential: None,
                     dt: 0.02,
                     flow: AmbientFlow::Still,
                     steps_per_frame: 1,
