@@ -4,7 +4,7 @@ use meridian_sdk::{
 };
 
 use crate::experiment::Experiment;
-use crate::simulation::Simulation;
+use crate::simulation::SimulationSnapshot;
 
 use super::circle_mesh::circle_mesh;
 use super::volume::ManaVolume;
@@ -72,13 +72,18 @@ impl FieldView {
         })
     }
 
-    pub fn update(&mut self, session: &Simulation) {
+    pub fn update(&mut self, snapshot: &SimulationSnapshot, experiment: &Experiment) {
         self.volume.update(
             &mut self.base,
             &mut self.scene,
             self.static_count,
-            session,
+            snapshot,
+            experiment,
         );
+    }
+
+    pub fn sampling_cpu_ms(&self) -> f64 {
+        self.volume.sampling_cpu_ms()
     }
 
     pub fn visible_slices(&self) -> usize {
