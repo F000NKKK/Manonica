@@ -125,6 +125,12 @@ impl FreeManaField {
         &self.concentrations
     }
 
+    /// Validated direct index update for conservative coupled operators.
+    pub(crate) fn replace_density_at(&mut self, index: usize, density: Quantity<ManonDensity>) {
+        debug_assert!(index < self.concentrations.len());
+        self.concentrations[index] = density;
+    }
+
     pub(crate) fn replace(&mut self, next: Vec<Quantity<ManonDensity>>) {
         debug_assert_eq!(next.len(), self.shape.len());
         self.concentrations = next;
