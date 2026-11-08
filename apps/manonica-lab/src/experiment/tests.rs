@@ -483,6 +483,11 @@ fn resident_batch_matches_reference_diffusion_only_and_tracks_time() {
             dt_seconds: f64,
         ) -> Result<(), BaseError> {
             self.0.evolve(field, TimeStep::from_seconds(dt_seconds)?)
+                .map_err(|_| BaseError::new(
+                    manonica_error::ErrorCode::NumericalInstability,
+                    "cpu_reference_diffusion",
+                ))?;
+            Ok(())
         }
     }
 
