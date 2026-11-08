@@ -86,6 +86,7 @@ impl PotentialField {
             &[],
         )
     }
+    #[allow(clippy::too_many_arguments, reason = "keeps a typed extension of the existing screened solver")]
     pub fn solve_with_local(
         shape: GridShape,
         dx: f64,
@@ -215,13 +216,11 @@ impl PotentialField {
         for value in &mut next.values {
             *value *= factor;
         }
-        for site in &mut next.local {
-            if let Some(condition) = site {
-                match condition {
-                    LocalPotentialBoundary::Dirichlet { value } => *value *= factor,
-                    LocalPotentialBoundary::Robin { reference, .. } => *reference *= factor,
-                    LocalPotentialBoundary::Neumann => {}
-                }
+        for condition in next.local.iter_mut().flatten() {
+            match condition {
+                LocalPotentialBoundary::Dirichlet { value } => *value *= factor,
+                LocalPotentialBoundary::Robin { reference, .. } => *reference *= factor,
+                LocalPotentialBoundary::Neumann => {}
             }
         }
         Ok(next)
