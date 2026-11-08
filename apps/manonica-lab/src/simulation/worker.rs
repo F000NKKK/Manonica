@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use manonica_physics::FreeManaField;
 
-use super::Simulation;
+use super::{BackendPreference, Simulation};
 use crate::experiment::Experiment;
 use manonica_compute_gpu::GpuDiffusion;
 
@@ -124,13 +124,24 @@ pub struct SimulationWorker {
 
 impl SimulationWorker {
     pub fn spawn(simulation: Simulation) -> (Self, SimulationSnapshot) {
+        let backend = BackendPreference::resolve(
+            None,
+            std::env::var("MANONICA_SIM_BACKEND").ok().as_deref(),
+        ).expect("Invalid MANONICA_SIM_BACKEND");
+        Self::spawn_with_backend(simulation, backend)
+    }
+
+    pub fn spawn_with_backend(
+        simulation: Simulation,
+        backend: BackendPreference,
+    ) -> (Self, SimulationSnapshot) {
         let initial =
             SimulationSnapshot::capture(&simulation, 0.0, false, None, ComputeTelemetry::default());
         let (commands_tx, commands_rx) = mpsc::channel();
         let (snapshots_tx, snapshots_rx) = mpsc::sync_channel(1);
         let handle = thread::Builder::new()
             .name("manonica-physics".into())
-            .spawn(move || run_simulation(simulation, commands_rx, snapshots_tx))
+            .spawn(move || run_simulation(simulation, commands_rx, snapshots_tx, backend))
             .expect("failed to start physics worker");
         (
             Self {
@@ -198,6 +209,7 @@ fn run_simulation(
     mut sim: Simulation,
     commands: Receiver<Command>,
     updates: SyncSender<SimulationSnapshot>,
+    backend: BackendPreference,
 ) {
     let mut period = Duration::from_secs_f64(sim.experiment.physics.dt);
     let mut max_catch_up = sim.experiment.physics.steps_per_frame;
@@ -206,20 +218,22 @@ fn run_simulation(
     let mut paused = false;
     let mut error: Option<String> = None;
     let mut cpu_ms = 0.0;
-    let gpu_requested =
-        std::env::var("MANONICA_SIM_BACKEND").is_ok_and(|mode| mode.eq_ignore_ascii_case("gpu"));
-    let create_gpu = |sim: &Simulation| {
-        if !gpu_requested {
+    let create_gpu = |sim: &Simulation| -> Option<GpuDiffusion> {
+        if !backend.attempts_gpu() {
             return None;
         }
         match GpuDiffusion::new(sim.field()) {
-            Ok(gpu) => {
-                eprintln!("Manonica: GPU compute diffusion enabled (hybrid physics)");
-                Some(gpu)
+            Ok(device) => {
+                eprintln!("Manonica: GPU compute selected (hybrid physics)");
+                Some(device)
+            }
+            Err(error) if backend.allows_cpu_fallback() => {
+                eprintln!("Manonica: GPU initialization unavailable ({error}); falling back to CPU");
+                None
             }
             Err(error) => {
-                eprintln!("Manonica: GPU unavailable ({error}); using CPU physics");
-                None
+                eprintln!("Manonica: --backend gpu requires a working GPU: {error}");
+                std::process::exit(2);
             }
         }
     };
@@ -227,7 +241,7 @@ fn run_simulation(
     let mut compute = ComputeTelemetry {
         backend: if gpu.is_some() {
             ComputeBackend::GpuHybrid
-        } else if gpu_requested {
+        } else if backend.attempts_gpu() {
             ComputeBackend::CpuFallback
         } else {
             ComputeBackend::Cpu
@@ -269,7 +283,7 @@ fn run_simulation(
                     gpu = create_gpu(&sim);
                     compute.backend = if gpu.is_some() {
                         ComputeBackend::GpuHybrid
-                    } else if gpu_requested {
+                    } else if backend.attempts_gpu() {
                         ComputeBackend::CpuFallback
                     } else {
                         ComputeBackend::Cpu
@@ -308,9 +322,28 @@ fn run_simulation(
                     compute.diffusion_wall_ms = device.last_wall_ms();
                 }
                 if let Err(err) = result {
-                    error = Some(err.to_string());
-                    paused = true;
-                    break;
+                    if gpu.is_some() && backend.allows_cpu_fallback() {
+                        eprintln!(
+                            "Manonica: GPU compute step failed ({err}); switching to CPU reference"
+                        );
+                        gpu = None;
+                        compute.backend = ComputeBackend::CpuFallback;
+                        compute.diffusion_wall_ms = 0.0;
+                        // The simulation step uses a cloned candidate and commits
+                        // atomically, so retrying the same step on CPU is safe.
+                        if let Err(cpu_error) = sim.step() {
+                            error = Some(cpu_error.to_string());
+                            paused = true;
+                            break;
+                        }
+                    } else if gpu.is_some() && backend == BackendPreference::Gpu {
+                        eprintln!("Manonica: forced GPU backend failed: {err}");
+                        std::process::exit(3);
+                    } else {
+                        error = Some(err.to_string());
+                        paused = true;
+                        break;
+                    }
                 }
                 cpu_ms = started.elapsed().as_secs_f64() * 1000.0;
                 ran += 1;
