@@ -1,0 +1,38 @@
+name = "Два независимых облака"
+
+[grid]
+dimensions = [32, 18, 24]
+cell_size = 0.45
+
+[physics]
+diffusivity = 0.18
+dt = 0.025
+steps_per_frame = 2
+
+[visualization]
+relative_threshold = 0.055
+max_points = 900
+exposure = 2.6
+wisps = false
+
+[[seeds]]
+shape = "gaussian"
+center = [-2.3, 0.0, 0.0]
+sigma = 0.7
+total_manons = 3600.0
+
+[[seeds]]
+shape = "gaussian"
+center = [2.3, 0.0, 0.0]
+sigma = 0.7
+total_manons = 3600.0
+
+[[circles]]
+name = "Сечение для измерений"
+center = [0.0, 0.0, 0.0]
+normal = [1.0, 0.0, 0.0]
+radius = 3.0
+thickness = 0.025
+spokes = 8
+segments = 120
+color = [0.1, 0.8, 0.9]
