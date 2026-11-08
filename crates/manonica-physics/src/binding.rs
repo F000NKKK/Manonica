@@ -254,11 +254,7 @@ impl MaterialLattice {
     /// Thermal conductance is in J/(s·K) per neighbouring cell pair.
     /// The reference baseline is fixed; no unmodelled heat enters the system.
     /// Changes are transactional and conserve the tracked thermal energy.
-    pub fn conduct_heat(
-        &mut self,
-        dt: f64,
-        conductance: f64,
-    ) -> Result<(), BaseError> {
+    pub fn conduct_heat(&mut self, dt: f64, conductance: f64) -> Result<(), BaseError> {
         positive(dt, "thermal_dt")?;
         nonnegative(conductance, "thermal_conductance")?;
         if conductance == 0.0 {
@@ -291,8 +287,8 @@ impl MaterialLattice {
                             continue;
                         }
                         // Bounded symmetric exchange: never overshoot equilibrium.
-                        let equilibrium = delta_t.abs() /
-                            (1.0 / ma.heat_capacity + 1.0 / mb.heat_capacity);
+                        let equilibrium =
+                            delta_t.abs() / (1.0 / ma.heat_capacity + 1.0 / mb.heat_capacity);
                         let proposed = conductance * delta_t.abs() * dt;
                         let amount = proposed.min(equilibrium).min(if delta_t > 0.0 {
                             next[a].heat
@@ -312,7 +308,8 @@ impl MaterialLattice {
             }
         }
         let after: f64 = next.iter().map(|c| c.heat).sum();
-        if !before.is_finite() || !after.is_finite()
+        if !before.is_finite()
+            || !after.is_finite()
             || (before - after).abs() > before.abs().max(1.0) * 1e-9
         {
             return Err(invalid("thermal_conservation"));
@@ -510,15 +507,16 @@ mod tests {
     #[test]
     fn passive_heat_conduction_equalizes_and_conserves_energy() {
         let shape = GridShape::new(2, 1, 1).unwrap();
-        let mut field = FreeManaField::uniform(
-            shape, 1.0, Quantity::nonnegative(20.0).unwrap(),
-        ).unwrap();
+        let mut field =
+            FreeManaField::uniform(shape, 1.0, Quantity::nonnegative(20.0).unwrap()).unwrap();
         let mut sites = MaterialLattice::new(shape);
         let mut material = material();
         material.release_rate = 0.0;
         sites.install([0, 0, 0], material).unwrap();
         sites.install([1, 0, 0], material).unwrap();
-        field.set(1, 0, 0, Quantity::nonnegative(0.0).unwrap()).unwrap();
+        field
+            .set(1, 0, 0, Quantity::nonnegative(0.0).unwrap())
+            .unwrap();
         sites.step(&mut field, 1.0).unwrap();
         let before = sites.balance(&field).unwrap();
         let t0 = sites.at(0, 0, 0).unwrap().temperature().unwrap();
