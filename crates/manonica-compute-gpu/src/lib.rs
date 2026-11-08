@@ -296,6 +296,46 @@ mod tests {
             "GPU solver must conserve physical manon count",
         );
     }
+    /// Stage-GPU-002: many device-resident GPU diffusion steps must match
+    /// a CPU numerical simulation and preserve the total number of manons.
+    #[test]
+    fn resident_diffusion_batch_matches_cpu_reference() {
+        if std::env::var_os("CI").is_some()
+            && std::env::var("MANONICA_GPU_TEST").as_deref() != Ok("1")
+        {
+            return;
+        }
+        let shape = GridShape::new(10, 6, 4).unwrap();
+        let mut reference = FreeManaField::uniform(
+            shape, 0.5, Quantity::<ManonDensity>::nonnegative(1.0).unwrap()
+        ).unwrap();
+        reference.set(3, 2, 1, Quantity::nonnegative(90.0).unwrap()).unwrap();
+        let mut actual = reference.clone();
+        let mut device = match GpuDiffusion::new(&actual) {
+            Ok(device) => device,
+            Err(error) if std::env::var("MANONICA_GPU_TEST").as_deref() == Ok("1") =>
+                panic!("hardware GPU parity required: {error}"),
+            Err(_) => return,
+        };
+        let initial = actual.total_manons().unwrap().value();
+        let diffusivity = 0.12;
+        let dt = 0.02;
+        let solver = FreeDiffusion::new(
+            Quantity::<Diffusivity>::nonnegative(diffusivity).unwrap()
+        ).unwrap();
+        for _ in 0..25 {
+            solver.evolve(&mut reference, TimeStep::from_seconds(dt).unwrap()).unwrap();
+        }
+        device.evolve_resident_batch(&mut actual, diffusivity, dt, 25).unwrap();
+        let max_error = reference.densities().iter().zip(actual.densities())
+            .map(|(a,b)| (a.value()-b.value()).abs()).fold(0.0_f64,f64::max);
+        assert!(max_error < 1e-4, "25-step GPU resident batch mismatch: {max_error}");
+        assert!(
+            (actual.total_manons().unwrap().value()-initial).abs() < 1e-7,
+            "resident batch must preserve total manons"
+        );
+    }
+
     /// Manual performance comparison; skipped in CI without an adapter.
     /// Measures real end-to-end wall time, including every transfer.
     #[test]
