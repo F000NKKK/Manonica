@@ -1,4 +1,5 @@
 name: Format separated physics and materials
+# Final pass for new GPU potential and transport kernels.
 on:
   push:
     paths: ['.github/workflows/format-materials-once.yml']
