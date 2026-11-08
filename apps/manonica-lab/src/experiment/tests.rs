@@ -313,3 +313,34 @@ fn changing_source_formula_changes_potential_distribution() {
         "same formula geometry must drive both render and potential source"
     );
 }
+
+#[test]
+fn saturation_triggers_physical_potential_shutdown_and_energy_audit() {
+    let mut experiment =
+        Experiment::parse(include_str!("../../experiments/potential_concentrator.toml")).unwrap();
+    let settings = experiment.physics.potential.as_mut().unwrap();
+    // Trigger early for a short deterministic regression. The actual demo
+    // switches off only once 99.5% of installed capacity is bound.
+    settings.shutdown_at_bound_fraction = 0.001;
+    settings.shutdown_decay_rate = 0.1;
+    let mut simulation = Simulation::new(experiment).unwrap();
+    let initial = simulation.tracked_energy().unwrap();
+    let count = simulation.total().unwrap().value();
+    let initial_peak = simulation.field_ledger().unwrap().peak_potential;
+    let mut triggered = false;
+    for _ in 0..120 {
+        simulation.step().unwrap();
+        triggered |= simulation.shutdown_active();
+    }
+    assert!(triggered, "material charge must trigger automatic power-down");
+    let ledger = simulation.field_ledger().unwrap();
+    assert!(ledger.shutdown);
+    assert!(ledger.peak_potential < initial_peak);
+    assert!(ledger.exported_heat_joules > 0.0);
+    assert!(simulation.peak_trap_temperature_kelvin().unwrap().is_finite());
+    assert!((simulation.total().unwrap().value() - count).abs() < 1e-6);
+    assert!(
+        (simulation.tracked_energy().unwrap() - initial - ledger.operating_work_joules).abs() < 1e-4,
+        "closed ledger must account for exported heat and supplied work"
+    );
+}
