@@ -19,6 +19,47 @@ const TEXTURE_SIZE: usize = 64;
 const BORDER_ROWS: usize = 2;
 const MAX_PLANES: usize = 24;
 const ATLAS_PERIOD: Duration = Duration::from_millis(100);
+// Meridian's perspective near clip plane is 0.1 metres.
+const NEAR_CLIP_METRES: f64 = 0.1;
+
+/// Volumetric slice orientation is driven by the camera's forward ray,
+/// never by its distance from the domain origin. That distinction matters
+/// when the camera is *inside* the volume.
+fn slice_axis(forward: Vec3) -> usize {
+    let components = [forward.x.abs(), forward.y.abs(), forward.z.abs()];
+    (0..3)
+        .max_by(|&a, &b| components[a].total_cmp(&components[b]))
+        .unwrap_or(2)
+}
+
+/// Camera coordinate quantized to half a grid cell. A moving camera must
+/// refresh the near-clip mask, but should not require a new atlas per pixel
+/// of motion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SliceView {
+    camera_bin: i32,
+    sign: i8,
+}
+
+impl SliceView {
+    fn new(eye_coord: f32, forward_coord: f32, dx: f64) -> Self {
+        Self {
+            camera_bin: ((eye_coord as f64 / dx) * 2.0).round() as i32,
+            sign: if forward_coord >= 0.0 { 1 } else { -1 },
+        }
+    }
+
+    fn camera_coordinate(self, dx: f64) -> f64 {
+        self.camera_bin as f64 * dx * 0.5
+    }
+}
+
+/// Attenuate only the rendering of layers that cross the camera's near
+/// plane. The physical density remains unchanged.
+fn near_slice_visibility(depth: f64, cell_width: f64) -> f64 {
+    let t = ((depth - NEAR_CLIP_METRES) / (cell_width * 1.5)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
 
 struct AtlasRequest {
     field: Arc<FreeManaField>,
@@ -26,6 +67,7 @@ struct AtlasRequest {
     planes: usize,
     threshold: f64,
     optical_density: f64,
+    view: SliceView,
     step: u64,
 }
 
@@ -33,6 +75,8 @@ struct AtlasResult {
     image: ImageAsset,
     axis: usize,
     threshold: f64,
+    optical_density: f64,
+    view: SliceView,
     step: u64,
     peak: f64,
     cpu_ms: f64,
@@ -68,11 +112,14 @@ impl AtlasWorker {
                         request.threshold,
                         peak,
                         request.optical_density,
+                        request.view,
                     );
                     let result = AtlasResult {
                         image,
                         axis: request.axis,
                         threshold: request.threshold,
+                        optical_density: request.optical_density,
+                        view: request.view,
                         step: request.step,
                         peak,
                         cpu_ms: now.elapsed().as_secs_f64() * 1000.0,
@@ -120,7 +167,7 @@ pub struct ManaVolume {
     material: Option<MaterialHandle>,
     texture: Option<TextureHandle>,
     worker: AtlasWorker,
-    last_requested: Option<(usize, u64, f64)>,
+    last_requested: Option<(usize, u64, f64, f64, SliceView)>,
     last_submitted: Option<Instant>,
     count: usize,
     peak: f64,
@@ -183,28 +230,42 @@ impl ManaVolume {
         experiment: &Experiment,
     ) {
         let eye = scene.camera.frame.transform_point(Vec3::ZERO);
-        let components = [eye.x.abs(), eye.y.abs(), eye.z.abs()];
-        let axis = (0..3)
-            .max_by(|&a, &b| components[a].total_cmp(&components[b]))
-            .unwrap_or(2);
+        // Meridian's fly camera uses local +X as its forward axis.
+        let forward = scene.camera.frame.transform_vector(Vec3::X);
+        let axis = slice_axis(forward);
+        let eye_component = [eye.x, eye.y, eye.z][axis];
+        let facing_component = [forward.x, forward.y, forward.z][axis];
+        let view = SliceView::new(
+            eye_component,
+            facing_component,
+            snapshot.field.cell_width_metres(),
+        );
         let threshold = experiment.visualization.relative_threshold;
+        let optical_density = experiment.visualization.optical_density;
 
         if let Some(result) = self.worker.latest() {
             // A moving camera may make a completed job obsolete. Never
             // display an X slice after the camera has switched to Y slices.
-            if result.axis == axis && result.threshold == threshold {
+            if result.axis == axis
+                && result.threshold == threshold
+                && result.optical_density == optical_density
+                && result.view.sign == view.sign
+            {
                 self.apply_atlas(base, scene, static_count, result, experiment);
             }
         }
 
-        let requested = (axis, snapshot.steps, threshold);
+        let requested = (axis, snapshot.steps, threshold, optical_density, view);
         if self.last_requested == Some(requested) {
             return;
         }
         let urgent = self
             .last_requested
-            .is_none_or(|(old_axis, _, old_threshold)| {
-                axis != old_axis || old_threshold != threshold
+            .is_none_or(|(old_axis, _, old_threshold, old_density, old_view)| {
+                axis != old_axis
+                    || old_threshold != threshold
+                    || old_density != optical_density
+                    || old_view.sign != view.sign
             });
         if !urgent && self.last_submitted.is_some_and(|time| time.elapsed() < ATLAS_PERIOD) {
             return;
@@ -215,7 +276,8 @@ impl ManaVolume {
             axis,
             planes: self.meshes[axis].len(),
             threshold,
-            optical_density: experiment.visualization.optical_density,
+            optical_density,
+            view,
             step: snapshot.steps,
         });
         if sent {
@@ -437,6 +499,7 @@ fn build_density_atlas(
     threshold: f64,
     peak: f64,
     optical_density: f64,
+    view: SliceView,
 ) -> ImageAsset {
     let shape = field.shape();
     let dimensions = [shape.nx(), shape.ny(), shape.nz()];
@@ -458,6 +521,13 @@ fn build_density_atlas(
         .collect::<Vec<_>>();
 
     for (layer, &normal) in axis_lookup.iter().enumerate() {
+        // A plane crossing the camera must fade away *before* it reaches
+        // the near clip, avoiding the sudden fully opaque rectangle.
+        let layer_position =
+            ((layer as f64 + 0.5) / planes as f64 - 0.5)
+                * dimensions[axis] as f64 * dx;
+        let depth = (layer_position - view.camera_coordinate(dx)) * f64::from(view.sign);
+        let near_fade = near_slice_visibility(depth, dx);
         let mut coords = [normal; 3];
         coords[axis] = normal;
         for (yy, &row_sample) in row_lookup.iter().enumerate() {
@@ -471,7 +541,7 @@ fn build_density_atlas(
                     0.0
                 };
                 let visible = ((relative - threshold) / (1.0 - threshold)).max(0.0)
-                    * normal.fade * row_sample.fade * column_sample.fade;
+                    * normal.fade * row_sample.fade * column_sample.fade * near_fade;
                 let rgba = rgba_from_density(visible, layer_thickness, optical_density);
                 pixels[i + xx * 4..i + xx * 4 + 4].copy_from_slice(&rgba);
             }
@@ -513,7 +583,10 @@ mod tests {
             GridShape::new(6, 4, 8).unwrap(), 0.3,
             Quantity::<ManonDensity>::nonnegative(5.0).unwrap(),
         ).unwrap();
-        let atlas = build_density_atlas(&f, 2, 8, 0.04, 5.0, 0.18);
+        let atlas = build_density_atlas(
+            &f, 2, 8, 0.04, 5.0, 0.18,
+            SliceView { camera_bin: -16, sign: 1 },
+        );
         assert_eq!(atlas.height, (8 * (TEXTURE_SIZE + BORDER_ROWS)) as u32);
         assert_eq!(atlas.pixels.len(), atlas.width as usize * atlas.height as usize * 4);
         assert!(atlas.pixels.chunks_exact(4).any(|px| px[3] > 0));
@@ -610,7 +683,56 @@ mod interpolation_regressions {
             0.5,
             Quantity::<ManonDensity>::nonnegative(0.0).unwrap(),
         ).unwrap();
-        let atlas = build_density_atlas(&field, 2, 4, 0.06, 0.0, 0.18);
+        let atlas = build_density_atlas(
+            &field, 2, 4, 0.06, 0.0, 0.18,
+            SliceView { camera_bin: -16, sign: 1 },
+        );
         assert!(atlas.pixels.chunks_exact(4).all(|px| px[3] == 0));
+    }
+}
+
+#[cfg(test)]
+mod interior_view_tests {
+    use super::*;
+    use manonica_core::{Quantity, units::ManonDensity};
+    use manonica_physics::GridShape;
+
+    #[test]
+    fn slice_axis_uses_view_direction_not_camera_position() {
+        assert_eq!(slice_axis(Vec3::new(0.0, 0.0, -1.0)), 2);
+        assert_eq!(slice_axis(Vec3::new(0.1, 0.95, 0.2)), 1);
+        assert_eq!(slice_axis(Vec3::new(-0.9, 0.0, 0.1)), 0);
+    }
+
+    #[test]
+    fn camera_near_clip_fades_instead_of_popping() {
+        assert_eq!(near_slice_visibility(-1.0, 0.5), 0.0);
+        assert_eq!(near_slice_visibility(NEAR_CLIP_METRES, 0.5), 0.0);
+        let middle = near_slice_visibility(NEAR_CLIP_METRES + 0.375, 0.5);
+        assert!((middle - 0.5).abs() < 1e-12);
+        assert_eq!(near_slice_visibility(2.0, 0.5), 1.0);
+    }
+
+    #[test]
+    fn uniform_field_seen_from_inside_does_not_render_behind_eye() {
+        let f = FreeManaField::uniform(
+            GridShape::new(12, 12, 12).unwrap(), 0.5,
+            Quantity::<ManonDensity>::nonnegative(10.0).unwrap(),
+        ).unwrap();
+        let atlas = build_density_atlas(
+            &f, 2, 12, 0.01, 10.0, 0.3,
+            SliceView { camera_bin: 0, sign: 1 },
+        );
+        let alpha = |layer: usize| {
+            let yy = TEXTURE_SIZE / 2;
+            let xx = TEXTURE_SIZE / 2;
+            let y = layer * (TEXTURE_SIZE + BORDER_ROWS) + yy + 1;
+            atlas.pixels[(y * TEXTURE_SIZE + xx) * 4 + 3]
+        };
+        assert_eq!(alpha(4), 0, "behind-camera slice must not overlay the scene");
+        assert!(alpha(6) > 0, "forward slice is visible");
+        assert!(alpha(8) >= alpha(6), "more distant layers should not be near-clipped");
+        // Physical grid is immutable to the rendering operation.
+        assert_eq!(f.total_manons().unwrap().value(), 10.0 * (12.0_f64 * 0.5).powi(3));
     }
 }
