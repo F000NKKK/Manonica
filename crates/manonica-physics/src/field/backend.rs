@@ -18,6 +18,20 @@ pub trait FreeManaDiffusionBackend {
         dt_seconds: f64,
     ) -> Result<(), BaseError>;
 
+    /// Optional fused, conservative operator split: diffuse, then advect by
+    /// a uniform surrounding medium without an intermediate CPU readback.
+    /// Returns false if the backend does not implement this operation;
+    /// the caller must then run the two reference laws separately.
+    fn evolve_diffusion_and_uniform_flow(
+        &mut self,
+        _field: &mut FreeManaField,
+        _diffusivity: f64,
+        _dt_seconds: f64,
+        _velocity: [f64; 3],
+    ) -> Result<bool, BaseError> {
+        Ok(false)
+    }
+
     /// Executes consecutive diffusion steps without exposing intermediate
     /// states. The default implementation is reference-equivalent; GPU
     /// implementations can keep intermediate buffers device-resident.
