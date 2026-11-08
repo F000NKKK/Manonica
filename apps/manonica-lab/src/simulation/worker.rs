@@ -288,7 +288,7 @@ fn run_simulation(
             while now >= next_tick && ran < max_catch_up {
                 let started = Instant::now();
                 let result = if let Some(device) = gpu.as_mut() {
-                    sim.step_gpu(device)
+                    sim.step_with_backend(device)
                 } else {
                     sim.step()
                 };
