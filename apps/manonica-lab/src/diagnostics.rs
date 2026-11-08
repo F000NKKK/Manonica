@@ -11,7 +11,7 @@ use meridian_sdk::{
 };
 
 const WIDTH: usize = 520;
-const HEIGHT: usize = 472;
+const HEIGHT: usize = 500;
 const HISTORY: usize = 180;
 const UPDATE_PERIOD: Duration = Duration::from_millis(200);
 
@@ -19,6 +19,7 @@ const UPDATE_PERIOD: Duration = Duration::from_millis(200);
 pub struct FrameMetrics {
     pub frame_ms: f64,
     pub sim_cpu_ms: f64,
+    pub compute: crate::simulation::ComputeTelemetry,
     pub draw_cpu_ms: f64,
     pub field_cpu_ms: f64,
     pub sim_time: f64,
@@ -173,7 +174,7 @@ impl DebugHud {
             12,
             55,
             &format!(
-                "SIM CPU {:>6.2} ms    RENDER CPU {:>6.2} ms",
+                "SIM STEP {:>6.2} ms    RENDER CPU {:>6.2} ms",
                 m.sim_cpu_ms, m.draw_cpu_ms
             ),
             1,
@@ -297,10 +298,18 @@ impl DebugHud {
         );
         canvas.text(
             12,
-            461,
-            "Solver CPU times; not full GPU frame execution",
+            465,
+            &format!(
+                "PHYSICS {}   DIFF WALL {:>6.2} ms",
+                m.compute.backend.label(), m.compute.diffusion_wall_ms
+            ),
             1,
             [118, 147, 177, 255],
+        );
+        canvas.text(
+            12, 484,
+            "GPU DIFF WALL includes transfers; not GPU kernel time",
+            1, [118, 147, 177, 255],
         );
         ImageAsset {
             width: WIDTH as u32,
@@ -437,6 +446,7 @@ mod tests {
             hud.record(FrameMetrics {
                 frame_ms: 16.0,
                 sim_cpu_ms: 2.0,
+                compute: crate::simulation::ComputeTelemetry::default(),
                 draw_cpu_ms: 3.0,
                 field_cpu_ms: 1.0,
                 sim_time: 0.0,
