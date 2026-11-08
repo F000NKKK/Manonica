@@ -10,8 +10,8 @@ use manonica_core::{
     units::{Diffusivity, ManonDensity},
 };
 use manonica_physics::{
-    FreeDiffusion, FreeManaField, GridShape, MaterialLattice, PotentialBoundary, PotentialField,
-    TrapMaterial,
+    FreeDiffusion, FreeManaField, GridShape, LocalBoundarySite, LocalPotentialBoundary,
+    MaterialLattice, PotentialBoundary, PotentialField, TrapMaterial,
 };
 
 fn close(label: &str, measured: f64, expected: f64, tolerance: f64) {
@@ -200,4 +200,86 @@ fn law_bath_cooling_matches_exponential_solution_and_energy_export() {
         300.0 + remaining / material.heat_capacity,
         1e-11,
     );
+}
+
+/// LAW-LOCAL-DIR-001: phi at a conducting cell is prescribed. On a
+/// screened three-cell insulated line with kappa=screening=dx=1,
+/// phi[0]=6 and zero volume source:
+/// 3*phi[1]=6+phi[2], 2*phi[2]=phi[1] => [6, 2.4, 1.2].
+#[test]
+fn law_local_dirichlet_matches_exact_three_cell_profile() {
+    let shape = GridShape::new(3, 1, 1).unwrap();
+    let field = PotentialField::solve_with_local(
+        shape, 1.0, &[0.0; 3], 1.0, 1.0,
+        PotentialBoundary::Insulated, 160,
+        &[LocalBoundarySite {
+            index: shape.index(0,0,0).unwrap(),
+            condition: LocalPotentialBoundary::Dirichlet { value: 6.0 },
+        }],
+    ).unwrap();
+    for (i, expected) in [6.0, 2.4, 1.2].into_iter().enumerate() {
+        close(&format!("dirichlet[{i}]"), field.at(i,0,0).unwrap(), expected, 1e-10);
+    }
+    assert!(field.field_energy_joules() > 0.0);
+}
+
+/// LAW-LOCAL-NEU-001: zero normal flux across a marked interface.
+/// With a single insulated source cell (rho=6, screening=2),
+/// phi[0]=rho/screening=3, while its disconnected neighbours remain 0.
+#[test]
+fn law_local_neumann_blocks_normal_potential_flux() {
+    let shape = GridShape::new(3, 1, 1).unwrap();
+    let field = PotentialField::solve_with_local(
+        shape, 1.0, &[6.0, 0.0, 0.0], 1.0, 2.0,
+        PotentialBoundary::Insulated, 120,
+        &[LocalBoundarySite {
+            index: shape.index(0,0,0).unwrap(),
+            condition: LocalPotentialBoundary::Neumann,
+        }],
+    ).unwrap();
+    for (i, expected) in [3.0, 0.0, 0.0].into_iter().enumerate() {
+        close(&format!("neumann[{i}]"), field.at(i,0,0).unwrap(), expected, 1e-10);
+    }
+}
+
+/// LAW-LOCAL-ROB-001: surface exchange satisfies the cell-centre
+/// finite-volume balance (screening + h/dx)*phi = rho + h*phi_ref/dx.
+/// Here (2+4)*phi = 6 + 4*(-1), so phi=1/3.
+#[test]
+fn law_local_robin_matches_exact_finite_volume_exchange() {
+    let shape = GridShape::new(1, 1, 1).unwrap();
+    let field = PotentialField::solve_with_local(
+        shape, 1.0, &[6.0], 1.0, 2.0,
+        PotentialBoundary::Insulated, 50,
+        &[LocalBoundarySite {
+            index: 0,
+            condition: LocalPotentialBoundary::Robin { reference: -1.0, exchange: 4.0 },
+        }],
+    ).unwrap();
+    close("robin potential", field.at(0,0,0).unwrap(), 1.0/3.0, 1e-12);
+    let half = field.scaled(0.5).unwrap();
+    close("field decay with Robin reservoir", half.field_energy_joules(),
+        field.field_energy_joules()*0.25, 1e-10);
+}
+
+#[test]
+fn overlapping_or_nonphysical_local_constraints_are_rejected() {
+    let shape = GridShape::new(1,1,1).unwrap();
+    let site = LocalBoundarySite {
+        index: 0,
+        condition: LocalPotentialBoundary::Dirichlet {value: 1.0},
+    };
+    assert!(PotentialField::solve_with_local(
+        shape, 1.0, &[0.0], 1.0, 1.0,
+        PotentialBoundary::Insulated, 20, &[site,site]
+    ).is_err());
+    assert!(PotentialField::solve_with_local(
+        shape, 1.0, &[0.0], 1.0, 1.0,
+        PotentialBoundary::Insulated, 20,
+        &[LocalBoundarySite {
+            index: 0, condition: LocalPotentialBoundary::Robin {
+                reference: 0.0, exchange: -1.0,
+            },
+        }]
+    ).is_err());
 }
