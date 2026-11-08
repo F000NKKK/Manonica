@@ -16,7 +16,7 @@ use meridian_sdk::{
 
 use crate::{
     diagnostics::{DebugHud, FrameMetrics},
-    editor::{FormulaEditor, EditorOverlay},
+    editor::{FormulaEditor, EditorOverlay, FormulaLegend},
     experiment::Experiment,
     simulation::{Simulation, SimulationSnapshot, SimulationWorker},
     visualization::FieldView,
@@ -334,6 +334,7 @@ fn render_loop(
         FieldView::new(base, &experiment).expect("failed to initialize manon rendering resources");
     let mut debug = DebugHud::default();
     let mut editor_overlay = EditorOverlay::default();
+    let mut formula_legend = FormulaLegend::default();
     let mut revision = 0_u64;
     let mut camera = FlyCamera::new(Vec3::new(0.0, 3.0, 18.0));
     let mut last_frame = Instant::now();
@@ -415,6 +416,15 @@ fn render_loop(
             &mut graphics.base,
             &render_input.editor,
             current_size,
+        ) {
+            overlays.push(overlay);
+        }
+        if let Some(overlay) = formula_legend.draw(
+            &mut graphics.base,
+            &experiment,
+            &render_input.snapshot.formula_bound,
+            current_size,
+            render_input.editor.open,
         ) {
             overlays.push(overlay);
         }
