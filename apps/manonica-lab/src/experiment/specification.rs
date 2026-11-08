@@ -104,49 +104,41 @@ pub struct FieldSource {
     pub strength: f64,
 }
 
-/// Embedded boundary on a user-defined parametric circuit. The circuit
-/// is rasterized into the same grid cells used for trapping and rendering.
+/// Embedded boundary on a user-defined parametric circuit.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LocalBoundarySpec {
-    pub formula: usize,
-    #[serde(flatten)]
-    pub condition: LocalBoundaryKind,
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LocalBoundarySpec {
+    /// Fixed cell-centre potential.
+    Dirichlet { formula: usize, value: f64 },
+    /// Zero normal exchange across rasterized circuit interfaces.
+    Neumann { formula: usize },
+    /// Coupling to an external potential reservoir.
+    Robin { formula: usize, reference: f64, exchange: f64 },
 }
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum LocalBoundaryKind {
-    /// Fixed cell-centre potential of the conducting circuit.
-    Dirichlet { value: f64 },
-    /// Zero normal potential flux through the circuit's rasterized interface.
-    Neumann,
-    /// Exchange flux with a reference potential: h*(phi - reference).
-    Robin { reference: f64, exchange: f64 },
-}
-impl LocalBoundaryKind {
+impl LocalBoundarySpec {
+    pub fn formula(&self) -> usize {
+        match self {
+            Self::Dirichlet { formula, .. }
+            | Self::Neumann { formula }
+            | Self::Robin { formula, .. } => *formula,
+        }
+    }
     pub fn physics(&self) -> manonica_physics::LocalPotentialBoundary {
         match *self {
-            Self::Dirichlet { value } => {
-                manonica_physics::LocalPotentialBoundary::Dirichlet { value }
-            }
-            Self::Neumann => manonica_physics::LocalPotentialBoundary::Neumann,
-            Self::Robin {
-                reference,
-                exchange,
-            } => manonica_physics::LocalPotentialBoundary::Robin {
-                reference,
-                exchange,
-            },
+            Self::Dirichlet { value, .. } =>
+                manonica_physics::LocalPotentialBoundary::Dirichlet { value },
+            Self::Neumann { .. } =>
+                manonica_physics::LocalPotentialBoundary::Neumann,
+            Self::Robin { reference, exchange, .. } =>
+                manonica_physics::LocalPotentialBoundary::Robin { reference, exchange },
         }
     }
     fn valid(&self) -> bool {
         match self {
-            Self::Dirichlet { value } => value.is_finite(),
-            Self::Neumann => true,
-            Self::Robin {
-                reference,
-                exchange,
-            } => reference.is_finite() && exchange.is_finite() && *exchange > 0.0,
+            Self::Dirichlet { value, .. } => value.is_finite(),
+            Self::Neumann { .. } => true,
+            Self::Robin { reference, exchange, .. } =>
+                reference.is_finite() && exchange.is_finite() && *exchange > 0.0,
         }
     }
 }
@@ -497,10 +489,10 @@ impl Experiment {
         }
         for boundary in &self.local_boundaries {
             check(
-                boundary.formula < self.formulas.len(),
+                boundary.formula() < self.formulas.len(),
                 "local_boundary_formula",
             )?;
-            check(boundary.condition.valid(), "local_boundary_parameters")?;
+            check(boundary.valid(), "local_boundary_parameters")?;
         }
         check(self.field_sources.len() <= 64, "field_sources_count")?;
         if !self.field_sources.is_empty() {
