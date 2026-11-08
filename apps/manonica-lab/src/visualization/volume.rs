@@ -18,6 +18,8 @@ use crate::simulation::SimulationSnapshot;
 // Soft, low-frequency appearance intentionally chosen for Manonica Lab.
 const TEXTURE_SIZE: usize = 4;
 const BORDER_ROWS: usize = 2;
+// Rendering resolution along the depth axis is independent of physics cells.
+// Each plane samples the physical field with trilinear interpolation.
 const MAX_PLANES: usize = 64;
 const ATLAS_PERIOD: Duration = Duration::from_millis(100);
 // Meridian's perspective near clip plane is 0.1 metres.
@@ -190,7 +192,7 @@ impl ManaVolume {
     pub fn new(base: &mut GraphicsSession, exp: &Experiment) -> Result<Self, String> {
         let mut meshes: [Vec<MeshHandle>; 3] = std::array::from_fn(|_| Vec::new());
         for axis in 0..3 {
-            let count = exp.grid.dimensions[axis].min(MAX_PLANES);
+            let count = MAX_PLANES;
             for layer in 0..count {
                 meshes[axis].push(
                     base.render
@@ -606,6 +608,31 @@ mod tests {
         .unwrap();
         let v = sample_density(&f, [0.1, -0.3, 0.15]);
         assert!((v - 15.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn render_depth_resolution_exceeds_coarse_physics_grid() {
+        // A 28-cell grid must render 64 translucent layers, not 28.
+        // The physical field and its conserved inventory are unaffected.
+        let shape = GridShape::new(28, 28, 28).unwrap();
+        let field = FreeManaField::uniform(
+            shape,
+            0.5,
+            Quantity::<ManonDensity>::nonnegative(2.0).unwrap(),
+        )
+        .unwrap();
+        let before = field.total_manons().unwrap().value();
+        let atlas = build_density_atlas(
+            &field,
+            2,
+            MAX_PLANES,
+            0.04,
+            2.0,
+            0.18,
+            SliceView::new(Vec3::new(0.0, 0.0, -10.0), Vec3::new(0.0, 0.0, 1.0), 2, 0.5),
+        );
+        assert_eq!(atlas.height, ((TEXTURE_SIZE + BORDER_ROWS) * 64) as u32);
+        assert_eq!(field.total_manons().unwrap().value(), before);
     }
 
     #[test]
