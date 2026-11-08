@@ -141,6 +141,8 @@ impl App {
             } else if state.editor.open {
                 if input.was_key_pressed(KeyCode::Escape) {
                     state.editor.open = false;
+                    state.mouse_locked = true;
+                    window.set_cursor_grabbed(true);
                 } else if input.was_key_pressed(KeyCode::Tab) {
                     state.editor.next();
                 } else if input.was_key_pressed(KeyCode::Backspace) {
@@ -176,7 +178,7 @@ impl App {
                 if input.was_key_pressed(KeyCode::ArrowDown) {
                     state.threshold = (state.threshold / 1.2).max(0.001);
                 }
-    
+
                 let mut controls = fly_controls(input);
                 let delta = controls.look;
                 controls.look = (0.0, 0.0);
@@ -185,7 +187,7 @@ impl App {
                     state.look_delta.0 += delta.0;
                     state.look_delta.1 += delta.1;
                 }
-                }
+            }
             if let Some(snapshot) = self.simulation.poll_latest() {
                 state.paused = snapshot.paused;
                 state.snapshot = Arc::new(snapshot);
@@ -194,8 +196,13 @@ impl App {
 
         if let Some(formula) = apply_formula {
             let mut experiment = self.experiment.clone();
-            experiment.formulas.clear();
-            experiment.formulas.push(formula);
+            if experiment.formulas.is_empty() {
+                experiment.formulas.push(formula);
+            } else {
+                // Editing the first circuit must not silently destroy the
+                // other independently defined physical constructions.
+                experiment.formulas[0] = formula;
+            }
             // Validate geometry and cell occupancy before modifying either
             // simulation or renderer; invalid input leaves the old state live.
             let validation = Simulation::new(experiment.clone());
@@ -204,6 +211,8 @@ impl App {
                 Ok(_) => {
                     state.editor.message = "APPLIED - physics reset; mana capture is active".into();
                     state.editor.open = false;
+                    state.mouse_locked = true;
+                    window.set_cursor_grabbed(true);
                     state.experiment = Arc::new(experiment.clone());
                     state.revision += 1;
                     self.experiment = experiment.clone();
