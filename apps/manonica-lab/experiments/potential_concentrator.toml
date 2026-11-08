@@ -25,7 +25,7 @@ initial_work_joules = 20000.0
 max_power_joules_per_second = 10000.0
 # The source is gradually turned down when the trap is 99.5% full.
 shutdown_at_bound_fraction = 0.995
-shutdown_decay_rate = 0.8
+shutdown_decay_rate = 0.1
 
 [visualization]
 relative_threshold = 0.035
