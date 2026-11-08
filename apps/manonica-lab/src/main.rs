@@ -5,7 +5,7 @@
 use manonica_lab::{
     app,
     experiment::{Experiment, Formula, FormulaTrap},
-    simulation::Simulation,
+    simulation::{BackendPreference, Simulation},
 };
 use std::path::PathBuf;
 
@@ -14,9 +14,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("experiments/formula_comparison.toml");
     let mut path_given = false;
     let mut formula = None;
+    let mut backend_arg: Option<String> = None;
     let mut args = std::env::args_os().skip(1);
     while let Some(argument) = args.next() {
-        if argument == "--formula" {
+        if argument == "--backend" {
+            let device = args.next().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "--backend requires auto, gpu or cpu",
+                )
+            })?;
+            backend_arg = Some(device.to_string_lossy().into_owned());
+        } else if let Some(device) = argument.to_str().and_then(|v| v.strip_prefix("--backend=")) {
+            backend_arg = Some(device.to_owned());
+        } else if argument == "--formula" {
             let mut expressions = Vec::new();
             for _ in 0..3 {
                 let expression = args.next().ok_or_else(|| {
@@ -52,10 +63,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "unknown argument; usage: manonica-lab [experiment.toml] [--formula x(t) y(t) z(t)]",
+                "unknown argument; usage: manonica-lab [experiment.toml] [--backend auto|gpu|cpu] [--formula x(t) y(t) z(t)]",
             ).into());
         }
     }
+    let backend = BackendPreference::resolve(
+        backend_arg.as_deref(),
+        std::env::var("MANONICA_SIM_BACKEND").ok().as_deref(),
+    ).map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
+    println!("Physics compute backend policy: {backend:?}");
     let mut experiment = Experiment::from_file(&path)?;
     if let Some(formula) = formula {
         experiment.formulas.push(formula);
@@ -75,6 +91,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let title = format!("Manonica Lab — {}", experiment.name);
     let sim = Simulation::new(experiment)?;
     println!("Initial free manons: {:.6}", sim.total()?.value());
-    meridian_sdk::run_windowed_app(&title, 1280, 800, app::App::new(sim))?;
+    meridian_sdk::run_windowed_app(&title, 1280, 800, app::App::with_backend(sim, backend))?;
     Ok(())
 }
