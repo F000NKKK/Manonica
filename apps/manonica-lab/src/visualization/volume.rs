@@ -15,7 +15,8 @@ use manonica_physics::FreeManaField;
 use crate::experiment::Experiment;
 use crate::simulation::SimulationSnapshot;
 
-const TEXTURE_SIZE: usize = 64;
+// Soft, low-frequency appearance intentionally chosen for Manonica Lab.
+const TEXTURE_SIZE: usize = 4;
 const BORDER_ROWS: usize = 2;
 const MAX_PLANES: usize = 64;
 const ATLAS_PERIOD: Duration = Duration::from_millis(100);
