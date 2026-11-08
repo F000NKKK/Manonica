@@ -17,6 +17,10 @@ this neutral contract without exposing `wgpu` types in core.
 A future server-side/headless Minecraft implementation can use CPU-only
 physics without a GPU, or install an accelerator when suitable.
 
+There are exactly **two physical compute backends**: CPU and GPU.
+`auto` selects between them; `FALLBACK` is telemetry, not an
+additional backend. Forcing `--backend gpu` prevents fallback.
+
 ## Current computational coverage
 
 The **only** GPU-accelerated physical law so far is 3D free-manon
@@ -100,8 +104,8 @@ adapter is initialized.
 ### F3 telemetry
 
 - `PHYSICS CPU`: CPU physical solver (GPU not requested).
-- `PHYSICS GPU HYBRID`: diffusion on GPU, remaining physics on CPU.
-- `PHYSICS CPU FALLBACK`: GPU was requested but could not initialize.
+- `PHYSICS GPU`: selected GPU computation (currently only the diffusion operator runs on GPU; the complete solver remains hybrid).
+- `PHYSICS CPU (FALLBACK)`: the automatic policy selected the CPU after GPU unavailability/failure. This is a status, **not a third backend**.
 - `DIFF WALL`: total wall-clock duration of the GPU diffusion
   operation, **including** upload, submission, readback and validation.
   It is **not** GPU-only execution time.
