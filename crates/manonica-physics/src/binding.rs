@@ -235,6 +235,52 @@ impl MaterialLattice {
         self.channels.push(channel);
         Ok(())
     }
+    /// Bound manons retain their spatial potential energy upon capture.
+    pub fn bound_potential_energy(&self, values: &[f64]) -> Result<f64, BaseError> {
+        if values.len() != self.cells.len() || values.iter().any(|v| !v.is_finite()) {
+            return Err(invalid("bound_potential_shape"));
+        }
+        let value: f64 = self.cells.iter().zip(values)
+            .map(|(cell, phi)| cell.bound * phi).sum();
+        if !value.is_finite() { return Err(invalid("bound_potential_overflow")); }
+        Ok(value)
+    }
+
+    /// Maximum physical trap temperature in kelvin, not field heat (joules).
+    pub fn peak_temperature_kelvin(&self) -> Option<f64> {
+        self.cells.iter().filter_map(TrapCell::temperature).reduce(f64::max)
+    }
+
+    pub fn total_capacity(&self) -> f64 {
+        self.cells.iter().filter_map(|c| c.material).map(|m| m.capacity).sum()
+    }
+
+    pub fn total_bound(&self) -> f64 {
+        self.cells.iter().map(|c| c.bound).sum()
+    }
+
+    /// Passive cooling to an external bath. The removed joules must be
+    /// counted as exported heat by the caller, not destroyed.
+    pub fn cool_into_bath(&mut self, dt: f64, rate: f64) -> Result<f64, BaseError> {
+        positive(dt, "cooling_dt")?;
+        nonnegative(rate, "cooling_rate")?;
+        let fraction = 1.0 - (-rate * dt).exp();
+        let mut next = self.cells.clone();
+        let mut exported = 0.0;
+        for cell in &mut next {
+            if cell.material.is_some() {
+                nonnegative(cell.heat, "cooling_heat")?;
+                let amount = cell.heat * fraction;
+                if !amount.is_finite() { return Err(invalid("cooling_overflow")); }
+                cell.heat -= amount;
+                exported += amount;
+            }
+        }
+        if !exported.is_finite() { return Err(invalid("cooling_overflow")); }
+        self.cells = next;
+        Ok(exported)
+    }
+
     pub fn balance(&self, field: &FreeManaField) -> Result<Balance, BaseError> {
         if field.shape() != self.shape {
             return Err(invalid("material_grid_shape"));
@@ -533,6 +579,25 @@ mod tests {
         assert!(sites.conduct_heat(f64::NAN, 1.0).is_err());
     }
 
+    #[test]
+    fn bound_manons_keep_potential_energy_and_cooling_exports_heat() {
+        let shape = GridShape::new(1, 1, 1).unwrap();
+        let mut field = FreeManaField::uniform(
+            shape, 1.0, Quantity::nonnegative(20.0).unwrap()).unwrap();
+        let mut sites = MaterialLattice::new(shape);
+        let mut m = material();
+        m.release_rate = 0.0;
+        sites.install([0,0,0],m).unwrap();
+        sites.step(&mut field, 1.0).unwrap();
+        let bound = sites.total_bound();
+        assert!((sites.bound_potential_energy(&[-2.0]).unwrap() + 2.0*bound).abs() < 1e-9);
+        let before = sites.balance(&field).unwrap();
+        let exported = sites.cool_into_bath(2.0, 0.5).unwrap();
+        let after = sites.balance(&field).unwrap();
+        assert!(exported > 0.0);
+        assert!((before.energy() - after.energy() - exported).abs() < 1e-8);
+        assert!(sites.peak_temperature_kelvin().unwrap() >= 300.0);
+    }
     #[test]
     fn failed_step_does_not_mutate_state() {
         let shape = GridShape::new(1, 1, 1).unwrap();
