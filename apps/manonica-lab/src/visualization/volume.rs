@@ -25,6 +25,7 @@ struct AtlasRequest {
     axis: usize,
     planes: usize,
     threshold: f64,
+    optical_density: f64,
     step: u64,
 }
 
@@ -66,6 +67,7 @@ impl AtlasWorker {
                         request.planes,
                         request.threshold,
                         peak,
+                        request.optical_density,
                     );
                     let result = AtlasResult {
                         image,
@@ -213,6 +215,7 @@ impl ManaVolume {
             axis,
             planes: self.meshes[axis].len(),
             threshold,
+            optical_density: experiment.visualization.optical_density,
             step: snapshot.steps,
         });
         if sent {
@@ -230,14 +233,12 @@ impl ManaVolume {
         experiment: &Experiment,
     ) {
         let texture = base.render.recorder.upload(&result.image);
+        // Keep the high-concentration core icy blue instead of driving all
+        // three HDR channels far above 1.0 (which washed out the volume).
+        let gain = (experiment.visualization.exposure / 3.0).sqrt().min(2.0);
         let material = base.render.materials.register(Material {
             albedo: Some(texture),
-            base_color_factor: [
-                1.5 * experiment.visualization.exposure.sqrt(),
-                1.4 * experiment.visualization.exposure.sqrt(),
-                1.4 * experiment.visualization.exposure.sqrt(),
-                1.0,
-            ],
+            base_color_factor: [0.70 * gain, 0.90 * gain, 1.05 * gain, 1.0],
             blend: BlendMode::AlphaBlend,
             unlit: true,
             ..Default::default()
@@ -331,50 +332,102 @@ fn plane_mesh(
     }
 }
 
-/// Trilinear sampling at an arbitrary point, for *rendering only*.
-fn sample_density(field: &FreeManaField, position: [f64; 3]) -> f64 {
-    let shape = field.shape();
-    let dims = [shape.nx(), shape.ny(), shape.nz()];
-    let dx = field.cell_width_metres();
-    let coordinates = std::array::from_fn::<_, 3, _>(|axis| {
-        (position[axis] / dx + dims[axis] as f64 * 0.5 - 0.5)
-            .clamp(0.0, (dims[axis] - 1) as f64)
-    });
-    let lower = coordinates.map(|x| x.floor() as usize);
-    let upper = std::array::from_fn::<_, 3, _>(|axis| (lower[axis] + 1).min(dims[axis] - 1));
-    let weights = std::array::from_fn::<_, 3, _>(|axis| coordinates[axis] - lower[axis] as f64);
-    let mut result = 0.0;
-    for corners in 0..8 {
-        let mut id = [0; 3];
-        let mut weight = 1.0;
-        for axis in 0..3 {
-            if corners & (1 << axis) != 0 {
-                id[axis] = upper[axis];
-                weight *= weights[axis];
-            } else {
-                id[axis] = lower[axis];
-                weight *= 1.0 - weights[axis];
-            }
-        }
-        let index = shape.index(id[0], id[1], id[2]).expect("sample clamped to grid");
-        result += field.densities()[index].value() * weight;
-    }
-    result
+/// One-dimensional interpolation coordinates for a regular Cartesian grid.
+/// All weights, source indices and boundary fading are evaluated once per
+/// atlas axis, rather than independently for every pixel of every slice.
+#[derive(Debug, Clone, Copy)]
+struct AxisSample {
+    first: usize,
+    second: usize,
+    t: f64,
+    fade: f64,
 }
 
-/// Mask the *visual* volume near the finite simulation box. Reflecting
-/// boundary conditions remain in the physics solver, but density is not
-/// artificially extended into opaque, rectangular planes by rendering.
-fn boundary_visibility(position: [f64; 3], dimensions: [usize; 3], dx: f64) -> f64 {
-    const SOFT_EDGE_CELLS: f64 = 2.5;
-    let mut opacity = 1.0;
-    for axis in 0..3 {
-        let half = dimensions[axis] as f64 * dx * 0.5;
-        let distance = half - position[axis].abs();
-        let t = (distance / (dx * SOFT_EDGE_CELLS)).clamp(0.0, 1.0);
-        opacity *= t * t * (3.0 - 2.0 * t);
+impl AxisSample {
+    fn from_position(position: f64, dimension: usize, dx: f64) -> Self {
+        let coordinate = (position / dx + dimension as f64 * 0.5 - 0.5)
+            .clamp(0.0, (dimension - 1) as f64);
+        let first = coordinate.floor() as usize;
+        let second = (first + 1).min(dimension - 1);
+        let half_extent = dimension as f64 * dx * 0.5;
+        let edge = ((half_extent - position.abs()) / (dx * 2.5)).clamp(0.0, 1.0);
+        Self {
+            first,
+            second,
+            t: coordinate - first as f64,
+            fade: edge * edge * (3.0 - 2.0 * edge),
+        }
     }
-    opacity
+
+    fn texel(index: usize, total: usize, dimension: usize, dx: f64) -> Self {
+        let position = ((index as f64 + 0.5) / total as f64 - 0.5)
+            * dimension as f64
+            * dx;
+        Self::from_position(position, dimension, dx)
+    }
+}
+
+/// Exact trilinear interpolation of the same solver grid. No new particles
+/// or physics cells are produced; this is just smooth visualization.
+#[inline]
+fn interpolated_density(
+    field: &FreeManaField,
+    coords: [AxisSample; 3],
+) -> f64 {
+    let shape = field.shape();
+    let [x, y, z] = coords;
+    let row = shape.nx();
+    let plane = row * shape.ny();
+    let values = field.densities();
+    let at = |ix: usize, iy: usize, iz: usize| {
+        values[iz * plane + iy * row + ix].value()
+    };
+    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+    let z0y0 = lerp(at(x.first, y.first, z.first), at(x.second, y.first, z.first), x.t);
+    let z0y1 = lerp(at(x.first, y.second, z.first), at(x.second, y.second, z.first), x.t);
+    let z1y0 = lerp(at(x.first, y.first, z.second), at(x.second, y.first, z.second), x.t);
+    let z1y1 = lerp(at(x.first, y.second, z.second), at(x.second, y.second, z.second), x.t);
+    lerp(
+        lerp(z0y0, z0y1, y.t),
+        lerp(z1y0, z1y1, y.t),
+        z.t,
+    )
+}
+
+#[cfg(test)]
+fn sample_density(field: &FreeManaField, position: [f64; 3]) -> f64 {
+    let shape = field.shape();
+    let dimensions = [shape.nx(), shape.ny(), shape.nz()];
+    let dx = field.cell_width_metres();
+    interpolated_density(
+        field,
+        std::array::from_fn(|axis| {
+            AxisSample::from_position(position[axis], dimensions[axis], dx)
+        }),
+    )
+}
+
+/// Convert normalized density into ice-blue radiance and Beer–Lambert
+/// opacity. `optical_density` has units of inverse metres.
+fn rgba_from_density(
+    normalized: f64,
+    layer_thickness: f64,
+    optical_density: f64,
+) -> [u8; 4] {
+    let core = normalized.clamp(0.0, 1.0).powf(0.72);
+    // Cyan edges, pale high-density center, retaining a blue channel > red.
+    let red = 0.12 + 0.78 * core * core;
+    let green = 0.40 + 0.60 * core;
+    let blue = 0.90 + 0.10 * core;
+    let tau = optical_density * normalized.clamp(0.0, 1.0).powf(1.15)
+        * layer_thickness;
+    let alpha = 1.0 - (-tau).exp();
+    [
+        (red * 255.0).round() as u8,
+        (green * 255.0).round() as u8,
+        (blue * 255.0).round() as u8,
+        (alpha * 255.0).round() as u8,
+    ]
 }
 
 fn build_density_atlas(
@@ -383,6 +436,7 @@ fn build_density_atlas(
     planes: usize,
     threshold: f64,
     peak: f64,
+    optical_density: f64,
 ) -> ImageAsset {
     let shape = field.shape();
     let dimensions = [shape.nx(), shape.ny(), shape.nz()];
@@ -392,35 +446,38 @@ fn build_density_atlas(
     let mut pixels = vec![0_u8; width * height * 4];
     let dx = field.cell_width_metres();
     let [u, v] = other_axes(axis);
-    let slice_thickness = dimensions[axis] as f64 / planes as f64;
+    let layer_thickness = dimensions[axis] as f64 * dx / planes as f64;
+    let axis_lookup = (0..planes)
+        .map(|layer| AxisSample::texel(layer, planes, dimensions[axis], dx))
+        .collect::<Vec<_>>();
+    let column_lookup = (0..width)
+        .map(|x| AxisSample::texel(x, width, dimensions[u], dx))
+        .collect::<Vec<_>>();
+    let row_lookup = (0..TEXTURE_SIZE)
+        .map(|y| AxisSample::texel(y, TEXTURE_SIZE, dimensions[v], dx))
+        .collect::<Vec<_>>();
 
-    for layer in 0..planes {
-        let center_index = (layer as f64 + 0.5) * slice_thickness;
-        for yy in 0..TEXTURE_SIZE {
-            for xx in 0..TEXTURE_SIZE {
-                let mut p = [0.0_f64; 3];
-                p[axis] = (center_index - dimensions[axis] as f64 * 0.5) * dx;
-                p[u] = ((xx as f64 + 0.5) / width as f64 - 0.5) * dimensions[u] as f64 * dx;
-                p[v] = ((yy as f64 + 0.5) / TEXTURE_SIZE as f64 - 0.5)
-                    * dimensions[v] as f64 * dx;
-
-                // Visual fading is applied *after* sampling; physical density
-                // and no-flux conservation are not modified.
-                let relative = (sample_density(field, p) / peak).clamp(0.0, 1.0);
+    for (layer, &normal) in axis_lookup.iter().enumerate() {
+        let mut coords = [normal; 3];
+        coords[axis] = normal;
+        for (yy, &row_sample) in row_lookup.iter().enumerate() {
+            coords[v] = row_sample;
+            let i = ((layer * stride + yy + 1) * width) * 4;
+            for (xx, &column_sample) in column_lookup.iter().enumerate() {
+                coords[u] = column_sample;
+                let relative = if peak > 0.0 {
+                    (interpolated_density(field, coords) / peak).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
                 let visible = ((relative - threshold) / (1.0 - threshold)).max(0.0)
-                    * boundary_visibility(p, dimensions, dx);
-                let brightness = visible.sqrt();
-                // Beer-Lambert optical depth: the thickness is compensated
-                // when the number of view slices changes.
-                let alpha = 1.0 - (-visible.powf(0.9) * 0.23 * slice_thickness).exp();
-                let i = ((layer * stride + yy + 1) * width + xx) * 4;
-                pixels[i] = (0.30 + 0.70 * brightness).mul_add(255.0, 0.0) as u8;
-                pixels[i + 1] = (0.52 + 0.48 * brightness).mul_add(255.0, 0.0) as u8;
-                pixels[i + 2] = 255;
-                pixels[i + 3] = (alpha * 255.0).round() as u8;
+                    * normal.fade * row_sample.fade * column_sample.fade;
+                let rgba = rgba_from_density(visible, layer_thickness, optical_density);
+                pixels[i + xx * 4..i + xx * 4 + 4].copy_from_slice(&rgba);
             }
         }
-        // Avoid filtering an unrelated atlas tile at the top/bottom edge.
+        // Border texels repeat their nearest data row, so bilinear
+        // filtering never pulls color from the adjacent slice.
         let first = (layer * stride + 1) * width * 4;
         let last = (layer * stride + TEXTURE_SIZE) * width * 4;
         pixels.copy_within(first..first + width * 4, first - width * 4);
@@ -456,7 +513,7 @@ mod tests {
             GridShape::new(6, 4, 8).unwrap(), 0.3,
             Quantity::<ManonDensity>::nonnegative(5.0).unwrap(),
         ).unwrap();
-        let atlas = build_density_atlas(&f, 2, 8, 0.04, 5.0);
+        let atlas = build_density_atlas(&f, 2, 8, 0.04, 5.0, 0.18);
         assert_eq!(atlas.height, (8 * (TEXTURE_SIZE + BORDER_ROWS)) as u32);
         assert_eq!(atlas.pixels.len(), atlas.width as usize * atlas.height as usize * 4);
         assert!(atlas.pixels.chunks_exact(4).any(|px| px[3] > 0));
@@ -466,9 +523,9 @@ mod tests {
     #[test]
     fn visual_boundary_fades_to_zero_without_affecting_density() {
         let dims = [12, 12, 12];
-        let center = boundary_visibility([0.0, 0.0, 0.0], dims, 0.5);
-        let near_edge = boundary_visibility([2.6, 0.0, 0.0], dims, 0.5);
-        let edge = boundary_visibility([3.0, 0.0, 0.0], dims, 0.5);
+        let center = AxisSample::from_position(0.0, dims[0], 0.5).fade;
+        let near_edge = AxisSample::from_position(2.6, dims[0], 0.5).fade;
+        let edge = AxisSample::from_position(3.0, dims[0], 0.5).fade;
         assert!((center - 1.0).abs() < 1e-12);
         assert!(near_edge > 0.0 && near_edge < center);
         assert_eq!(edge, 0.0);
@@ -482,5 +539,78 @@ mod tests {
             assert!(mesh.indices.iter().all(|&i| (i as usize) < mesh.positions.len()));
             assert!(mesh.uvs.iter().flatten().all(|n| (0.0..=1.0).contains(n)));
         }
+    }
+}
+
+#[cfg(test)]
+mod interpolation_regressions {
+    use super::*;
+    use manonica_core::{Quantity, units::ManonDensity};
+    use manonica_physics::GridShape;
+
+    #[test]
+    fn cached_interpolation_is_equivalent_to_corner_sum() {
+        let mut grid = FreeManaField::uniform(
+            GridShape::new(4, 3, 5).unwrap(),
+            0.5,
+            Quantity::<ManonDensity>::nonnegative(0.0).unwrap(),
+        ).unwrap();
+        for z in 0..5 {
+            for y in 0..3 {
+                for x in 0..4 {
+                    grid.set(x, y, z, Quantity::nonnegative(
+                        (x + 10 * y + 100 * z) as f64,
+                    ).unwrap()).unwrap();
+                }
+            }
+        }
+        let shape = grid.shape();
+        for point in [[-0.9, 0.3, 1.1], [0.1, -0.1, 0.4], [0.8, 0.8, -0.3]] {
+            let coordinates = std::array::from_fn::<_, 3, _>(|axis| {
+                let size = [shape.nx(), shape.ny(), shape.nz()][axis];
+                (point[axis] / 0.5 + size as f64 * 0.5 - 0.5)
+                    .clamp(0.0, (size - 1) as f64)
+            });
+            let mut reference = 0.0;
+            for corners in 0..8 {
+                let mut weight = 1.0;
+                let mut index = [0_usize; 3];
+                for axis in 0..3 {
+                    let low = coordinates[axis].floor() as usize;
+                    let high = (low + 1).min([shape.nx(), shape.ny(), shape.nz()][axis] - 1);
+                    let t = coordinates[axis] - low as f64;
+                    if corners & (1 << axis) == 0 {
+                        index[axis] = low;
+                        weight *= 1.0 - t;
+                    } else {
+                        index[axis] = high;
+                        weight *= t;
+                    }
+                }
+                reference += grid.at(index[0], index[1], index[2]).unwrap().value() * weight;
+            }
+            let optimized = sample_density(&grid, point);
+            assert!((optimized - reference).abs() < 1e-10, "optimized {optimized}, reference {reference}");
+        }
+    }
+
+    #[test]
+    fn optical_density_monotonically_controls_alpha() {
+        let thin = rgba_from_density(0.5, 0.5, 0.1);
+        let dense = rgba_from_density(0.5, 0.5, 0.5);
+        assert!(dense[3] > thin[3]);
+        let empty = rgba_from_density(0.0, 0.5, 0.5);
+        assert_eq!(empty[3], 0);
+    }
+
+    #[test]
+    fn empty_field_is_an_invisible_atlas() {
+        let field = FreeManaField::uniform(
+            GridShape::new(4, 4, 4).unwrap(),
+            0.5,
+            Quantity::<ManonDensity>::nonnegative(0.0).unwrap(),
+        ).unwrap();
+        let atlas = build_density_atlas(&field, 2, 4, 0.06, 0.0, 0.18);
+        assert!(atlas.pixels.chunks_exact(4).all(|px| px[3] == 0));
     }
 }

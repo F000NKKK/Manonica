@@ -12,7 +12,8 @@ steps_per_frame = 2
 [visualization]
 relative_threshold = 0.055
 max_points = 900
-exposure = 2.6
+exposure = 2.1
+optical_density = 0.18
 wisps = false
 
 [[seeds]]

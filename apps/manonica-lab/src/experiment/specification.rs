@@ -116,6 +116,10 @@ pub struct Visualization {
     pub max_points: usize,
     #[serde(default = "default_exposure")]
     pub exposure: f32,
+    /// Optical extinction coefficient (1/m) used only for visualization.
+    /// Affects rendered opacity, not the number of manons or transport.
+    #[serde(default = "default_optical_density")]
+    pub optical_density: f64,
     #[serde(default = "default_wisps")]
     pub wisps: bool,
 }
@@ -126,6 +130,7 @@ impl Default for Visualization {
             relative_threshold: default_threshold(),
             max_points: default_max_points(),
             exposure: default_exposure(),
+            optical_density: default_optical_density(),
             wisps: default_wisps(),
         }
     }
@@ -135,6 +140,7 @@ fn one() -> usize { 1 }
 fn default_threshold() -> f64 { 0.06 }
 fn default_max_points() -> usize { 800 }
 fn default_exposure() -> f32 { 2.0 }
+fn default_optical_density() -> f64 { 0.18 }
 fn default_wisps() -> bool { true }
 fn default_segments() -> usize { 96 }
 fn default_color() -> [f32; 3] { [0.35, 0.7, 1.0] }
@@ -222,6 +228,9 @@ impl Experiment {
         check(v.relative_threshold.is_finite() && (0.0..1.0).contains(&v.relative_threshold), "threshold")?;
         check((1..=4096).contains(&v.max_points), "max_points")?;
         check(v.exposure.is_finite() && v.exposure > 0.0 && v.exposure <= 30.0, "exposure")?;
+        check(v.optical_density.is_finite()
+            && (0.01..=4.0).contains(&v.optical_density),
+            "optical_density")?;
         Ok(())
     }
 }

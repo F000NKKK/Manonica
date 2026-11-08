@@ -95,3 +95,22 @@ fn excessive_flow_is_rejected_before_rendering() {
         .build().unwrap();
     assert!(Simulation::new(invalid).is_err());
 }
+
+#[test]
+fn rejects_nonphysical_optical_settings() {
+    let invalid = ExperimentBuilder::new("opacity")
+        .visualization(Visualization {
+            optical_density: f64::NAN,
+            ..Visualization::default()
+        })
+        .build();
+    assert!(invalid.is_err());
+
+    let invalid = ExperimentBuilder::new("opacity")
+        .visualization(Visualization {
+            optical_density: -0.5,
+            ..Visualization::default()
+        })
+        .build();
+    assert!(invalid.is_err());
+}
