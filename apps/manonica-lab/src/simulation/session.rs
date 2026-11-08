@@ -151,7 +151,7 @@ impl Simulation {
     /// material exchange, potential interactions and energy audits remain CPU.
     pub fn step_gpu(
         &mut self,
-        gpu: &mut super::gpu_diffusion::GpuDiffusion,
+        gpu: &mut manonica_compute_gpu::GpuDiffusion,
     ) -> Result<ConservationReport, ExperimentError> {
         self.step_internal(Some(gpu))
     }
