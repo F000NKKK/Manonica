@@ -46,3 +46,20 @@ Gradle Wrapper пока не добавлен. Java-адаптер сейчас 
 5. Безопасность и сохранение энергии проверяются прежде, чем эффект применяется к миру.
 
 См. [архитектуру](docs/ARCHITECTURE.md) и [этапы](docs/ROADMAP.md).
+
+## Графическая лаборатория
+
+В `apps/manonica-lab` реализованы декларативные эксперименты с полем
+свободных манонов и рендерингом на Meridian SDK (WGPU). Для запуска:
+
+```bash
+cd apps/manonica-lab
+cargo run --release
+cargo run --release -- experiments/two_sources.toml
+```
+
+Схема TOML, библиотека `ExperimentBuilder`, визуализация геометрии
+кругов, управление камерой и независимый численный решатель описаны
+в [документации лаборатории](apps/manonica-lab/README.md).
+Графическое приложение изолировано в отдельной Cargo workspace:
+базовая физика не зависит от WGPU и Meridian Engine.

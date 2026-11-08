@@ -35,6 +35,7 @@ impl App {
 
     fn advance_simulation(&mut self, elapsed: f64) {
         if self.paused { return; }
+        let initial_steps = self.simulation.steps();
         self.accumulator += elapsed.min(0.1);
         let dt = self.simulation.experiment.physics.dt;
         let max_steps = self.simulation.experiment.physics.steps_per_frame;
@@ -49,7 +50,9 @@ impl App {
         }
         // Не накапливать бесконечное отставание при торможении GPU.
         self.accumulator = self.accumulator.min(dt * max_steps as f64 * 2.0);
-        if self.simulation.steps() != 0 && self.simulation.steps() % 250 == 0 {
+        if self.simulation.steps() != initial_steps
+            && self.simulation.steps() % 250 == 0
+        {
             if let Ok(count) = self.simulation.total() {
                 println!("t={:.2}s, steps={}, total_manons={:.9}",
                     self.simulation.elapsed(), self.simulation.steps(), count.value());

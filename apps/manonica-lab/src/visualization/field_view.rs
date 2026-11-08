@@ -1,5 +1,5 @@
 use meridian_sdk::{
-    GraphicsSession, Light, Material, MaterialHandle, MeshHandle, Motor3,
+    BlendMode, GraphicsSession, Light, Material, MaterialHandle, MeshHandle, Motor3,
     Renderable3d, Scale3, Scene3d, Vec3, icosphere_mesh_source,
 };
 
@@ -41,8 +41,9 @@ impl FieldView {
             ];
             let energy = experiment.visualization.exposure * (0.15 + t.powf(2.5) * 2.2);
             levels.push(base.render.materials.register(Material {
-                base_color_factor: [rgb[0], rgb[1], rgb[2], 1.0],
+                base_color_factor: [rgb[0], rgb[1], rgb[2], 0.17 + t * 0.48],
                 emissive: rgb.map(|c| c * energy),
+                blend: BlendMode::AlphaBlend,
                 unlit: true,
                 ..Default::default()
             }));
