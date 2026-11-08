@@ -79,9 +79,16 @@ impl DebugHud {
         if self.fps_samples.is_empty() {
             return 0.0;
         }
-        let sampled = self.fps_samples.iter().rev().take(30);
-        let (sum, count) = sampled.fold((0.0, 0), |(sum, count), value| (sum + value, count + 1));
-        sum / f64::from(count)
+        // Mean throughput is frames / elapsed time, not mean(1 / frame_time).
+        // The latter is biased high by short frames and exaggerates jitter.
+        let sampled = self.frame_samples.iter().rev().take(60);
+        let (milliseconds, count) =
+            sampled.fold((0.0, 0_usize), |(sum, count), ms| (sum + ms, count + 1));
+        if milliseconds > 0.0 {
+            count as f64 * 1000.0 / milliseconds
+        } else {
+            0.0
+        }
     }
 
     pub fn overlay(&mut self, base: &mut GraphicsSession, viewport: [u32; 2]) -> Option<Overlay2d> {
