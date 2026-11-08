@@ -246,7 +246,18 @@ impl Simulation {
         self.shutdown = shutdown;
         self.time_seconds += dt.seconds();
         self.steps += 1;
-        let source_active = self.potential.is_some() && !self.shutdown;
+        // A stationary density snapshot is not thermodynamic equilibrium if
+        // the surrounding medium still drives a nonzero advective flux.
+        let medium_driven = match &self.experiment.physics.flow {
+            AmbientFlow::Still => false,
+            AmbientFlow::Uniform { velocity } => velocity.iter().any(|v| *v != 0.0),
+            AmbientFlow::Vortex {
+                angular_speed,
+                axial_speed,
+                ..
+            } => *angular_speed != 0.0 || *axial_speed != 0.0,
+        };
+        let source_active = (self.potential.is_some() && !self.shutdown) || medium_driven;
         let potential_peak = self
             .potential
             .as_ref()
