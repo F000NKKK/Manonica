@@ -311,6 +311,11 @@ impl PotentialField {
                     let i = self.shape.index(x, y, z).unwrap();
                     for (a, b, c) in [(x + 1, y, z), (x, y + 1, z), (x, y, z + 1)] {
                         if let Some(j) = self.shape.index(a, b, c) {
+                            if matches!(self.local[i], Some(LocalPotentialBoundary::Neumann))
+                                || matches!(self.local[j], Some(LocalPotentialBoundary::Neumann))
+                            {
+                                continue;
+                            }
                             let velocity = -mobility * (self.values[j] - self.values[i]) / self.dx;
                             let fraction = velocity * dt / self.dx;
                             if !fraction.is_finite() {
