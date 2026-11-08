@@ -376,7 +376,7 @@ fn build_potential(
     let mut boundary_sites = Vec::<LocalBoundarySite>::new();
     let mut occupied = std::collections::HashSet::new();
     for boundary in &experiment.local_boundaries {
-        let formula = &experiment.formulas[boundary.formula];
+        let formula = &experiment.formulas[boundary.formula()];
         let cells = crate::experiment::capture_cells(formula, dims, dx)?;
         for [x, y, z] in cells {
             let index = shape.index(x, y, z).unwrap();
@@ -389,7 +389,7 @@ fn build_potential(
             }
             boundary_sites.push(LocalBoundarySite {
                 index,
-                condition: boundary.condition.physics(),
+                condition: boundary.physics(),
             });
         }
     }
