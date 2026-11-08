@@ -17,21 +17,21 @@ const SNAPSHOT_PERIOD: Duration = Duration::from_millis(50);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComputeBackend {
     Cpu,
-    GpuHybrid,
-    CpuFallback,
+    Gpu,
 }
 impl ComputeBackend {
     pub fn label(self) -> &'static str {
         match self {
             Self::Cpu => "CPU",
-            Self::GpuHybrid => "GPU HYBRID",
-            Self::CpuFallback => "CPU FALLBACK",
+            Self::Gpu => "GPU",
         }
     }
 }
 #[derive(Debug, Clone, Copy)]
 pub struct ComputeTelemetry {
     pub backend: ComputeBackend,
+    /// True if auto selection tried GPU and switched to CPU.
+    pub cpu_fallback: bool,
     /// End-to-end GPU operator wall time, including upload and readback.
     pub diffusion_wall_ms: f64,
 }
@@ -39,6 +39,7 @@ impl Default for ComputeTelemetry {
     fn default() -> Self {
         Self {
             backend: ComputeBackend::Cpu,
+            cpu_fallback: false,
             diffusion_wall_ms: 0.0,
         }
     }
@@ -241,12 +242,11 @@ fn run_simulation(
     let mut gpu = create_gpu(&sim);
     let mut compute = ComputeTelemetry {
         backend: if gpu.is_some() {
-            ComputeBackend::GpuHybrid
-        } else if backend.attempts_gpu() {
-            ComputeBackend::CpuFallback
+            ComputeBackend::Gpu
         } else {
             ComputeBackend::Cpu
         },
+        cpu_fallback: gpu.is_none() && backend.attempts_gpu(),
         diffusion_wall_ms: 0.0,
     };
 
@@ -283,12 +283,11 @@ fn run_simulation(
                     sim = next;
                     gpu = create_gpu(&sim);
                     compute.backend = if gpu.is_some() {
-                        ComputeBackend::GpuHybrid
-                    } else if backend.attempts_gpu() {
-                        ComputeBackend::CpuFallback
+                        ComputeBackend::Gpu
                     } else {
                         ComputeBackend::Cpu
                     };
+                    compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
                     compute.diffusion_wall_ms = 0.0;
                     period = Duration::from_secs_f64(sim.experiment.physics.dt);
                     max_catch_up = sim.experiment.physics.steps_per_frame;
@@ -339,7 +338,8 @@ fn run_simulation(
                     if gpu.is_some() && backend.allows_cpu_fallback() {
                         eprintln!("Manonica: GPU step failed ({err}); retrying batch on CPU");
                         gpu = None;
-                        compute.backend = ComputeBackend::CpuFallback;
+                        compute.backend = ComputeBackend::Cpu;
+                        compute.cpu_fallback = true;
                         compute.diffusion_wall_ms = 0.0;
                         // GPU candidate is transactional. On fallback replay
                         // *every* step, not only the first.
@@ -386,8 +386,8 @@ mod tests {
     #[test]
     fn backend_labels_are_explicit_and_unambiguous() {
         assert_eq!(ComputeBackend::Cpu.label(), "CPU");
-        assert_eq!(ComputeBackend::GpuHybrid.label(), "GPU HYBRID");
-        assert_eq!(ComputeBackend::CpuFallback.label(), "CPU FALLBACK");
+        assert_eq!(ComputeBackend::Gpu.label(), "GPU");
+        assert!(!ComputeTelemetry::default().cpu_fallback);
         assert_eq!(ComputeTelemetry::default().diffusion_wall_ms, 0.0);
     }
 
