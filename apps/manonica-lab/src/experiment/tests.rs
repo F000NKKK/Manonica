@@ -236,3 +236,54 @@ fn three_formula_demo_has_distinct_geometry_and_independent_capture() {
     assert!((final_balance.manons() - initial.manons()).abs() < 1e-6);
     assert!((final_balance.energy() - initial.energy()).abs() < 1e-6);
 }
+
+#[test]
+fn powered_potential_concentrator_changes_the_real_free_mana_distribution() {
+    let experiment = Experiment::parse(include_str!("../../experiments/potential_concentrator.toml"))
+        .expect("powered field configuration must parse");
+    let mut control = experiment.clone();
+    control.physics.potential.as_mut().unwrap().mobility = 0.0;
+    let mut active = Simulation::new(experiment).unwrap();
+    let mut passive = Simulation::new(control).unwrap();
+    let initial_manons = active.total().unwrap().value();
+    let initial_energy = active.tracked_energy().unwrap();
+    let initial_work = active.field_ledger().unwrap().operating_work_joules;
+    let field = active.potential().unwrap();
+    assert!(field.peak_absolute() > 0.0);
+    assert!(field.field_energy_joules() > 0.0);
+    for _ in 0..30 {
+        active.step().unwrap();
+        passive.step().unwrap();
+    }
+    let profile_difference: f64 = active.field().densities()
+        .iter()
+        .zip(passive.field().densities())
+        .map(|(a,b)| (a.value()-b.value()).abs())
+        .sum();
+    assert!(profile_difference > 0.1, "potential must change actual field, not mesh");
+    assert!((active.total().unwrap().value()-initial_manons).abs() < 1e-6);
+    let work = active.field_ledger().unwrap().operating_work_joules - initial_work;
+    assert!((active.tracked_energy().unwrap()-initial_energy-work).abs() < 1e-5);
+}
+
+#[test]
+fn potential_source_requires_explicit_field_installation_budget() {
+    let mut experiment =
+        Experiment::parse(include_str!("../../experiments/potential_concentrator.toml")).unwrap();
+    experiment.physics.potential.as_mut().unwrap().initial_work_joules = 0.0;
+    assert!(Simulation::new(experiment).is_err());
+}
+
+#[test]
+fn changing_source_formula_changes_potential_distribution() {
+    let mut experiment =
+        Experiment::parse(include_str!("../../experiments/potential_concentrator.toml")).unwrap();
+    let first = Simulation::new(experiment.clone()).unwrap();
+    let centre = first.potential().unwrap().at(16, 12, 16).unwrap();
+    experiment.formulas[0].x = "0.8*cos(t)".into();
+    experiment.formulas[0].z = "0.8*sin(t)".into();
+    let second = Simulation::new(experiment).unwrap();
+    let new_centre = second.potential().unwrap().at(16, 12, 16).unwrap();
+    assert!((centre-new_centre).abs()>1e-5,
+        "same formula geometry must drive both render and potential source");
+}
