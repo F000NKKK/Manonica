@@ -19,6 +19,21 @@ pub enum PotentialBoundary {
     Insulated,
 }
 
+/// Embedded boundary imposed on a rasterized mathematical construction.
+/// Dirichlet pins cell-center potential; Neumann isolates normal face flux
+/// across the marked/unmarked interface; Robin couples a marked cell to an
+/// external potential reservoir through a finite surface conductance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LocalPotentialBoundary {
+    Dirichlet { value: f64 },
+    Neumann,
+    Robin { reference: f64, exchange: f64 },
+}
+#[derive(Debug, Clone, Copy)]
+pub struct LocalBoundarySite {
+    pub index: usize,
+    pub condition: LocalPotentialBoundary,
+}
 #[derive(Debug, Clone)]
 pub struct PotentialField {
     shape: GridShape,
@@ -27,6 +42,7 @@ pub struct PotentialField {
     boundary: PotentialBoundary,
     permittivity: f64,
     screening: f64,
+    local: Vec<Option<LocalPotentialBoundary>>,
 }
 #[derive(Debug, Clone, Copy)]
 pub struct PotentialStep {
@@ -59,6 +75,39 @@ impl PotentialField {
         {
             return Err(bad("potential_parameters"));
         }
+        Self::solve_with_local(
+            shape, dx, sources, permittivity, screening, boundary, iterations, &[],
+        )
+    }
+    pub fn solve_with_local(
+        shape: GridShape,
+        dx: f64,
+        sources: &[f64],
+        permittivity: f64,
+        screening: f64,
+        boundary: PotentialBoundary,
+        iterations: usize,
+        sites: &[LocalBoundarySite],
+    ) -> Result<Self, BaseError> {
+        if !dx.is_finite() || dx <= 0.0 || !permittivity.is_finite()
+            || permittivity <= 0.0 || !screening.is_finite() || screening <= 0.0
+            || !(1..=4096).contains(&iterations) || sources.len() != shape.len()
+            || sources.iter().any(|v| !v.is_finite())
+        { return Err(bad("potential_parameters")); }
+        let mut local = vec![None; shape.len()];
+        for site in sites {
+            if site.index >= shape.len() || local[site.index].is_some() {
+                return Err(bad("local_boundary_overlap"));
+            }
+            let valid = match site.condition {
+                LocalPotentialBoundary::Dirichlet { value } => value.is_finite(),
+                LocalPotentialBoundary::Neumann => true,
+                LocalPotentialBoundary::Robin { reference, exchange } =>
+                    reference.is_finite() && exchange.is_finite() && exchange > 0.0,
+            };
+            if !valid { return Err(bad("local_boundary_parameters")); }
+            local[site.index] = Some(site.condition);
+        }
         let alpha = permittivity / (dx * dx);
         let mut old = vec![0.0; shape.len()];
         let mut next = old.clone();
@@ -67,6 +116,10 @@ impl PotentialField {
                 for y in 0..shape.ny() {
                     for x in 0..shape.nx() {
                         let index = shape.index(x, y, z).unwrap();
+                        if let Some(LocalPotentialBoundary::Dirichlet { value }) = local[index] {
+                            next[index] = value;
+                            continue;
+                        }
                         let mut neighbours = 0.0;
                         let mut count = 0.0;
                         // Missing neighbours become ghost cells: phi=0 for
@@ -90,6 +143,13 @@ impl PotentialField {
                                     };
                                     let neighbour =
                                         shape.index(coords[0], coords[1], coords[2]).unwrap();
+                                    // An embedded Neumann surface carries no
+                                    // normal coupling across its discrete interface.
+                                    if matches!(local[index], Some(LocalPotentialBoundary::Neumann))
+                                        || matches!(local[neighbour], Some(LocalPotentialBoundary::Neumann))
+                                    {
+                                        continue;
+                                    }
                                     neighbours += old[neighbour];
                                     count += 1.0;
                                 } else if boundary == PotentialBoundary::Grounded {
@@ -97,8 +157,13 @@ impl PotentialField {
                                 }
                             }
                         }
-                        next[index] =
-                            (sources[index] + alpha * neighbours) / (screening + alpha * count);
+                        let (exchange, reference) = match local[index] {
+                            Some(LocalPotentialBoundary::Robin { reference, exchange }) =>
+                                (exchange / dx, reference),
+                            _ => (0.0, 0.0),
+                        };
+                        next[index] = (sources[index] + alpha * neighbours + exchange * reference)
+                            / (screening + alpha * count + exchange);
                         if !next[index].is_finite() {
                             return Err(bad("potential_overflow"));
                         }
@@ -114,6 +179,7 @@ impl PotentialField {
             boundary,
             permittivity,
             screening,
+            local,
         })
     }
     /// Scale an already solved potential without rerunning the Poisson solve.
@@ -157,10 +223,12 @@ impl PotentialField {
                     let i = self.shape.index(x, y, z).unwrap();
                     for (a, b, c) in [(x + 1, y, z), (x, y + 1, z), (x, y, z + 1)] {
                         if let Some(j) = self.shape.index(a, b, c) {
-                            energy += 0.5
-                                * self.permittivity
-                                * (self.values[j] - self.values[i]).powi(2)
-                                * self.dx;
+                            if !matches!(self.local[i], Some(LocalPotentialBoundary::Neumann))
+                                && !matches!(self.local[j], Some(LocalPotentialBoundary::Neumann))
+                            {
+                                energy += 0.5 * self.permittivity
+                                    * (self.values[j] - self.values[i]).powi(2) * self.dx;
+                            }
                         } else if self.boundary == PotentialBoundary::Grounded {
                             energy += 0.5 * self.permittivity * self.values[i].powi(2) * self.dx;
                         }
@@ -177,6 +245,14 @@ impl PotentialField {
                         }
                     }
                 }
+            }
+        }
+        // Robin coupling contributes a nonnegative reservoir-interface
+        // energy; the reference potential is externally imposed.
+        for (i, boundary) in self.local.iter().enumerate() {
+            if let Some(LocalPotentialBoundary::Robin { exchange, reference }) = boundary {
+                energy += 0.5 * exchange / self.dx
+                    * (self.values[i] - reference).powi(2) * volume;
             }
         }
         energy
