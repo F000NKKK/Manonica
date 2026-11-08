@@ -17,4 +17,28 @@ pub trait FreeManaDiffusionBackend {
         diffusivity: f64,
         dt_seconds: f64,
     ) -> Result<(), BaseError>;
+
+    /// Executes consecutive diffusion steps without exposing intermediate
+    /// states. The default implementation is reference-equivalent; GPU
+    /// implementations can keep intermediate buffers device-resident.
+    fn evolve_diffusion_batch(
+        &mut self,
+        field: &mut FreeManaField,
+        diffusivity: f64,
+        dt_seconds: f64,
+        steps: u32,
+    ) -> Result<(), BaseError> {
+        if steps == 0 {
+            return Err(BaseError::new(
+                manonica_error::ErrorCode::InvalidRange,
+                "diffusion_batch_steps",
+            ));
+        }
+        let mut candidate = field.clone();
+        for _ in 0..steps {
+            self.evolve_free_diffusion(&mut candidate, diffusivity, dt_seconds)?;
+        }
+        *field = candidate;
+        Ok(())
+    }
 }
