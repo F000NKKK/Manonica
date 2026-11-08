@@ -108,7 +108,7 @@ impl EquilibriumMonitor {
             phase,
             density_rate,
             bound_rate,
-            potential_peak,
+            potential_peak: peak_potential,
             temperature_excess_kelvin,
             stable_steps: self.state.stable_steps,
         };
