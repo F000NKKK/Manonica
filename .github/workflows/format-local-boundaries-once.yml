@@ -1,5 +1,5 @@
 name: Format local potential boundaries
-# Re-run after explicit kind-tagged boundary parsing fix.
+# Final pass after Neumann flux regression and physics docs.
 on:
   push:
     paths:
