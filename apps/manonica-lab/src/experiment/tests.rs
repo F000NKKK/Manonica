@@ -449,7 +449,7 @@ fn formula_rasterization_installs_real_local_boundary_potential() {
 
 #[test]
 fn formula_boundary_overlap_and_bad_parameters_are_rejected() {
-    use super::{LocalBoundaryKind, LocalBoundarySpec};
+    use super::LocalBoundarySpec;
     let mut experiment = Experiment::parse(include_str!(
         "../../experiments/local_boundary_conductor.toml"
     ))
@@ -459,12 +459,10 @@ fn formula_boundary_overlap_and_bad_parameters_are_rejected() {
         .push(experiment.local_boundaries[0].clone());
     assert!(Simulation::new(experiment.clone()).is_err());
     experiment.local_boundaries.truncate(1);
-    experiment.local_boundaries[0] = LocalBoundarySpec {
+    experiment.local_boundaries[0] = LocalBoundarySpec::Robin {
         formula: 0,
-        condition: LocalBoundaryKind::Robin {
-            reference: 0.0,
-            exchange: -1.0,
-        },
+        reference: 0.0,
+        exchange: -1.0,
     };
     assert!(experiment.validate().is_err());
 }
