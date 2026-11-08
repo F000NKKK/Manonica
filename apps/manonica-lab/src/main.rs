@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         experiment.seeds.len(),
     );
     println!(
-        "Controls: WASD + mouse, F3 diagnostics, Escape cursor, Space pause, R reset, F wisps, arrows threshold"
+        "Controls: WASD + mouse, E formula editor, TAB field, ENTER apply, ESC cancel, F3 diagnostics, Space pause, R reset, F wisps, arrows threshold"
     );
     let title = format!("Manonica Lab — {}", experiment.name);
     let sim = Simulation::new(experiment)?;
