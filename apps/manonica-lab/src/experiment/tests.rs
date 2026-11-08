@@ -179,3 +179,21 @@ fn crystal_trap_and_channel_conserve_total_inventory() {
     sim.reset().unwrap();
     assert_eq!(sim.material_balance().unwrap().bound, 0.0);
 }
+
+#[test]
+fn formula_constructs_real_capture_sites_and_conserves_inventory() {
+    let text = include_str!("../../experiments/formula_capture.toml");
+    let exp = Experiment::parse(text).unwrap();
+    assert_eq!(exp.formulas.len(), 1);
+    let mut sim = Simulation::new(exp).unwrap();
+    let initial = sim.material_balance().unwrap();
+    for _ in 0..30 {
+        sim.step().unwrap();
+    }
+    let final_balance = sim.material_balance().unwrap();
+    assert!(final_balance.bound > 0.0, "parametric ring must capture mana");
+    assert!((initial.manons() - final_balance.manons()).abs() < 1e-6);
+    assert!((initial.energy() - final_balance.energy()).abs() < 1e-6);
+    sim.reset().unwrap();
+    assert_eq!(sim.material_balance().unwrap().bound, 0.0);
+}
