@@ -67,7 +67,11 @@ impl FormulaEditor {
                 self.center = center;
             }
         }
-        self.message = "TAB: field  LEFT/RIGHT: circuit  ENTER: apply".into();
+        self.message = if formulas.len() == 1 {
+            "ONE CIRCUIT LOADED. ESC, THEN C: SHOW ALL THREE".into()
+        } else {
+            "TAB: field  LEFT/RIGHT: circuit  ENTER: apply".into()
+        };
     }
     pub fn switch(&mut self, formulas: &[Formula], delta: isize) {
         if formulas.is_empty() { return; }
@@ -270,7 +274,7 @@ impl FormulaEditor {
         }
         let message: String = self.message.chars().take(93).collect();
         text(&mut pixels, 13, 227, &message, [153,224,190,255]);
-        text(&mut pixels, 13, 246, "1/2/3 PRESETS   TAB FIELD   LEFT/RIGHT CIRCUIT   ENTER APPLY   ESC CLOSE", [167,191,213,255]);
+        text(&mut pixels, 13, 246, "1/2/3 PRESETS   TAB FIELD   LEFT/RIGHT CIRCUIT   ENTER APPLY   ESC THEN C: COMPARE", [167,191,213,255]);
         ImageAsset { width: WIDTH as u32, height: HEIGHT as u32, pixels }
     }
 
