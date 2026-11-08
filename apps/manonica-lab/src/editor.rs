@@ -82,6 +82,16 @@ impl FormulaEditor {
         self.message = format!("PRESET {preset}: preview updated. ENTER to apply");
     }
 
+    /// Changing the curve must not silently replace an existing crystal's
+    /// physical capacity, binding energy, colour or material parameters.
+    pub fn update_formula(&self, existing: Option<&Formula>) -> Formula {
+        let mut updated = existing.cloned().unwrap_or_else(|| self.formula());
+        updated.x.clone_from(&self.expressions[0]);
+        updated.y.clone_from(&self.expressions[1]);
+        updated.z.clone_from(&self.expressions[2]);
+        updated
+    }
+
     pub fn formula(&self) -> Formula {
         Formula {
             name: format!("Live circuit {}", self.circuit + 1),
