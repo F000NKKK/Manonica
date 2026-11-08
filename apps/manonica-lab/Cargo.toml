@@ -16,6 +16,8 @@ manonica-physics = { path = "../../crates/manonica-physics" }
 # Temporary Git pin until an SDK patch release includes Surface::enable_vsync.
 # The package remains meridian-sdk 0.8.0; only its presentation API differs.
 meridian-sdk = { git = "https://github.com/F000NKKK/Meridian-Engine", rev = "a50643f8b167ca57b6e48245f2fd0013e8711eaa" }
+# Separate headless GPU compute device on the physics thread.
+meridian-gpu-wgpu = { git = "https://github.com/F000NKKK/Meridian-Engine", rev = "a50643f8b167ca57b6e48245f2fd0013e8711eaa" }
 serde = { version = "1", features = ["derive"] }
 toml = "1.2"
 font8x8 = "0.3"
