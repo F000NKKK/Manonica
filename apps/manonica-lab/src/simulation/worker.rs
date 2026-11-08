@@ -314,8 +314,21 @@ fn run_simulation(
             let mut ran = 0;
             while now >= next_tick && ran < max_catch_up {
                 let started = Instant::now();
+                // Coalesce only overdue steps, and only if no material,
+                // advection or potential law requires intermediate states.
+                let overdue = (now.duration_since(next_tick).as_secs_f64()
+                    / period.as_secs_f64()).floor() as usize + 1;
+                let steps = if gpu.is_some() && sim.supports_resident_diffusion() {
+                    overdue.min(max_catch_up - ran).min(u32::MAX as usize)
+                } else {
+                    1
+                };
                 let result = if let Some(device) = gpu.as_mut() {
-                    sim.step_with_backend(device)
+                    if steps > 1 {
+                        sim.step_diffusion_batch(device, steps as u32)
+                    } else {
+                        sim.step_with_backend(device)
+                    }
                 } else {
                     sim.step()
                 };
@@ -324,19 +337,20 @@ fn run_simulation(
                 }
                 if let Err(err) = result {
                     if gpu.is_some() && backend.allows_cpu_fallback() {
-                        eprintln!(
-                            "Manonica: GPU compute step failed ({err}); switching to CPU reference"
-                        );
+                        eprintln!("Manonica: GPU step failed ({err}); retrying batch on CPU");
                         gpu = None;
                         compute.backend = ComputeBackend::CpuFallback;
                         compute.diffusion_wall_ms = 0.0;
-                        // The simulation step uses a cloned candidate and commits
-                        // atomically, so retrying the same step on CPU is safe.
-                        if let Err(cpu_error) = sim.step() {
-                            error = Some(cpu_error.to_string());
-                            paused = true;
-                            break;
+                        // GPU candidate is transactional. On fallback replay
+                        // *every* step, not only the first.
+                        for _ in 0..steps {
+                            if let Err(cpu_error) = sim.step() {
+                                error = Some(cpu_error.to_string());
+                                paused = true;
+                                break;
+                            }
                         }
+                        if paused { break; }
                     } else if gpu.is_some() && backend == BackendPreference::Gpu {
                         eprintln!("Manonica: forced GPU backend failed: {err}");
                         std::process::exit(3);
@@ -346,9 +360,10 @@ fn run_simulation(
                         break;
                     }
                 }
-                cpu_ms = started.elapsed().as_secs_f64() * 1000.0;
-                ran += 1;
-                next_tick += period;
+                // Per-simulated-step wall time, including GPU synchronization.
+                cpu_ms = started.elapsed().as_secs_f64() * 1000.0 / steps as f64;
+                ran += steps;
+                next_tick += period * steps as u32;
             }
             if now >= next_tick {
                 // Drop accumulated debt rather than turning every slow
