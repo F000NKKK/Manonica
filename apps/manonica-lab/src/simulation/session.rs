@@ -147,24 +147,28 @@ impl Simulation {
         self.step_internal(None)
     }
 
-    /// Hybrid GPU step: the GPU computes free-manon diffusion; conservative
-    /// material exchange, potential interactions and energy audits remain CPU.
-    pub fn step_gpu(
+    /// Run with any physical diffusion backend (CPU reference, WGPU, or
+    /// future Minecraft/server acceleration), independently of the Lab.
+    pub fn step_with_backend(
         &mut self,
-        gpu: &mut manonica_compute_gpu::GpuDiffusion,
+        backend: &mut dyn manonica_physics::FreeManaDiffusionBackend,
     ) -> Result<ConservationReport, ExperimentError> {
-        self.step_internal(Some(gpu))
+        self.step_internal(Some(backend))
     }
 
     fn step_internal(
         &mut self,
-        gpu: Option<&mut manonica_compute_gpu::GpuDiffusion>,
+        backend: Option<&mut dyn manonica_physics::FreeManaDiffusionBackend>,
     ) -> Result<ConservationReport, ExperimentError> {
         let dt = TimeStep::from_seconds(self.experiment.physics.dt)?;
         let before = self.total()?;
         let mut candidate = self.field.clone();
-        if let Some(gpu) = gpu {
-            gpu.evolve(&mut candidate, self.experiment.physics.diffusivity, dt.seconds())?;
+        if let Some(backend) = backend {
+            backend.evolve_free_diffusion(
+                &mut candidate,
+                self.experiment.physics.diffusivity,
+                dt.seconds(),
+            )?;
         } else {
             self.solver.evolve(&mut candidate, dt)?;
         }
