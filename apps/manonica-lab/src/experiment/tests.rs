@@ -355,3 +355,37 @@ fn saturation_triggers_physical_potential_shutdown_and_energy_audit() {
         "closed ledger must account for exported heat and supplied work"
     );
 }
+
+#[test]
+fn physical_equilibrium_is_observed_only_after_consecutive_stable_solver_steps() {
+    use crate::simulation::EquilibriumPhase;
+    let experiment = ExperimentBuilder::new("equilibrium")
+        .grid([4, 4, 4], 0.5)
+        .diffusion(0.12, 0.01, 1)
+        .build()
+        .unwrap();
+    let mut sim = Simulation::new(experiment).unwrap();
+    assert_ne!(sim.equilibrium_state().phase, EquilibriumPhase::Equilibrium);
+    for _ in 0..40 {
+        sim.step().unwrap();
+        assert_ne!(sim.equilibrium_state().phase, EquilibriumPhase::Equilibrium);
+    }
+    sim.step().unwrap();
+    assert_eq!(sim.equilibrium_state().phase, EquilibriumPhase::Equilibrium);
+    assert!(sim.equilibrium_state().density_rate.abs() < 1e-12);
+    sim.reset().unwrap();
+    assert_ne!(sim.equilibrium_state().phase, EquilibriumPhase::Equilibrium);
+}
+
+#[test]
+fn powered_concentrator_never_reports_equilibrium_while_field_source_is_active() {
+    use crate::simulation::EquilibriumPhase;
+    let experiment =
+        Experiment::parse(include_str!("../../experiments/potential_concentrator.toml")).unwrap();
+    let mut sim = Simulation::new(experiment).unwrap();
+    for _ in 0..30 {
+        sim.step().unwrap();
+    }
+    assert_eq!(sim.equilibrium_state().phase, EquilibriumPhase::Charging);
+    assert!(sim.equilibrium_state().potential_peak > 0.1);
+}
