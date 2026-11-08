@@ -197,3 +197,42 @@ fn formula_constructs_real_capture_sites_and_conserves_inventory() {
     sim.reset().unwrap();
     assert_eq!(sim.material_balance().unwrap().bound, 0.0);
 }
+
+#[test]
+fn three_formula_demo_has_distinct_geometry_and_independent_capture() {
+    use super::sample_curve;
+    let experiment = Experiment::parse(include_str!("../../experiments/formula_comparison.toml"))
+        .expect("comparison experiment parses");
+    assert_eq!(experiment.formulas.len(), 3);
+    let shapes: Vec<_> = experiment.formulas.iter()
+        .map(|formula| sample_curve(formula).unwrap()).collect();
+
+    let center_x = |points: &Vec<[f32; 3]>| {
+        points.iter().map(|p| p[0]).sum::<f32>() / points.len() as f32
+    };
+    assert!(center_x(&shapes[0]) < -3.0);
+    assert!(center_x(&shapes[1]).abs() < 0.5);
+    assert!(center_x(&shapes[2]) > 3.0);
+    // Circle and star lie in the XY plane, while the third has
+    // a substantial physical depth extent.
+    let depth_range = |points: &Vec<[f32; 3]>| {
+        let min = points.iter().map(|p| p[2]).fold(f32::INFINITY, f32::min);
+        let max = points.iter().map(|p| p[2]).fold(f32::NEG_INFINITY, f32::max);
+        max - min
+    };
+    assert!(depth_range(&shapes[0]) < 0.01);
+    assert!(depth_range(&shapes[1]) < 0.01);
+    assert!(depth_range(&shapes[2]) > 1.0);
+
+    let mut simulation = Simulation::new(experiment).unwrap();
+    let initial = simulation.material_balance().unwrap();
+    for _ in 0..40 {
+        simulation.step().unwrap();
+    }
+    let captures = simulation.formula_bound().unwrap();
+    assert_eq!(captures.len(), 3);
+    assert!(captures.iter().all(|&amount| amount > 0.0), "{captures:?}");
+    let final_balance = simulation.material_balance().unwrap();
+    assert!((final_balance.manons() - initial.manons()).abs() < 1e-6);
+    assert!((final_balance.energy() - initial.energy()).abs() < 1e-6);
+}
