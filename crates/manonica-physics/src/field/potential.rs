@@ -67,16 +67,16 @@ impl PotentialField {
                         // Missing neighbours become ghost cells: phi=0 for
                         // grounded, phi=current for insulated, yielding
                         // a zero exterior normal gradient.
-                        for (axis, limit) in [
+                        for (axis, (coordinate, limit)) in [
                             (x, shape.nx()),
                             (y, shape.ny()),
                             (z, shape.nz()),
                         ].into_iter().enumerate() {
                             for offset in [-1_i8, 1_i8] {
                                 let at = if offset < 0 {
-                                    axis.checked_sub(1)
+                                    coordinate.checked_sub(1)
                                 } else {
-                                    axis.checked_add(1).filter(|v| *v < limit)
+                                    coordinate.checked_add(1).filter(|v| *v < limit)
                                 };
                                 if let Some(v) = at {
                                     let coords = match axis_index(axis, x, y, z, v) {
