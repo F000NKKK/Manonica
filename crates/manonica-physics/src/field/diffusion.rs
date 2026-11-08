@@ -50,7 +50,11 @@ impl Evolution<FreeManaField> for FreeDiffusion {
 
         let before = field.total_manons()?;
         let shape = field.shape();
-        let old: Vec<f64> = field.densities().iter().map(|value| value.value()).collect();
+        let old: Vec<f64> = field
+            .densities()
+            .iter()
+            .map(|value| value.value())
+            .collect();
         let mut next = old.clone();
 
         // Для каждой внутренней грани вычисляем один поток, добавляя его
