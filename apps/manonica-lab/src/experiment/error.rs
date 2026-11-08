@@ -9,16 +9,24 @@ pub enum ExperimentError {
 }
 
 impl From<BaseError> for ExperimentError {
-    fn from(error: BaseError) -> Self { Self::Base(error) }
+    fn from(error: BaseError) -> Self {
+        Self::Base(error)
+    }
 }
 impl From<toml::de::Error> for ExperimentError {
-    fn from(error: toml::de::Error) -> Self { Self::Parse(error) }
+    fn from(error: toml::de::Error) -> Self {
+        Self::Parse(error)
+    }
 }
 impl From<std::io::Error> for ExperimentError {
-    fn from(error: std::io::Error) -> Self { Self::Io(error) }
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 impl From<manonica_physics::PhysicsError> for ExperimentError {
-    fn from(error: manonica_physics::PhysicsError) -> Self { Self::Physics(error) }
+    fn from(error: manonica_physics::PhysicsError) -> Self {
+        Self::Physics(error)
+    }
 }
 
 impl ClassifiedError for ExperimentError {

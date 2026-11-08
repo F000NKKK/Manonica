@@ -1,6 +1,6 @@
-use std::path::Path;
-use serde::Deserialize;
 use manonica_error::{BaseError, ErrorCode};
+use serde::Deserialize;
+use std::path::Path;
 
 use super::ExperimentError;
 
@@ -136,18 +136,38 @@ impl Default for Visualization {
     }
 }
 
-fn one() -> usize { 1 }
-fn default_threshold() -> f64 { 0.06 }
-fn default_max_points() -> usize { 800 }
-fn default_exposure() -> f32 { 2.0 }
-fn default_optical_density() -> f64 { 0.18 }
-fn default_wisps() -> bool { true }
-fn default_segments() -> usize { 96 }
-fn default_color() -> [f32; 3] { [0.35, 0.7, 1.0] }
-fn default_normal() -> [f64; 3] { [0.0, 1.0, 0.0] }
+fn one() -> usize {
+    1
+}
+fn default_threshold() -> f64 {
+    0.06
+}
+fn default_max_points() -> usize {
+    800
+}
+fn default_exposure() -> f32 {
+    2.0
+}
+fn default_optical_density() -> f64 {
+    0.18
+}
+fn default_wisps() -> bool {
+    true
+}
+fn default_segments() -> usize {
+    96
+}
+fn default_color() -> [f32; 3] {
+    [0.35, 0.7, 1.0]
+}
+fn default_normal() -> [f64; 3] {
+    [0.0, 1.0, 0.0]
+}
 
 fn check(test: bool, parameter: &'static str) -> Result<(), ExperimentError> {
-    if test { Ok(()) } else {
+    if test {
+        Ok(())
+    } else {
         Err(BaseError::new(ErrorCode::InvalidRange, parameter).into())
     }
 }
@@ -171,11 +191,20 @@ impl Experiment {
         check(!self.name.trim().is_empty(), "experiment_name")?;
         let [nx, ny, nz] = self.grid.dimensions;
         let volume = nx.checked_mul(ny).and_then(|v| v.checked_mul(nz));
-        check(volume.is_some_and(|n| n > 0 && n <= 128 * 128 * 128), "grid_dimensions")?;
+        check(
+            volume.is_some_and(|n| n > 0 && n <= 128 * 128 * 128),
+            "grid_dimensions",
+        )?;
         let dx = self.grid.cell_size;
-        check(dx.is_finite() && dx > 0.0 && dx.powi(3).is_finite(), "cell_size")?;
+        check(
+            dx.is_finite() && dx > 0.0 && dx.powi(3).is_finite(),
+            "cell_size",
+        )?;
         let p = &self.physics;
-        check(p.diffusivity.is_finite() && p.diffusivity >= 0.0, "diffusivity")?;
+        check(
+            p.diffusivity.is_finite() && p.diffusivity >= 0.0,
+            "diffusivity",
+        )?;
         check(p.dt.is_finite() && p.dt > 0.0, "dt")?;
         check((1..=16).contains(&p.steps_per_frame), "steps_per_frame")?;
         match &p.flow {
@@ -183,11 +212,19 @@ impl Experiment {
             AmbientFlow::Uniform { velocity } => {
                 check(good_position(*velocity), "flow_velocity")?;
             }
-            AmbientFlow::Vortex { origin, axis, angular_speed, axial_speed } => {
+            AmbientFlow::Vortex {
+                origin,
+                axis,
+                angular_speed,
+                axial_speed,
+            } => {
                 check(good_position(*origin), "flow_origin")?;
                 check(good_position(*axis), "flow_axis")?;
                 let norm_squared: f64 = axis.iter().map(|v| v * v).sum();
-                check(norm_squared.is_finite() && norm_squared > 1e-24, "flow_axis")?;
+                check(
+                    norm_squared.is_finite() && norm_squared > 1e-24,
+                    "flow_axis",
+                )?;
                 check(angular_speed.is_finite(), "flow_angular_speed")?;
                 check(axial_speed.is_finite(), "flow_axial_speed")?;
             }
@@ -200,7 +237,10 @@ impl Experiment {
         check(self.seeds.len() <= 128, "seeds_count")?;
         for seed in &self.seeds {
             check(good_position(seed.center), "seed_center")?;
-            check(seed.total_manons.is_finite() && seed.total_manons > 0.0, "seed_total")?;
+            check(
+                seed.total_manons.is_finite() && seed.total_manons > 0.0,
+                "seed_total",
+            )?;
             check(seed.sigma.is_finite() && seed.sigma > 0.0, "seed_sigma")?;
             check(seed.radius.is_finite() && seed.radius >= 0.0, "seed_radius")?;
             if matches!(seed.shape, SeedShape::Ring) {
@@ -215,22 +255,37 @@ impl Experiment {
             check(circle.center.iter().all(|n| n.is_finite()), "circle_center")?;
             let n2: f32 = circle.normal.iter().map(|n| n * n).sum();
             check(n2.is_finite() && n2 > 1e-12, "circle_normal")?;
-            check(circle.radius.is_finite() && circle.radius > 0.0, "circle_radius")?;
             check(
-                circle.thickness.is_finite() && circle.thickness > 0.0 && circle.thickness < circle.radius,
+                circle.radius.is_finite() && circle.radius > 0.0,
+                "circle_radius",
+            )?;
+            check(
+                circle.thickness.is_finite()
+                    && circle.thickness > 0.0
+                    && circle.thickness < circle.radius,
                 "circle_thickness",
             )?;
             check((8..=256).contains(&circle.segments), "circle_segments")?;
             check(circle.spokes <= 64, "circle_spokes")?;
-            check(circle.color.iter().all(|n| n.is_finite() && *n >= 0.0), "circle_color")?;
+            check(
+                circle.color.iter().all(|n| n.is_finite() && *n >= 0.0),
+                "circle_color",
+            )?;
         }
         let v = &self.visualization;
-        check(v.relative_threshold.is_finite() && (0.0..1.0).contains(&v.relative_threshold), "threshold")?;
+        check(
+            v.relative_threshold.is_finite() && (0.0..1.0).contains(&v.relative_threshold),
+            "threshold",
+        )?;
         check((1..=4096).contains(&v.max_points), "max_points")?;
-        check(v.exposure.is_finite() && v.exposure > 0.0 && v.exposure <= 30.0, "exposure")?;
-        check(v.optical_density.is_finite()
-            && (0.01..=4.0).contains(&v.optical_density),
-            "optical_density")?;
+        check(
+            v.exposure.is_finite() && v.exposure > 0.0 && v.exposure <= 30.0,
+            "exposure",
+        )?;
+        check(
+            v.optical_density.is_finite() && (0.01..=4.0).contains(&v.optical_density),
+            "optical_density",
+        )?;
         Ok(())
     }
 }

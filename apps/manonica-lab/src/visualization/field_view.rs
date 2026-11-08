@@ -1,7 +1,5 @@
 //! Static magical construction geometry and a continuously sampled mana volume.
-use meridian_sdk::{
-    GraphicsSession, Light, Material, Motor3, Renderable3d, Scale3, Scene3d, Vec3,
-};
+use meridian_sdk::{GraphicsSession, Light, Material, Motor3, Renderable3d, Scale3, Scene3d, Vec3};
 
 use crate::experiment::Experiment;
 use crate::simulation::SimulationSnapshot;
@@ -29,7 +27,9 @@ impl FieldView {
                 .map_err(|e| format!("circle {}: {e}", circle.name))?;
             let material = base.render.materials.register(Material {
                 base_color_factor: [circle.color[0], circle.color[1], circle.color[2], 1.0],
-                emissive: circle.color.map(|v| v * experiment.visualization.exposure * 1.5),
+                emissive: circle
+                    .color
+                    .map(|v| v * experiment.visualization.exposure * 1.5),
                 unlit: true,
                 ..Default::default()
             });

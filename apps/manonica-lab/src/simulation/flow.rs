@@ -1,7 +1,10 @@
 //! Map a declarative medium velocity to the physics-level VelocityField
 //! contract. No reference to circles, materials or rendering.
 
-use manonica_core::{Vec3, units::{Metres, MetresPerSecond}};
+use manonica_core::{
+    Vec3,
+    units::{Metres, MetresPerSecond},
+};
 use manonica_physics::{PhysicsError, VelocityField};
 
 use crate::experiment::AmbientFlow;
@@ -10,10 +13,15 @@ impl VelocityField for AmbientFlow {
     fn at(&self, position: Vec3<Metres>) -> Result<Vec3<MetresPerSecond>, PhysicsError> {
         match self {
             Self::Still => Ok(Vec3::try_values(0.0, 0.0, 0.0)?),
-            Self::Uniform { velocity } => Ok(Vec3::try_values(
-                velocity[0], velocity[1], velocity[2],
-            )?),
-            Self::Vortex { origin, axis, angular_speed, axial_speed } => {
+            Self::Uniform { velocity } => {
+                Ok(Vec3::try_values(velocity[0], velocity[1], velocity[2])?)
+            }
+            Self::Vortex {
+                origin,
+                axis,
+                angular_speed,
+                axial_speed,
+            } => {
                 let length = (axis.iter().map(|v| v * v).sum::<f64>()).sqrt();
                 let a = [axis[0] / length, axis[1] / length, axis[2] / length];
                 let r = [

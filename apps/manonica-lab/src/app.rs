@@ -10,8 +10,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use meridian_sdk::{
-    AppHandler, Device, FlyCamera, FlyControls, GraphicsSession, InputState,
-    KeyCode, Vec3, Window, compose_frame, fly_controls,
+    AppHandler, Device, FlyCamera, FlyControls, GraphicsSession, InputState, KeyCode, Vec3, Window,
+    compose_frame, fly_controls,
 };
 
 use crate::{
@@ -230,8 +230,8 @@ fn render_loop(
     // by vertical blanking rather than a second 120 Hz software timer.
     surface.enable_vsync(&device);
     let base = GraphicsSession::new(device, surface, size[0], size[1]);
-    let mut graphics = FieldView::new(base, &experiment)
-        .expect("failed to initialize manon rendering resources");
+    let mut graphics =
+        FieldView::new(base, &experiment).expect("failed to initialize manon rendering resources");
     let mut debug = DebugHud::default();
     let mut camera = FlyCamera::new(Vec3::new(0.0, 3.0, 18.0));
     let mut last_frame = Instant::now();
@@ -267,7 +267,9 @@ fn render_loop(
             continue;
         }
         if render_input.size != current_size {
-            graphics.base.resize(render_input.size[0], render_input.size[1]);
+            graphics
+                .base
+                .resize(render_input.size[0], render_input.size[1]);
             current_size = render_input.size;
         }
         if render_input.mouse_locked {
@@ -325,8 +327,7 @@ fn render_loop(
                 &window,
             );
         }
-        last_draw_cpu_ms = draw_start.elapsed().as_secs_f64() * 1000.0
-            + graphics_update_cpu_ms;
+        last_draw_cpu_ms = draw_start.elapsed().as_secs_f64() * 1000.0 + graphics_update_cpu_ms;
     }
 }
 
@@ -339,7 +340,8 @@ mod tests {
     fn input_bridge_coalesces_mouse_motion_and_consumes_it_once() {
         let experiment = ExperimentBuilder::new("input")
             .grid([4, 4, 4], 1.0)
-            .build().unwrap();
+            .build()
+            .unwrap();
         let sim = Simulation::new(experiment.clone()).unwrap();
         let (_, snapshot) = SimulationWorker::spawn(sim);
         let mut bridge = InputBridge::new(snapshot, &experiment);

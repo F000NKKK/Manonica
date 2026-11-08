@@ -2,13 +2,16 @@
 
 //! Manonica Lab: декларативные эксперименты + Meridian SDK / WGPU.
 
-use std::path::PathBuf;
 use manonica_lab::{app, experiment::Experiment, simulation::Simulation};
+use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = std::env::args_os().nth(1).map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("experiments/mana_flame.toml")
-    });
+    let path = std::env::args_os()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("experiments/mana_flame.toml")
+        });
     let experiment = Experiment::from_file(&path)?;
     println!("Experiment: {} ({})", experiment.name, path.display());
     println!(
@@ -18,7 +21,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         experiment.circles.len(),
         experiment.seeds.len(),
     );
-    println!("Controls: WASD + mouse, F3 diagnostics, Escape cursor, Space pause, R reset, F wisps, arrows threshold");
+    println!(
+        "Controls: WASD + mouse, F3 diagnostics, Escape cursor, Space pause, R reset, F wisps, arrows threshold"
+    );
     let title = format!("Manonica Lab — {}", experiment.name);
     let sim = Simulation::new(experiment)?;
     println!("Initial free manons: {:.6}", sim.total()?.value());

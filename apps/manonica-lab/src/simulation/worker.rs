@@ -133,7 +133,11 @@ fn run_simulation(
 
     loop {
         let now = Instant::now();
-        let deadline = if paused { next_snapshot } else { next_tick.min(next_snapshot) };
+        let deadline = if paused {
+            next_snapshot
+        } else {
+            next_tick.min(next_snapshot)
+        };
         let wait = deadline.saturating_duration_since(now);
         match commands.recv_timeout(wait) {
             Ok(Command::Pause(next)) => {

@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use font8x8::{BASIC_FONTS, UnicodeFonts};
 use meridian_sdk::{
-    Camera2d, GraphicsSession, ImageAsset, Motor3, Overlay2d, Scene2d, Sprite,
-    TextureHandle, TextureStore, Vec3,
+    Camera2d, GraphicsSession, ImageAsset, Motor3, Overlay2d, Scene2d, Sprite, TextureHandle,
+    TextureStore, Vec3,
 };
 
 const WIDTH: usize = 520;
@@ -78,17 +78,11 @@ impl DebugHud {
             return 0.0;
         }
         let sampled = self.fps_samples.iter().rev().take(30);
-        let (sum, count) = sampled.fold((0.0, 0), |(sum, count), value| {
-            (sum + value, count + 1)
-        });
+        let (sum, count) = sampled.fold((0.0, 0), |(sum, count), value| (sum + value, count + 1));
         sum / f64::from(count)
     }
 
-    pub fn overlay(
-        &mut self,
-        base: &mut GraphicsSession,
-        viewport: [u32; 2],
-    ) -> Option<Overlay2d> {
+    pub fn overlay(&mut self, base: &mut GraphicsSession, viewport: [u32; 2]) -> Option<Overlay2d> {
         let latest = self.latest?;
         let now = Instant::now();
         if self.image.is_none()
@@ -126,30 +120,63 @@ impl DebugHud {
         let mut canvas = Canvas::new(WIDTH, HEIGHT);
         canvas.rect(0, 0, WIDTH, HEIGHT, [9, 16, 30, 226]);
         canvas.rect(0, 0, WIDTH, 29, [19, 40, 67, 247]);
-        canvas.text(12, 7, "MANONICA / LAB - DEBUG [F3]", 1, [220, 243, 255, 255]);
+        canvas.text(
+            12,
+            7,
+            "MANONICA / LAB - DEBUG [F3]",
+            1,
+            [220, 243, 255, 255],
+        );
 
         let state = if m.paused { "PAUSED" } else { "RUNNING" };
         canvas.text(
-            12, 39, &format!("FPS {:>6.1}    FRAME {:>6.2} ms    {state}", self.fps(), m.frame_ms),
-            1, [233, 245, 255, 255],
+            12,
+            39,
+            &format!(
+                "FPS {:>6.1}    FRAME {:>6.2} ms    {state}",
+                self.fps(),
+                m.frame_ms
+            ),
+            1,
+            [233, 245, 255, 255],
         );
         canvas.text(
-            12, 55, &format!("SIM CPU {:>6.2} ms    RENDER CPU {:>6.2} ms", m.sim_cpu_ms, m.draw_cpu_ms),
-            1, [170, 214, 245, 255],
+            12,
+            55,
+            &format!(
+                "SIM CPU {:>6.2} ms    RENDER CPU {:>6.2} ms",
+                m.sim_cpu_ms, m.draw_cpu_ms
+            ),
+            1,
+            [170, 214, 245, 255],
         );
         canvas.text(
-            12, 71, &format!("FIELD CPU {:>6.2} ms   SIM TIME {:>8.2} s  STEP {}", m.field_cpu_ms, m.sim_time, m.steps),
-            1, [170, 214, 245, 255],
+            12,
+            71,
+            &format!(
+                "FIELD CPU {:>6.2} ms   SIM TIME {:>8.2} s  STEP {}",
+                m.field_cpu_ms, m.sim_time, m.steps
+            ),
+            1,
+            [170, 214, 245, 255],
         );
         canvas.text(
-            12, 87, &format!("DENSITY MAX {:>11.3} /m3    LAYERS {:>2}   GRID {}",
-                m.peak_density, m.shown_slices, m.grid_cells),
-            1, [185, 232, 255, 255],
+            12,
+            87,
+            &format!(
+                "DENSITY MAX {:>11.3} /m3    LAYERS {:>2}   GRID {}",
+                m.peak_density, m.shown_slices, m.grid_cells
+            ),
+            1,
+            [185, 232, 255, 255],
         );
         let delta = m.total - m.initial_total;
         canvas.text(
-            12, 103, &format!("FREE MANONS {:>13.4}    DELTA {:>+13.6}", m.total, delta),
-            1, [190, 236, 236, 255],
+            12,
+            103,
+            &format!("FREE MANONS {:>13.4}    DELTA {:>+13.6}", m.total, delta),
+            1,
+            [190, 236, 236, 255],
         );
 
         canvas.text(13, 129, "FPS / 180 FRAMES", 1, [135, 224, 255, 255]);
@@ -158,8 +185,13 @@ impl DebugHud {
         canvas.graph(266, 145, 240, 88, &self.frame_samples, [255, 186, 104, 255]);
         canvas.text(13, 246, "MAX MANON DENSITY / TIME", 1, [160, 223, 255, 255]);
         canvas.graph(12, 262, 494, 65, &self.peak_samples, [156, 195, 255, 255]);
-        canvas.text(12, 334, "CPU frame interval and solver timings; not total GPU execution", 1,
-            [118, 147, 177, 255]);
+        canvas.text(
+            12,
+            334,
+            "CPU frame interval and solver timings; not total GPU execution",
+            1,
+            [118, 147, 177, 255],
+        );
         ImageAsset {
             width: WIDTH as u32,
             height: HEIGHT as u32,
@@ -293,10 +325,18 @@ mod tests {
         let mut hud = DebugHud::default();
         for _ in 0..400 {
             hud.record(FrameMetrics {
-                frame_ms: 16.0, sim_cpu_ms: 2.0, draw_cpu_ms: 3.0,
-                field_cpu_ms: 1.0, sim_time: 0.0, steps: 0, total: 10.0,
-                initial_total: 10.0, peak_density: 3.0, shown_slices: 20,
-                grid_cells: 1000, paused: false,
+                frame_ms: 16.0,
+                sim_cpu_ms: 2.0,
+                draw_cpu_ms: 3.0,
+                field_cpu_ms: 1.0,
+                sim_time: 0.0,
+                steps: 0,
+                total: 10.0,
+                initial_total: 10.0,
+                peak_density: 3.0,
+                shown_slices: 20,
+                grid_cells: 1000,
+                paused: false,
             });
         }
         assert_eq!(hud.fps_samples.len(), HISTORY);

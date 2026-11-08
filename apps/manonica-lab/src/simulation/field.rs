@@ -1,7 +1,7 @@
 //! Семена задают только начальные условия, а не постоянные источники.
+use super::super::experiment::{Experiment, ExperimentError, FieldSeed, SeedShape};
 use manonica_core::{Quantity, units::ManonDensity};
 use manonica_physics::{FreeManaField, GridShape};
-use super::super::experiment::{Experiment, ExperimentError, FieldSeed, SeedShape};
 
 pub fn cell_center(shape: GridShape, dx: f64, x: usize, y: usize, z: usize) -> [f64; 3] {
     [
@@ -54,8 +54,10 @@ pub fn seeded_field(experiment: &Experiment) -> Result<FreeManaField, Experiment
         }
         if !sum.is_finite() || sum <= 0.0 {
             return Err(manonica_error::BaseError::new(
-                manonica_error::ErrorCode::InvalidRange, "seed_outside_grid"
-            ).into());
+                manonica_error::ErrorCode::InvalidRange,
+                "seed_outside_grid",
+            )
+            .into());
         }
         // В каждой ячейке хранится концентрация; интеграл по объёму
         // должен точно соответствовать заданному total_manons.
