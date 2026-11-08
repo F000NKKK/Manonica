@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use manonica_physics::FreeManaField;
 
-use super::{Simulation, gpu_diffusion::GpuDiffusion};
+use super::Simulation;
+use manonica_compute_gpu::GpuDiffusion;
 use crate::experiment::Experiment;
 
 const SNAPSHOT_PERIOD: Duration = Duration::from_millis(50);
