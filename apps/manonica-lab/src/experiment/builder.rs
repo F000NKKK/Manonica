@@ -26,6 +26,7 @@ impl ExperimentBuilder {
                 },
                 seeds: Vec::new(),
                 formulas: Vec::new(),
+                field_sources: Vec::new(),
                 materials: Vec::new(),
                 channels: Vec::new(),
                 visualization: Visualization::default(),
@@ -45,10 +46,21 @@ impl ExperimentBuilder {
         self.experiment.physics = Diffusion {
             diffusivity,
             thermal_conductance: self.experiment.physics.thermal_conductance,
+            potential: self.experiment.physics.potential.clone(),
             dt,
             flow: self.experiment.physics.flow.clone(),
             steps_per_frame,
         };
+        self
+    }
+
+    pub fn potential(mut self, settings: super::PotentialConfig) -> Self {
+        self.experiment.physics.potential = Some(settings);
+        self
+    }
+
+    pub fn field_source(mut self, source: super::FieldSource) -> Self {
+        self.experiment.field_sources.push(source);
         self
     }
 
