@@ -16,6 +16,7 @@ use meridian_sdk::{
 
 use crate::{
     diagnostics::{DebugHud, FrameMetrics},
+    editor::{FormulaEditor, EditorOverlay},
     experiment::Experiment,
     simulation::{Simulation, SimulationSnapshot, SimulationWorker},
     visualization::FieldView,
@@ -36,6 +37,9 @@ struct InputBridge {
     wisps: bool,
     size: [u32; 2],
     snapshot: Arc<SimulationSnapshot>,
+    editor: FormulaEditor,
+    experiment: Arc<Experiment>,
+    revision: u64,
 }
 
 impl InputBridge {
@@ -50,6 +54,9 @@ impl InputBridge {
             wisps: experiment.visualization.wisps,
             size: [1280, 800],
             snapshot: Arc::new(snapshot),
+            editor: FormulaEditor::default(),
+            experiment: Arc::new(experiment.clone()),
+            revision: 0,
         }
     }
 
@@ -70,6 +77,9 @@ impl InputBridge {
             wisps: self.wisps,
             size: self.size,
             snapshot: Arc::clone(&self.snapshot),
+            editor: self.editor.clone(),
+            experiment: Arc::clone(&self.experiment),
+            revision: self.revision,
         }
     }
 }
@@ -83,6 +93,9 @@ struct RenderInput {
     wisps: bool,
     size: [u32; 2],
     snapshot: Arc<SimulationSnapshot>,
+    editor: FormulaEditor,
+    experiment: Arc<Experiment>,
+    revision: u64,
 }
 
 fn lock_bridge(bridge: &Arc<Mutex<InputBridge>>) -> std::sync::MutexGuard<'_, InputBridge> {
@@ -113,44 +126,92 @@ impl App {
     fn process_input(&mut self, window: &Window, input: &InputState) {
         let mut pause = None;
         let mut reset = false;
+        let mut apply_formula = None;
 
         {
             let mut state = lock_bridge(&self.bridge);
-            if input.was_key_pressed(KeyCode::Escape) {
+            if input.was_key_pressed(KeyCode::E) && !state.editor.open {
+                state.editor.open = true;
+                state.mouse_locked = false;
+                window.set_cursor_grabbed(false);
+                // Show the first editable existing formula, where present.
+                if let Some(formula) = self.experiment.formulas.first() {
+                    state.editor.expressions = [formula.x.clone(), formula.y.clone(), formula.z.clone()];
+                }
+            } else if state.editor.open {
+                if input.was_key_pressed(KeyCode::Escape) {
+                    state.editor.open = false;
+                } else if input.was_key_pressed(KeyCode::Tab) {
+                    state.editor.next();
+                } else if input.was_key_pressed(KeyCode::Backspace) {
+                    state.editor.backspace();
+                } else if input.was_key_pressed(KeyCode::Enter) {
+                    apply_formula = Some(state.editor.formula());
+                } else {
+                    // Text is committed by Meridian/Winit; don't treat navigation
+                    // keys as text or move the camera while editing.
+                    state.editor.input(input.text());
+                }
+            } else if input.was_key_pressed(KeyCode::Escape) {
                 state.mouse_locked = !state.mouse_locked;
                 window.set_cursor_grabbed(state.mouse_locked);
             }
-            if input.was_key_pressed(KeyCode::Space) {
-                state.paused = !state.paused;
-                pause = Some(state.paused);
-            }
-            if input.was_key_pressed(KeyCode::R) {
-                reset = true;
-            }
-            if input.was_key_pressed(KeyCode::F3) {
-                state.debug = !state.debug;
-            }
-            if input.was_key_pressed(KeyCode::F) {
-                state.wisps = !state.wisps;
-            }
-            if input.was_key_pressed(KeyCode::ArrowUp) {
-                state.threshold = (state.threshold * 1.2).min(0.95);
-            }
-            if input.was_key_pressed(KeyCode::ArrowDown) {
-                state.threshold = (state.threshold / 1.2).max(0.001);
-            }
-
-            let mut controls = fly_controls(input);
-            let delta = controls.look;
-            controls.look = (0.0, 0.0);
-            state.controls = controls;
-            if state.mouse_locked {
-                state.look_delta.0 += delta.0;
-                state.look_delta.1 += delta.1;
-            }
+            if !state.editor.open {
+                if input.was_key_pressed(KeyCode::Space) {
+                    state.paused = !state.paused;
+                    pause = Some(state.paused);
+                }
+                if input.was_key_pressed(KeyCode::R) {
+                    reset = true;
+                }
+                if input.was_key_pressed(KeyCode::F3) {
+                    state.debug = !state.debug;
+                }
+                if input.was_key_pressed(KeyCode::F) {
+                    state.wisps = !state.wisps;
+                }
+                if input.was_key_pressed(KeyCode::ArrowUp) {
+                    state.threshold = (state.threshold * 1.2).min(0.95);
+                }
+                if input.was_key_pressed(KeyCode::ArrowDown) {
+                    state.threshold = (state.threshold / 1.2).max(0.001);
+                }
+    
+                let mut controls = fly_controls(input);
+                let delta = controls.look;
+                controls.look = (0.0, 0.0);
+                state.controls = controls;
+                if state.mouse_locked {
+                    state.look_delta.0 += delta.0;
+                    state.look_delta.1 += delta.1;
+                }
+                }
             if let Some(snapshot) = self.simulation.poll_latest() {
                 state.paused = snapshot.paused;
                 state.snapshot = Arc::new(snapshot);
+            }
+        }
+
+        if let Some(formula) = apply_formula {
+            let mut experiment = self.experiment.clone();
+            experiment.formulas.clear();
+            experiment.formulas.push(formula);
+            // Validate geometry and cell occupancy before modifying either
+            // simulation or renderer; invalid input leaves the old state live.
+            let validation = Simulation::new(experiment.clone());
+            let mut state = lock_bridge(&self.bridge);
+            match validation {
+                Ok(_) => {
+                    state.editor.message = "APPLIED - physics reset; mana capture is active".into();
+                    state.editor.open = false;
+                    state.experiment = Arc::new(experiment.clone());
+                    state.revision += 1;
+                    self.experiment = experiment.clone();
+                    self.simulation.replace_experiment(experiment);
+                }
+                Err(err) => {
+                    state.editor.message = format!("ERROR: {err}");
+                }
             }
         }
 
@@ -254,6 +315,8 @@ fn render_loop(
     let mut graphics =
         FieldView::new(base, &experiment).expect("failed to initialize manon rendering resources");
     let mut debug = DebugHud::default();
+    let mut editor_overlay = EditorOverlay::default();
+    let mut revision = 0_u64;
     let mut camera = FlyCamera::new(Vec3::new(0.0, 3.0, 18.0));
     let mut last_frame = Instant::now();
     let mut deadline = last_frame;
@@ -272,6 +335,13 @@ fn render_loop(
         last_frame = frame_begin;
 
         let render_input = lock_bridge(&bridge).take_render_input();
+        if render_input.revision != revision {
+            experiment = (*render_input.experiment).clone();
+            if let Err(err) = graphics.replace_formulas(&experiment) {
+                eprintln!("failed to replace formula geometry: {err}");
+            }
+            revision = render_input.revision;
+        }
         if render_input.size[0] == 0 || render_input.size[1] == 0 {
             continue;
         }
@@ -315,29 +385,27 @@ fn render_loop(
             eprintln!("Physics suspended: {error}");
             running.store(false, Ordering::Release);
         }
-        let overlay = if render_input.debug {
-            debug.overlay(&mut graphics.base, current_size)
-        } else {
-            None
-        };
-        let draw_start = Instant::now();
-        if let Some(ref overlay) = overlay {
-            compose_frame(
-                &mut graphics.base,
-                &graphics.scene,
-                std::slice::from_ref(overlay),
-                [0.003, 0.003, 0.012, 1.0],
-                &window,
-            );
-        } else {
-            compose_frame(
-                &mut graphics.base,
-                &graphics.scene,
-                &[],
-                [0.003, 0.003, 0.012, 1.0],
-                &window,
-            );
+        let mut overlays = Vec::new();
+        if render_input.debug {
+            if let Some(overlay) = debug.overlay(&mut graphics.base, current_size) {
+                overlays.push(overlay);
+            }
         }
+        if let Some(overlay) = editor_overlay.draw(
+            &mut graphics.base,
+            &render_input.editor,
+            current_size,
+        ) {
+            overlays.push(overlay);
+        }
+        let draw_start = Instant::now();
+        compose_frame(
+            &mut graphics.base,
+            &graphics.scene,
+            &overlays,
+            [0.003, 0.003, 0.012, 1.0],
+            &window,
+        );
         last_draw_cpu_ms = draw_start.elapsed().as_secs_f64() * 1000.0 + graphics_update_cpu_ms;
     }
 }
