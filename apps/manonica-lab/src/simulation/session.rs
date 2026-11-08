@@ -109,15 +109,18 @@ impl Simulation {
     pub fn peak_trap_temperature_kelvin(&self) -> Option<f64> {
         self.materials.peak_temperature_kelvin()
     }
-    pub fn shutdown_active(&self) -> bool { self.shutdown }
+    pub fn shutdown_active(&self) -> bool {
+        self.shutdown
+    }
     pub fn field_ledger(&self) -> Option<FieldLedger> {
         self.field_ledger
     }
     pub fn tracked_energy(&self) -> Result<f64, ExperimentError> {
         let material = self.material_balance()?.energy();
-        Ok(material + self.field_ledger.map_or(0.0, |p| {
-            p.tracked_energy() + p.exported_heat_joules
-        }))
+        Ok(material
+            + self
+                .field_ledger
+                .map_or(0.0, |p| p.tracked_energy() + p.exported_heat_joules))
     }
 
     pub fn elapsed(&self) -> f64 {
@@ -145,7 +148,8 @@ impl Simulation {
         // reach the specified filling ratio, never at an arbitrary tick.
         if let Some(settings) = &self.experiment.physics.potential {
             let capacity = self.materials.total_capacity();
-            if settings.shutdown_at_bound_fraction > 0.0 && capacity > 0.0
+            if settings.shutdown_at_bound_fraction > 0.0
+                && capacity > 0.0
                 && self.materials.total_bound() / capacity >= settings.shutdown_at_bound_fraction
             {
                 shutdown = true;
@@ -158,9 +162,11 @@ impl Simulation {
             }
         }
         let old_energy = match &self.potential {
-            Some(potential) => potential.manon_potential_energy(&self.field)?
-                + self.materials.bound_potential_energy(potential.values())?
-                + potential.field_energy_joules(),
+            Some(potential) => {
+                potential.manon_potential_energy(&self.field)?
+                    + self.materials.bound_potential_energy(potential.values())?
+                    + potential.field_energy_joules()
+            }
             None => 0.0,
         };
         if let (Some(potential), Some(state), Some(settings)) = (
@@ -174,10 +180,8 @@ impl Simulation {
         let mut next_materials = self.materials.clone();
         next_materials.step(&mut candidate, dt.seconds())?;
         next_materials.conduct_heat(dt.seconds(), self.experiment.physics.thermal_conductance)?;
-        let exported = next_materials.cool_into_bath(
-            dt.seconds(),
-            self.experiment.physics.ambient_cooling_rate,
-        )?;
+        let exported = next_materials
+            .cool_into_bath(dt.seconds(), self.experiment.physics.ambient_cooling_rate)?;
         if let (Some(potential), Some(state), Some(settings)) = (
             &next_potential,
             ledger.as_mut(),
@@ -192,7 +196,8 @@ impl Simulation {
                 return Err(manonica_error::BaseError::new(
                     manonica_error::ErrorCode::InvalidRange,
                     "potential_energy_overflow",
-                ).into());
+                )
+                .into());
             }
             if change < 0.0 {
                 state.dissipated_heat_joules += -change;
@@ -201,8 +206,10 @@ impl Simulation {
                 let external = (change - heat_used).max(0.0);
                 if external > settings.max_power_joules_per_second * dt.seconds() + 1e-10 {
                     return Err(manonica_error::BaseError::new(
-                        manonica_error::ErrorCode::InvalidRange, "field_external_power"
-                    ).into());
+                        manonica_error::ErrorCode::InvalidRange,
+                        "field_external_power",
+                    )
+                    .into());
                 }
                 state.dissipated_heat_joules -= heat_used;
                 state.operating_work_joules += external;

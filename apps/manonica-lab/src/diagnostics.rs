@@ -260,9 +260,16 @@ impl DebugHud {
         canvas.text(
             12,
             412,
-            &format!("TRAP T {:.1} K   EXPORTED {:.2} J   {}",
-                m.trap_temperature_kelvin, m.exported_heat_joules,
-                if m.field_shutdown { "SOURCE DECAYING" } else { "SOURCE ACTIVE" }),
+            &format!(
+                "TRAP T {:.1} K   EXPORTED {:.2} J   {}",
+                m.trap_temperature_kelvin,
+                m.exported_heat_joules,
+                if m.field_shutdown {
+                    "SOURCE DECAYING"
+                } else {
+                    "SOURCE ACTIVE"
+                }
+            ),
             1,
             [160, 223, 255, 255],
         );

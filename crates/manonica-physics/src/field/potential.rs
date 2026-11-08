@@ -123,7 +123,9 @@ impl PotentialField {
             return Err(bad("potential_scale"));
         }
         let mut next = self.clone();
-        for value in &mut next.values { *value *= factor; }
+        for value in &mut next.values {
+            *value *= factor;
+        }
         Ok(next)
     }
 
@@ -369,8 +371,16 @@ mod tests {
         let shape = GridShape::new(3, 3, 3).unwrap();
         let mut source = vec![0.0; shape.len()];
         source[shape.index(1, 1, 1).unwrap()] = -4.0;
-        let field = PotentialField::solve(shape, 1.0, &source, 1.0, 1.0,
-            PotentialBoundary::Grounded, 80).unwrap();
+        let field = PotentialField::solve(
+            shape,
+            1.0,
+            &source,
+            1.0,
+            1.0,
+            PotentialBoundary::Grounded,
+            80,
+        )
+        .unwrap();
         let energy = field.field_energy_joules();
         assert!(energy > 0.0);
         let half = field.scaled(0.5).unwrap();

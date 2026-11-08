@@ -240,19 +240,32 @@ impl MaterialLattice {
         if values.len() != self.cells.len() || values.iter().any(|v| !v.is_finite()) {
             return Err(invalid("bound_potential_shape"));
         }
-        let value: f64 = self.cells.iter().zip(values)
-            .map(|(cell, phi)| cell.bound * phi).sum();
-        if !value.is_finite() { return Err(invalid("bound_potential_overflow")); }
+        let value: f64 = self
+            .cells
+            .iter()
+            .zip(values)
+            .map(|(cell, phi)| cell.bound * phi)
+            .sum();
+        if !value.is_finite() {
+            return Err(invalid("bound_potential_overflow"));
+        }
         Ok(value)
     }
 
     /// Maximum physical trap temperature in kelvin, not field heat (joules).
     pub fn peak_temperature_kelvin(&self) -> Option<f64> {
-        self.cells.iter().filter_map(TrapCell::temperature).reduce(f64::max)
+        self.cells
+            .iter()
+            .filter_map(TrapCell::temperature)
+            .reduce(f64::max)
     }
 
     pub fn total_capacity(&self) -> f64 {
-        self.cells.iter().filter_map(|c| c.material).map(|m| m.capacity).sum()
+        self.cells
+            .iter()
+            .filter_map(|c| c.material)
+            .map(|m| m.capacity)
+            .sum()
     }
 
     pub fn total_bound(&self) -> f64 {
@@ -271,12 +284,16 @@ impl MaterialLattice {
             if cell.material.is_some() {
                 nonnegative(cell.heat, "cooling_heat")?;
                 let amount = cell.heat * fraction;
-                if !amount.is_finite() { return Err(invalid("cooling_overflow")); }
+                if !amount.is_finite() {
+                    return Err(invalid("cooling_overflow"));
+                }
                 cell.heat -= amount;
                 exported += amount;
             }
         }
-        if !exported.is_finite() { return Err(invalid("cooling_overflow")); }
+        if !exported.is_finite() {
+            return Err(invalid("cooling_overflow"));
+        }
         self.cells = next;
         Ok(exported)
     }
@@ -582,15 +599,15 @@ mod tests {
     #[test]
     fn bound_manons_keep_potential_energy_and_cooling_exports_heat() {
         let shape = GridShape::new(1, 1, 1).unwrap();
-        let mut field = FreeManaField::uniform(
-            shape, 1.0, Quantity::nonnegative(20.0).unwrap()).unwrap();
+        let mut field =
+            FreeManaField::uniform(shape, 1.0, Quantity::nonnegative(20.0).unwrap()).unwrap();
         let mut sites = MaterialLattice::new(shape);
         let mut m = material();
         m.release_rate = 0.0;
-        sites.install([0,0,0],m).unwrap();
+        sites.install([0, 0, 0], m).unwrap();
         sites.step(&mut field, 1.0).unwrap();
         let bound = sites.total_bound();
-        assert!((sites.bound_potential_energy(&[-2.0]).unwrap() + 2.0*bound).abs() < 1e-9);
+        assert!((sites.bound_potential_energy(&[-2.0]).unwrap() + 2.0 * bound).abs() < 1e-9);
         let before = sites.balance(&field).unwrap();
         let exported = sites.cool_into_bath(2.0, 0.5).unwrap();
         let after = sites.balance(&field).unwrap();
