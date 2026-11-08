@@ -20,6 +20,9 @@ pub struct FieldLedger {
     pub operating_work_joules: f64,
     pub last_transport_manons: f64,
     pub peak_potential: f64,
+    /// Heat carried into the ambient reservoir, part of global energy audit.
+    pub exported_heat_joules: f64,
+    pub shutdown: bool,
 }
 impl FieldLedger {
     pub fn tracked_energy(self) -> f64 {
@@ -34,6 +37,7 @@ pub struct Simulation {
     materials: MaterialLattice,
     potential: Option<PotentialField>,
     field_ledger: Option<FieldLedger>,
+    shutdown: bool,
     solver: FreeDiffusion,
     advection: FreeAdvection<AmbientFlow>,
     time_seconds: f64,
@@ -60,6 +64,7 @@ impl Simulation {
             materials,
             potential,
             field_ledger,
+            shutdown: false,
             solver,
             advection,
             time_seconds: 0.0,
@@ -101,12 +106,18 @@ impl Simulation {
     pub fn potential(&self) -> Option<&PotentialField> {
         self.potential.as_ref()
     }
+    pub fn peak_trap_temperature_kelvin(&self) -> Option<f64> {
+        self.materials.peak_temperature_kelvin()
+    }
+    pub fn shutdown_active(&self) -> bool { self.shutdown }
     pub fn field_ledger(&self) -> Option<FieldLedger> {
         self.field_ledger
     }
     pub fn tracked_energy(&self) -> Result<f64, ExperimentError> {
         let material = self.material_balance()?.energy();
-        Ok(material + self.field_ledger.map_or(0.0, FieldLedger::tracked_energy))
+        Ok(material + self.field_ledger.map_or(0.0, |p| {
+            p.tracked_energy() + p.exported_heat_joules
+        }))
     }
 
     pub fn elapsed(&self) -> f64 {
@@ -128,13 +139,32 @@ impl Simulation {
         self.solver.evolve(&mut candidate, dt)?;
         self.advection.evolve(&mut candidate, dt)?;
         let mut ledger = self.field_ledger;
-        let potential_before = if let Some(potential) = &self.potential {
-            potential.manon_potential_energy(&self.field)?
-        } else {
-            0.0
+        let mut next_potential = self.potential.clone();
+        let mut shutdown = self.shutdown;
+        // Automatic power-down starts only when actual physical traps
+        // reach the specified filling ratio, never at an arbitrary tick.
+        if let Some(settings) = &self.experiment.physics.potential {
+            let capacity = self.materials.total_capacity();
+            if settings.shutdown_at_bound_fraction > 0.0 && capacity > 0.0
+                && self.materials.total_bound() / capacity >= settings.shutdown_at_bound_fraction
+            {
+                shutdown = true;
+            }
+            if shutdown {
+                if let Some(potential) = next_potential.as_mut() {
+                    let decay = (-settings.shutdown_decay_rate * dt.seconds()).exp();
+                    *potential = potential.scaled(decay)?;
+                }
+            }
+        }
+        let old_energy = match &self.potential {
+            Some(potential) => potential.manon_potential_energy(&self.field)?
+                + self.materials.bound_potential_energy(potential.values())?
+                + potential.field_energy_joules(),
+            None => 0.0,
         };
         if let (Some(potential), Some(state), Some(settings)) = (
-            &self.potential,
+            &next_potential,
             ledger.as_mut(),
             self.experiment.physics.potential.as_ref(),
         ) {
@@ -144,22 +174,25 @@ impl Simulation {
         let mut next_materials = self.materials.clone();
         next_materials.step(&mut candidate, dt.seconds())?;
         next_materials.conduct_heat(dt.seconds(), self.experiment.physics.thermal_conductance)?;
-        // A fixed potential exchanges energy with mobile/binding manons.
-        // Decreases in n*phi become tracked heat; increases must be paid from
-        // that heat reservoir or from an explicitly capped external supply.
+        let exported = next_materials.cool_into_bath(
+            dt.seconds(),
+            self.experiment.physics.ambient_cooling_rate,
+        )?;
         if let (Some(potential), Some(state), Some(settings)) = (
-            &self.potential,
+            &next_potential,
             ledger.as_mut(),
             self.experiment.physics.potential.as_ref(),
         ) {
-            let potential_after = potential.manon_potential_energy(&candidate)?;
-            let change = potential_after - potential_before;
+            let mobile_energy = potential.manon_potential_energy(&candidate)?;
+            let bound_energy = next_materials.bound_potential_energy(potential.values())?;
+            let stored_field = potential.field_energy_joules();
+            let new_energy = mobile_energy + bound_energy + stored_field;
+            let change = new_energy - old_energy;
             if !change.is_finite() {
                 return Err(manonica_error::BaseError::new(
                     manonica_error::ErrorCode::InvalidRange,
                     "potential_energy_overflow",
-                )
-                .into());
+                ).into());
             }
             if change < 0.0 {
                 state.dissipated_heat_joules += -change;
@@ -168,15 +201,23 @@ impl Simulation {
                 let external = (change - heat_used).max(0.0);
                 if external > settings.max_power_joules_per_second * dt.seconds() + 1e-10 {
                     return Err(manonica_error::BaseError::new(
-                        manonica_error::ErrorCode::InvalidRange,
-                        "field_external_power",
-                    )
-                    .into());
+                        manonica_error::ErrorCode::InvalidRange, "field_external_power"
+                    ).into());
                 }
                 state.dissipated_heat_joules -= heat_used;
                 state.operating_work_joules += external;
             }
-            state.manon_potential_joules = potential_after;
+            state.manon_potential_joules = mobile_energy + bound_energy;
+            state.field_energy_joules = stored_field;
+            state.peak_potential = potential.peak_absolute();
+            state.shutdown = shutdown;
+            state.exported_heat_joules += exported;
+            // Field heat may leave to the environment, but does not vanish
+            // from the global closed-system energy audit.
+            let heat_loss = state.dissipated_heat_joules
+                * (1.0 - (-self.experiment.physics.ambient_cooling_rate * dt.seconds()).exp());
+            state.dissipated_heat_joules -= heat_loss;
+            state.exported_heat_joules += heat_loss;
         }
         let after =
             Quantity::<ManonCount>::nonnegative(next_materials.balance(&candidate)?.manons())?;
@@ -186,6 +227,8 @@ impl Simulation {
         self.field = candidate;
         self.materials = next_materials;
         self.field_ledger = ledger;
+        self.potential = next_potential;
+        self.shutdown = shutdown;
         self.time_seconds += dt.seconds();
         self.steps += 1;
         Ok(ConservationReport {
@@ -201,6 +244,7 @@ impl Simulation {
         let (potential, field_ledger) = build_potential(&self.experiment, &field)?;
         self.potential = potential;
         self.field_ledger = field_ledger;
+        self.shutdown = false;
         self.field = field;
         self.materials = materials;
         self.steps = 0;
@@ -312,6 +356,8 @@ fn build_potential(
         operating_work_joules: 0.0,
         last_transport_manons: 0.0,
         peak_potential: potential.peak_absolute(),
+        exported_heat_joules: 0.0,
+        shutdown: false,
     };
     Ok((Some(potential), Some(ledger)))
 }
