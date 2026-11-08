@@ -13,7 +13,7 @@ resolver = "3"
 manonica-core = { path = "../../crates/manonica-core" }
 manonica-error = { path = "../../crates/manonica-error" }
 manonica-physics = { path = "../../crates/manonica-physics" }
-meridian-sdk = { git = "https://github.com/F000NKKK/Meridian-Engine", tag = "v0.7.0" }
+meridian-sdk = { git = "https://github.com/F000NKKK/Meridian-Engine", rev = "d2002a767e1bf48f5f7ce7af982296743e40a89f" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread"] }
