@@ -29,7 +29,14 @@ simulation continues to enforce material and manon conservation and
 transactional updates; GPU numerical results are checked, mass-adjusted
 for f32 roundoff and committed to a validated physics-core field.
 
-This is not yet a fully GPU-resident solver. It makes one
+A new `GpuDiffusion::evolve_resident_batch` provides a ping-pong
+device-resident path for **diffusion-only** numerical experiments:
+many explicit diffusion steps are dispatched in one submission with one
+initial upload and one final readback. Its output is checked against
+the CPU reference in `resident_diffusion_batch_matches_cpu_reference`.
+The main Lab still uses the full coupled operator-split simulation with
+materials and heat, which requires a CPU exchange after each step until
+those operators are ported and fused. Thus the Lab still performs one
 upload/dispatch/readback per physics step. On **small grids** this can
 be slower than the CPU. A PhysX-like performance target requires
 resident buffers, fused kernels, sparse updates, asynchronous transfers,
@@ -37,14 +44,46 @@ material locality and representative profiling, not merely a GPU switch.
 
 ## Selecting the backend
 
-CPU reference is the default:
+Backend selection is **automatic by default**: Manonica attempts GPU first,
+then uses the CPU reference when the GPU adapter cannot initialize or the
+GPU diffusion operator fails. A forced selection never silently switches
+devices.
+
+Automatic selection:
 
 ```bash
 cargo run --release --manifest-path apps/manonica-lab/Cargo.toml -- \
   apps/manonica-lab/experiments/potential_concentrator.toml
 ```
 
-Opt in to GPU diffusion:
+Force GPU or fail with a nonzero exit code:
+
+```bash
+cargo run --release --manifest-path apps/manonica-lab/Cargo.toml -- \
+  apps/manonica-lab/experiments/potential_concentrator.toml --backend gpu
+```
+
+Force CPU, even if a GPU is available:
+
+```bash
+cargo run --release --manifest-path apps/manonica-lab/Cargo.toml -- \
+  apps/manonica-lab/experiments/potential_concentrator.toml --backend cpu
+```
+
+Supported command line modes: `--backend auto|gpu|cpu`,
+`--backend=gpu` and environment variable `MANONICA_SIM_BACKEND`.
+An explicit CLI flag overrides the environment. Invalid values abort
+before creating the application window.
+
+The default command below also uses auto-selection (GPU-first):
+
+
+```bash
+cargo run --release --manifest-path apps/manonica-lab/Cargo.toml -- \
+  apps/manonica-lab/experiments/potential_concentrator.toml
+```
+
+Force GPU diffusion through the environment:
 
 ```bash
 MANONICA_SIM_BACKEND=gpu cargo run --release -- \
@@ -52,10 +91,11 @@ MANONICA_SIM_BACKEND=gpu cargo run --release -- \
   apps/manonica-lab/experiments/potential_concentrator.toml
 ```
 
-If no appropriate GPU is available, the worker logs the cause and
-continues on the CPU reference backend. A GPU failure during a step
-will pause the simulation with an error rather than silently corrupt
-physical state.
+In `auto` mode, failure to initialize the GPU or to advance
+diffusion switches to the CPU reference, retrying the same transactional
+physics step. In forced `gpu` mode, either failure terminates the entire
+process with a nonzero exit code. In forced `cpu` mode, no GPU compute
+adapter is initialized.
 
 ### F3 telemetry
 
