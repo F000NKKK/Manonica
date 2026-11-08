@@ -191,4 +191,51 @@ mod tests {
             "GPU solver must conserve physical manon count",
         );
     }
+    /// Manual performance comparison; skipped in CI without an adapter.
+    /// Measures real end-to-end wall time, including every transfer.
+    #[test]
+    #[ignore = "run explicitly on an available compute adapter"]
+    fn benchmark_gpu_vs_cpu_including_transfer_overhead() {
+        let shape = GridShape::new(32, 32, 32).unwrap();
+        let mut cpu = FreeManaField::uniform(
+            shape, 0.5, Quantity::<ManonDensity>::nonnegative(1.0).unwrap(),
+        ).unwrap();
+        for z in 14..18 {
+            for y in 14..18 {
+                for x in 14..18 {
+                    cpu.set(x, y, z, Quantity::nonnegative(100.0).unwrap()).unwrap();
+                }
+            }
+        }
+        let mut accelerated = cpu.clone();
+        let Ok(mut gpu) = GpuDiffusion::new(&accelerated) else {
+            eprintln!("GPU benchmark unavailable: no suitable compute adapter");
+            return;
+        };
+        const ITERATIONS: usize = 100;
+        let dt = 0.01;
+        let d = 0.08;
+        let solver = FreeDiffusion::new(
+            Quantity::<Diffusivity>::nonnegative(d).unwrap()
+        ).unwrap();
+        let start_cpu = Instant::now();
+        for _ in 0..ITERATIONS {
+            solver.evolve(&mut cpu, TimeStep::from_seconds(dt).unwrap()).unwrap();
+        }
+        let cpu_wall = start_cpu.elapsed().as_secs_f64() * 1000.0;
+        let start_gpu = Instant::now();
+        for _ in 0..ITERATIONS {
+            gpu.evolve(&mut accelerated, d, dt).unwrap();
+        }
+        let gpu_wall = start_gpu.elapsed().as_secs_f64() * 1000.0;
+        let maximum_error = cpu.densities().iter().zip(accelerated.densities())
+            .map(|(a,b)| (a.value() - b.value()).abs()).fold(0.0_f64, f64::max);
+        let total_error = (cpu.total_manons().unwrap().value()
+            - accelerated.total_manons().unwrap().value()).abs();
+        println!("{} cells x {} steps: CPU {:.2} ms, GPU {:.2} ms, ratio CPU/GPU {:.3}, max cell error {:.3e}",
+            shape.len(), ITERATIONS, cpu_wall, gpu_wall, cpu_wall/gpu_wall, maximum_error);
+        assert!(maximum_error < 0.001, "GPU must remain close to CPU reference");
+        assert!(total_error < 1e-6, "GPU must conserve total manons");
+    }
+
 }
