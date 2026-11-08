@@ -21,6 +21,8 @@ manonica-compute-gpu = { path = "../../crates/manonica-compute-gpu" }
 serde = { version = "1", features = ["derive"] }
 toml = "1.2"
 font8x8 = "0.3"
+# Native clipboard for formula editor shortcuts (Ctrl+A/C/V).
+arboard = { version = "3.4", default-features = false, features = ["wayland-data-control"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
 # Bounded parameter expressions for physical/visual procedural constructions.
