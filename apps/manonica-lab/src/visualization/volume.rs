@@ -723,6 +723,27 @@ mod interior_view_tests {
     }
 
     #[test]
+    fn diagonal_camera_depth_varies_across_one_plane() {
+        let view = SliceView::new(
+            Vec3::ZERO,
+            Vec3::new(0.70710677, 0.0, 0.70710677),
+            2,
+            0.5,
+        );
+        let camera = view.camera(0.5);
+        let forward = view.forward();
+        let left = [-1.0_f64, 0.0, 0.5];
+        let right = [1.0_f64, 0.0, 0.5];
+        let depth = |p: [f64; 3]| (0..3)
+            .map(|i| (p[i] - camera[i]) * forward[i])
+            .sum::<f64>();
+        assert!(depth(left) < NEAR_CLIP_METRES);
+        assert!(depth(right) > NEAR_CLIP_METRES);
+        assert_eq!(near_slice_visibility(depth(left), 0.5), 0.0);
+        assert!(near_slice_visibility(depth(right), 0.5) > 0.0);
+    }
+
+    #[test]
     fn camera_near_clip_fades_instead_of_popping() {
         assert_eq!(near_slice_visibility(-1.0, 0.5), 0.0);
         assert_eq!(near_slice_visibility(NEAR_CLIP_METRES, 0.5), 0.0);
