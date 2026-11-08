@@ -165,6 +165,14 @@ mod tests {
     /// independent f64 CPU finite-volume reference; no display required.
     #[test]
     fn gpu_diffusion_matches_cpu_when_an_adapter_exists() {
+        // GitHub-hosted CI has no guaranteed physical compute device.
+        // Device parity is required on the target hardware before release.
+        if std::env::var_os("CI").is_some()
+            && std::env::var("MANONICA_GPU_TEST").as_deref() != Ok("1")
+        {
+            eprintln!("Skipping hardware GPU parity in CI; set MANONICA_GPU_TEST=1 on a GPU runner");
+            return;
+        }
         let shape = GridShape::new(9, 7, 5).unwrap();
         let mut cpu = FreeManaField::uniform(
             shape,
