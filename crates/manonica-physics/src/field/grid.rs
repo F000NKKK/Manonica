@@ -125,10 +125,6 @@ impl FreeManaField {
         &self.concentrations
     }
 
-    pub(crate) fn values(&self) -> &[Quantity<ManonDensity>] {
-        &self.concentrations
-    }
-
     pub(crate) fn replace(&mut self, next: Vec<Quantity<ManonDensity>>) {
         debug_assert_eq!(next.len(), self.shape.len());
         self.concentrations = next;

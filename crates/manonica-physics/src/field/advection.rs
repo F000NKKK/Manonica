@@ -45,7 +45,7 @@ impl<V: VelocityField> Evolution<FreeManaField> for FreeAdvection<V> {
         let dx = field.cell_width_metres();
         let ratio = dt.seconds() / dx;
         let before = field.total_manons()?;
-        let old: Vec<f64> = field.values().iter().map(|n| n.value()).collect();
+        let old: Vec<f64> = field.densities().iter().map(|n| n.value()).collect();
         let mut next = old.clone();
         let mut outgoing = vec![0.0_f64; old.len()];
 
