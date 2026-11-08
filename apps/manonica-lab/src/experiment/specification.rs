@@ -17,6 +17,8 @@ pub struct Experiment {
     #[serde(default)]
     pub field_sources: Vec<FieldSource>,
     #[serde(default)]
+    pub local_boundaries: Vec<LocalBoundarySpec>,
+    #[serde(default)]
     pub materials: Vec<MaterialSite>,
     #[serde(default)]
     pub channels: Vec<ChannelSpec>,
@@ -100,6 +102,45 @@ impl PotentialBoundaryKind {
 pub struct FieldSource {
     pub formula: usize,
     pub strength: f64,
+}
+
+/// Embedded boundary on a user-defined parametric circuit. The circuit
+/// is rasterized into the same grid cells used for trapping and rendering.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalBoundarySpec {
+    pub formula: usize,
+    #[serde(flatten)]
+    pub condition: LocalBoundaryKind,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LocalBoundaryKind {
+    /// Fixed cell-centre potential of the conducting circuit.
+    Dirichlet { value: f64 },
+    /// Zero normal potential flux through the circuit's rasterized interface.
+    Neumann,
+    /// Exchange flux with a reference potential: h*(phi - reference).
+    Robin { reference: f64, exchange: f64 },
+}
+impl LocalBoundaryKind {
+    pub fn physics(&self) -> manonica_physics::LocalPotentialBoundary {
+        match *self {
+            Self::Dirichlet { value } =>
+                manonica_physics::LocalPotentialBoundary::Dirichlet { value },
+            Self::Neumann => manonica_physics::LocalPotentialBoundary::Neumann,
+            Self::Robin { reference, exchange } =>
+                manonica_physics::LocalPotentialBoundary::Robin { reference, exchange },
+        }
+    }
+    fn valid(&self) -> bool {
+        match self {
+            Self::Dirichlet { value } => value.is_finite(),
+            Self::Neumann => true,
+            Self::Robin { reference, exchange } =>
+                reference.is_finite() && exchange.is_finite() && *exchange > 0.0,
+        }
+    }
 }
 
 /// Prescribed movement of the surrounding medium (not a magic-circle law).
@@ -439,6 +480,14 @@ impl Experiment {
             }
         }
         check(self.formulas.len() <= 32, "formulas_count")?;
+        check(self.local_boundaries.len() <= 64, "local_boundaries_count")?;
+        if !self.local_boundaries.is_empty() {
+            check(p.potential.is_some(), "potential_required_for_local_boundaries")?;
+        }
+        for boundary in &self.local_boundaries {
+            check(boundary.formula < self.formulas.len(), "local_boundary_formula")?;
+            check(boundary.condition.valid(), "local_boundary_parameters")?;
+        }
         check(self.field_sources.len() <= 64, "field_sources_count")?;
         if !self.field_sources.is_empty() {
             check(p.potential.is_some(), "potential_required_for_sources")?;
