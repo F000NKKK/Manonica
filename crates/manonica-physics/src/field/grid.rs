@@ -125,12 +125,6 @@ impl FreeManaField {
         &self.concentrations
     }
 
-    /// Validated direct index update for conservative coupled operators.
-    pub(crate) fn replace_density_at(&mut self, index: usize, density: Quantity<ManonDensity>) {
-        debug_assert!(index < self.concentrations.len());
-        self.concentrations[index] = density;
-    }
-
     /// Validated single-cell setter for coupled material physics in another
     /// crate. Invalid indices or densities leave the grid untouched.
     pub fn set_flat(
