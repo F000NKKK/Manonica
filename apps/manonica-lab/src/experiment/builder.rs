@@ -30,7 +30,12 @@ impl ExperimentBuilder {
     }
 
     pub fn diffusion(mut self, diffusivity: f64, dt: f64, steps_per_frame: usize) -> Self {
-        self.experiment.physics = Diffusion { diffusivity, dt, steps_per_frame };
+        self.experiment.physics = Diffusion {
+            diffusivity,
+            dt,
+            flow: self.experiment.physics.flow.clone(),
+            steps_per_frame,
+        };
         self
     }
 
