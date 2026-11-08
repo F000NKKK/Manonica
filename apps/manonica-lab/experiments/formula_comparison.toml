@@ -1,0 +1,98 @@
+# Три независимых математических контура в одном физическом эксперименте.
+# Разная геометрия: окружность, пятиконечная звезда, пространственный узел.
+name = "Сравнение трёх математических формул"
+
+[grid]
+dimensions = [48, 28, 34]
+cell_size = 0.45
+
+[physics]
+diffusivity = 0.08
+dt = 0.02
+steps_per_frame = 1
+thermal_conductance = 0.03
+
+[visualization]
+relative_threshold = 0.035
+max_points = 1100
+exposure = 2.7
+optical_density = 0.12
+wisps = false
+
+[[seeds]]
+shape = "gaussian"
+center = [-4.2, 0.0, 0.0]
+sigma = 0.95
+total_manons = 3600.0
+
+[[seeds]]
+shape = "gaussian"
+center = [0.0, 0.0, 0.0]
+sigma = 0.95
+total_manons = 3600.0
+
+[[seeds]]
+shape = "gaussian"
+center = [4.2, 0.0, 0.0]
+sigma = 0.95
+total_manons = 3600.0
+
+# СЛЕВА: окружность в плоскости XY.
+[[formulas]]
+name = "1 / Окружность XY"
+x = "-4.2+1.35*cos(t)"
+y = "1.35*sin(t)"
+z = "0"
+segments = 128
+thickness = 0.09
+color = [0.1, 0.95, 0.4]
+
+[formulas.trap]
+capacity = 2300.0
+capture_rate = 2.0
+release_rate = 0.0
+binding_energy = 0.08
+heat_capacity = 75.0
+reference_temperature = 300.0
+activation_temperature = 250.0
+max_flux = 800.0
+
+# В ЦЕНТРЕ: звезда из радиальной гармоники cos(5t).
+[[formulas]]
+name = "2 / Пятиконечная звезда"
+x = "(1.2+0.42*cos(5*t))*cos(t)"
+y = "(1.2+0.42*cos(5*t))*sin(t)"
+z = "0"
+segments = 160
+thickness = 0.09
+color = [0.95, 0.6, 0.16]
+
+[formulas.trap]
+capacity = 2300.0
+capture_rate = 2.0
+release_rate = 0.0
+binding_energy = 0.08
+heat_capacity = 75.0
+reference_temperature = 300.0
+activation_temperature = 250.0
+max_flux = 800.0
+
+# СПРАВА: пространственная кривая, зависящая от всех трёх координат.
+[[formulas]]
+name = "3 / Пространственный узел"
+x = "4.2+(1.05+0.38*cos(3*t))*cos(2*t)"
+y = "(1.05+0.38*cos(3*t))*sin(2*t)"
+z = "0.85*sin(3*t)"
+segments = 192
+thickness = 0.10
+color = [0.45, 0.45, 1.0]
+
+[formulas.trap]
+capacity = 2300.0
+capture_rate = 2.0
+release_rate = 0.0
+binding_energy = 0.08
+heat_capacity = 75.0
+reference_temperature = 300.0
+activation_temperature = 250.0
+max_flux = 800.0
