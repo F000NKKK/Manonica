@@ -2,7 +2,7 @@ use manonica_core::{
     Evolution, Quantity, TimeStep,
     units::{Diffusivity, ManonCount},
 };
-use manonica_physics::{ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField};
+use manonica_physics::{ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, MaterialLattice};
 
 use super::field::seeded_field;
 use crate::experiment::{AmbientFlow, Experiment, ExperimentError};
@@ -11,6 +11,7 @@ use crate::experiment::{AmbientFlow, Experiment, ExperimentError};
 pub struct Simulation {
     pub experiment: Experiment,
     field: FreeManaField,
+    materials: MaterialLattice,
     solver: FreeDiffusion,
     advection: FreeAdvection<AmbientFlow>,
     time_seconds: f64,
@@ -25,6 +26,7 @@ impl Simulation {
         )?)?;
         let field = seeded_field(&experiment)?;
         let advection = FreeAdvection::new(experiment.physics.flow.clone());
+        let materials = build_materials(&experiment, &field)?;
         // Fail fast if the velocity is incompatible with the spatial or
         // temporal discretization. This validation must not advance the session.
         let mut probe = field.clone();
@@ -32,6 +34,7 @@ impl Simulation {
         Ok(Self {
             experiment,
             field,
+            materials,
             solver,
             advection,
             time_seconds: 0.0,
@@ -49,20 +52,23 @@ impl Simulation {
         self.steps
     }
     pub fn total(&self) -> Result<Quantity<ManonCount>, ExperimentError> {
-        Ok(self.field.total_manons()?)
+        Ok(Quantity::nonnegative(self.materials.balance(&self.field)?.manons())?)
     }
 
     pub fn step(&mut self) -> Result<ConservationReport, ExperimentError> {
         let dt = TimeStep::from_seconds(self.experiment.physics.dt)?;
-        let before = self.field.total_manons()?;
+        let before = self.total()?;
         let mut candidate = self.field.clone();
         self.solver.evolve(&mut candidate, dt)?;
         self.advection.evolve(&mut candidate, dt)?;
-        let after = candidate.total_manons()?;
+        let mut next_materials = self.materials.clone();
+        next_materials.step(&mut candidate, dt.seconds())?;
+        let after = Quantity::<ManonCount>::nonnegative(next_materials.balance(&candidate)?.manons())?;
         let absolute_error =
             Quantity::<ManonCount>::nonnegative((after.value() - before.value()).abs())?;
         // Diffusion + advection form one transactional operator-split step.
         self.field = candidate;
+        self.materials = next_materials;
         self.time_seconds += dt.seconds();
         self.steps += 1;
         Ok(ConservationReport {
@@ -73,9 +79,23 @@ impl Simulation {
     }
 
     pub fn reset(&mut self) -> Result<(), ExperimentError> {
-        self.field = seeded_field(&self.experiment)?;
+        let field = seeded_field(&self.experiment)?;
+        let materials = build_materials(&self.experiment, &field)?;
+        self.field = field;
+        self.materials = materials;
         self.steps = 0;
         self.time_seconds = 0.0;
         Ok(())
     }
+}
+
+fn build_materials(experiment: &Experiment, field: &FreeManaField) -> Result<MaterialLattice, ExperimentError> {
+    let mut materials = MaterialLattice::new(field.shape());
+    for site in &experiment.materials {
+        materials.install(site.cell, site.physics())?;
+    }
+    for channel in &experiment.channels {
+        materials.add_channel(channel.physics())?;
+    }
+    Ok(materials)
 }
