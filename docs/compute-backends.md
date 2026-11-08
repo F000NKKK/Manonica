@@ -84,9 +84,17 @@ cargo test --workspace
 
 A hardware-dependent parity test compares GPU results cell by cell to
 the independent f64 CPU solver, checking total count and output shape.
-If no adapter exists, that test explicitly skips the GPU portion; a
-green CI result alone is **not proof** of correctness on a specific
-NVIDIA/AMD/Intel device.
+GitHub-hosted CI intentionally skips device parity unless
+`MANONICA_GPU_TEST=1`; a green CI result alone is **not proof** of
+correctness on a specific NVIDIA/AMD/Intel device.
+
+On a physical GPU, explicitly run the parity test:
+
+```bash
+MANONICA_GPU_TEST=1 cargo test \
+  --manifest-path crates/manonica-compute-gpu/Cargo.toml \
+  gpu_diffusion_matches_cpu_when_an_adapter_exists -- --nocapture
+```
 
 To profile a local adapter, run the ignored 32³ x 100-step benchmark:
 
