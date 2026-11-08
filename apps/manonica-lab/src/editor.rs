@@ -23,6 +23,8 @@ pub struct FormulaEditor {
     /// Geometric centre of the selected circuit; presets keep its position.
     pub center: [f64; 3],
     pub message: String,
+    /// Preview verifies not just syntax but physical grid occupancy.
+    pub preview_error: Option<String>,
 }
 impl Default for FormulaEditor {
     fn default() -> Self {
@@ -35,6 +37,7 @@ impl Default for FormulaEditor {
             circuits: 1,
             center: [0.0; 3],
             message: "TAB: next field   ENTER: apply   ESC: close".into(),
+            preview_error: None,
         }
     }
 }
@@ -79,6 +82,7 @@ impl FormulaEditor {
     }
     pub fn load(&mut self, formulas: &[Formula]) {
         self.selection_all = false;
+        self.preview_error = None;
         self.circuits = formulas.len().max(1);
         self.circuit = self.circuit.min(self.circuits - 1);
         if let Some(formula) = formulas.get(self.circuit) {
@@ -109,6 +113,43 @@ impl FormulaEditor {
             .min(formulas.len() - 1);
         self.load(formulas);
     }
+    /// Quick preflight for the physical grid. A valid mathematical curve
+    /// may still collide with another formula trap or installed material.
+    /// Unlike Simulation::new this doesn't rebuild the whole physics state.
+    pub fn validate_physical_preview(&mut self, experiment: &Experiment) {
+        let candidate = self.update_formula(experiment.formulas.get(self.circuit));
+        let dimensions = experiment.grid.dimensions;
+        let dx = experiment.grid.cell_size;
+        let cells = match crate::experiment::capture_cells(&candidate, dimensions, dx) {
+            Ok(cells) => cells,
+            Err(err) => {
+                self.preview_error = Some(format!("CURVE OUTSIDE GRID OR INVALID: {err}"));
+                return;
+            }
+        };
+        if candidate.trap.is_none() {
+            self.preview_error = None;
+            return;
+        }
+        let mut used = std::collections::HashSet::new();
+        for site in &experiment.materials {
+            used.insert(site.cell);
+        }
+        for (index, formula) in experiment.formulas.iter().enumerate() {
+            if index == self.circuit || formula.trap.is_none() {
+                continue;
+            }
+            if let Ok(other_cells) = crate::experiment::capture_cells(formula, dimensions, dx) {
+                used.extend(other_cells);
+            }
+        }
+        self.preview_error = if cells.iter().any(|cell| used.contains(cell)) {
+            Some("TRAP OVERLAP: MOVE CIRCUIT OR CHANGE ITS SHAPE".into())
+        } else {
+            None
+        };
+    }
+
     /// Three mathematically distinct user-editable presets. All positions
     /// derive from the expressions, never from fixed render meshes.
     pub fn preset(&mut self, preset: u8) {
@@ -183,8 +224,8 @@ impl EditorOverlay {
             return None;
         }
         let signature = format!(
-            "{:?}|{}|{}|{}",
-            editor.expressions, editor.selected, editor.selection_all, editor.message
+            "{:?}|{}|{}|{}|{:?}",
+            editor.expressions, editor.selected, editor.selection_all, editor.message, editor.preview_error
         );
         if self.texture.is_none() || self.signature != signature {
             let next = base.render.recorder.upload(&editor.image());
@@ -368,13 +409,12 @@ impl FormulaEditor {
                         );
                     }
                 }
-                text(
-                    &mut pixels,
-                    462,
-                    212,
-                    "PREVIEW: VALID",
-                    [104, 247, 166, 255],
-                );
+                if let Some(error) = &self.preview_error {
+                    text(&mut pixels, 462, 212, "PREVIEW: GRID CONFLICT", [255, 141, 121, 255]);
+                    text(&mut pixels, 13, 227, error, [255, 141, 121, 255]);
+                } else {
+                    text(&mut pixels, 462, 212, "PREVIEW: VALID", [104, 247, 166, 255]);
+                }
             }
             Err(_) => text(
                 &mut pixels,
@@ -385,7 +425,9 @@ impl FormulaEditor {
             ),
         }
         let message: String = self.message.chars().take(93).collect();
-        text(&mut pixels, 13, 227, &message, [153, 224, 190, 255]);
+        if self.preview_error.is_none() {
+            text(&mut pixels, 13, 227, &message, [153, 224, 190, 255]);
+        }
         text(
             &mut pixels,
             13,
