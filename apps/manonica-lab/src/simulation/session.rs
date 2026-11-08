@@ -45,6 +45,11 @@ impl Simulation {
     pub fn field(&self) -> &FreeManaField {
         &self.field
     }
+    /// Total free + bound inventory and the closed thermal/binding ledger.
+    pub fn material_balance(&self) -> Result<manonica_physics::Balance, ExperimentError> {
+        Ok(self.materials.balance(&self.field)?)
+    }
+
     pub fn elapsed(&self) -> f64 {
         self.time_seconds
     }
