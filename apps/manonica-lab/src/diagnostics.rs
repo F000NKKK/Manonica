@@ -24,6 +24,8 @@ pub struct FrameMetrics {
     pub sim_time: f64,
     pub steps: u64,
     pub total: f64,
+    pub bound: f64,
+    pub material_energy: f64,
     pub initial_total: f64,
     pub peak_density: f64,
     pub shown_slices: usize,
@@ -174,7 +176,15 @@ impl DebugHud {
         canvas.text(
             12,
             103,
-            &format!("FREE MANONS {:>13.4}    DELTA {:>+13.6}", m.total, delta),
+            &format!("FREE {:>11.3}  BOUND {:>11.3}", m.total - m.bound, m.bound),
+            1,
+            [190, 236, 236, 255],
+        );
+
+        canvas.text(
+            12,
+            115,
+            &format!("TOTAL {:.3}  DELTA {:+.4}  ENERGY {:.3} J", m.total, delta, m.material_energy),
             1,
             [190, 236, 236, 255],
         );
@@ -332,6 +342,8 @@ mod tests {
                 sim_time: 0.0,
                 steps: 0,
                 total: 10.0,
+                bound: 2.0,
+                material_energy: 4.0,
                 initial_total: 10.0,
                 peak_density: 3.0,
                 shown_slices: 20,
