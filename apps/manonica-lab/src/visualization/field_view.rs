@@ -4,7 +4,7 @@ use meridian_sdk::{GraphicsSession, Light, Material, Motor3, Renderable3d, Scale
 use crate::experiment::Experiment;
 use crate::simulation::SimulationSnapshot;
 
-use super::circle_mesh::circle_mesh;
+use super::circle_mesh::{circle_mesh, formula_mesh};
 use super::volume::ManaVolume;
 
 /// The magic circles are scene geometry, while the free-manon density is
@@ -41,6 +41,30 @@ impl FieldView {
                     circle.center[1],
                     circle.center[2],
                 )),
+                scale: Scale3::UNIT,
+                billboard: false,
+                casts_shadow: false,
+                palette: None,
+                morph_weights: Vec::new(),
+            });
+        }
+
+        for formula in &experiment.formulas {
+            let mesh = base
+                .render
+                .meshes
+                .register(formula_mesh(formula)?)
+                .map_err(|e| format!("formula {}: {e}", formula.name))?;
+            let material = base.render.materials.register(Material {
+                base_color_factor: [formula.color[0], formula.color[1], formula.color[2], 1.0],
+                emissive: formula.color.map(|v| v * experiment.visualization.exposure * 1.5),
+                unlit: true,
+                ..Default::default()
+            });
+            renderables.push(Renderable3d {
+                mesh,
+                material,
+                frame: Motor3::translation(Vec3::ZERO),
                 scale: Scale3::UNIT,
                 billboard: false,
                 casts_shadow: false,
