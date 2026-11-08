@@ -117,7 +117,6 @@ impl ManaVolume {
             ],
             blend: BlendMode::AlphaBlend,
             unlit: true,
-            casts_shadow: false,
             ..Default::default()
         });
 
