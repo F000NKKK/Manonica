@@ -22,8 +22,7 @@ use crate::{
 };
 
 const INPUT_POLL_PERIOD: Duration = Duration::from_millis(2);
-// With FIFO VSync enabled the swapchain controls normal frame pacing.
-// A software cap is available only when explicitly requested.
+// FIFO presentation and CPU frame pacing are distinct controls.
 
 /// Only short-lived CPU state crosses the main/render boundary. Neither
 /// GraphicsSession nor a mutable physics field is shared between threads.
@@ -204,11 +203,33 @@ impl AppHandler for App {
     }
 }
 
-fn target_render_rate() -> Option<u32> {
-    std::env::var("MANONICA_RENDER_FPS")
+fn target_render_rate(window: &Window) -> (f64, &'static str) {
+    if let Some(fps) = std::env::var("MANONICA_RENDER_FPS")
         .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .filter(|fps| (30..=360).contains(fps))
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|fps| fps.is_finite() && (30.0..=360.0).contains(fps))
+    {
+        return (fps, "configured");
+    }
+    let refresh = window
+        .surface_target()
+        .current_monitor()
+        .and_then(|monitor| monitor.refresh_rate_millihertz())
+        .filter(|&mhz| (30_000..=500_000).contains(&mhz))
+        .map(|mhz| f64::from(mhz) / 1000.0);
+    (refresh.unwrap_or(60.0), if refresh.is_some() { "monitor" } else { "fallback" })
+}
+
+/// Paces frame submission, retaining FIFO presentation as a separate guarantee.
+fn pace_frame(deadline: &mut Instant, interval: Duration) {
+    let now = Instant::now();
+    if now < *deadline {
+        std::thread::sleep(*deadline - now);
+    }
+    *deadline += interval;
+    if *deadline <= Instant::now() {
+        *deadline = Instant::now() + interval;
+    }
 }
 
 fn render_loop(
@@ -218,8 +239,8 @@ fn render_loop(
     running: Arc<AtomicBool>,
 ) {
     let runtime = tokio::runtime::Runtime::new().expect("Tokio runtime");
-    let frame_cap = target_render_rate();
-    let interval = frame_cap.map(|fps| Duration::from_secs_f64(1.0 / f64::from(fps)));
+    let (frame_cap, rate_source) = target_render_rate(&window);
+    let interval = Duration::from_secs_f64(1.0 / frame_cap);
     let size = [window.width().max(1), window.height().max(1)];
     let target = window.surface_target();
     let (device, mut surface) = runtime
@@ -240,24 +261,12 @@ fn render_loop(
     let initial_manons = lock_bridge(&bridge).snapshot.total;
     let mut current_size = size;
     eprintln!(
-        "Manonica: separate renderer with FIFO VSync{}",
-        frame_cap.map_or_else(
-            || " (no extra software limit)".to_string(),
-            |fps| format!(" (extra cap: {fps} FPS)"),
-        )
+        "Manonica: FIFO VSync + paced render target {:.3} FPS ({rate_source})",
+        frame_cap
     );
 
     while running.load(Ordering::Acquire) {
-        if let Some(interval) = interval {
-            let now = Instant::now();
-            if now < deadline {
-                thread::sleep(deadline - now);
-            }
-            deadline += interval;
-            if deadline <= Instant::now() {
-                deadline = Instant::now() + interval;
-            }
-        }
+        pace_frame(&mut deadline, interval);
         let frame_begin = Instant::now();
         let dt = frame_begin.duration_since(last_frame).as_secs_f64();
         last_frame = frame_begin;
