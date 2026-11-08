@@ -10,7 +10,7 @@
 use manonica_core::{Quantity, units::ManonDensity};
 use manonica_error::{BaseError, ErrorCode};
 use manonica_physics::FreeManaField;
-use meridian_gpu_wgpu::{Buffer, BufferUsage, ComputePipeline};
+use meridian_gpu_wgpu::{BindGroup, Buffer, BufferUsage, ComputePipeline};
 use meridian_sdk::GpuComputeDevice;
 use std::time::Instant;
 
@@ -27,6 +27,7 @@ pub struct GpuDiffusion {
     input: Buffer,
     output: Buffer,
     parameters: Buffer,
+    bind: BindGroup,
     dimensions: [usize; 3],
     last_wall_ms: f64,
 }
@@ -53,8 +54,10 @@ impl GpuDiffusion {
         let input = raw.create_buffer(len * 4, BufferUsage::Storage);
         let output = raw.create_buffer(len * 4, BufferUsage::Storage);
         let parameters = raw.create_buffer(16, BufferUsage::Storage);
+        let layout = pipeline.wgpu_pipeline().get_bind_group_layout(0);
+        let bind = raw.create_bind_group(&layout, &[&input, &output, &parameters]);
         Ok(Self {
-            runtime, device, pipeline, input, output, parameters, dimensions,
+            runtime, device, pipeline, input, output, parameters, bind, dimensions,
             last_wall_ms: 0.0,
         })
     }
@@ -102,13 +105,9 @@ impl GpuDiffusion {
         }
         settings.extend_from_slice(&(alpha as f32).to_bits().to_le_bytes());
         raw.write_buffer(&self.parameters, &settings);
-        let layout = self.pipeline.wgpu_pipeline().get_bind_group_layout(0);
-        let bind = raw.create_bind_group(
-            &layout, &[&self.input, &self.output, &self.parameters],
-        );
         let mut commands = raw.create_command_buffer();
         commands.dispatch_compute_with_bind_group(
-            &self.pipeline, &bind, (shape.len() as u32).div_ceil(64),
+            &self.pipeline, &self.bind, (shape.len() as u32).div_ceil(64),
         );
         commands.submit();
         let result = self.runtime.block_on(self.device.read_buffer(&self.output));
