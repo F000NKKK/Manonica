@@ -1,0 +1,73 @@
+# Stage A: a mathematical ring is an ACTUAL source of the 3D potential.
+# Negative source strength creates a potential well, attracting free manons.
+# The field is solved from (-permittivity Laplacian + screening) phi = source.
+name = "Локальные граничные условия — математический контур"
+
+[grid]
+dimensions = [32, 24, 32]
+cell_size = 0.45
+
+[physics]
+diffusivity = 0.035
+dt = 0.02
+steps_per_frame = 1
+thermal_conductance = 0.04
+# Passive cooling of crystal and field-heat reservoirs toward ambient.
+ambient_cooling_rate = 0.035
+
+[physics.potential]
+mobility = 0.18
+permittivity = 1.0
+screening = 0.6
+boundary = "grounded"
+iterations = 160
+initial_work_joules = 20000.0
+max_power_joules_per_second = 10000.0
+# The source is gradually turned down when the trap is 99.5% full.
+shutdown_at_bound_fraction = 0.995
+shutdown_decay_rate = 0.1
+
+[visualization]
+relative_threshold = 0.035
+max_points = 1200
+exposure = 2.6
+optical_density = 0.15
+wisps = false
+
+# Starting cloud initially offset from the centre of the attracting geometry.
+[[seeds]]
+shape = "gaussian"
+center = [0.0, 0.0, 0.0]
+sigma = 2.8
+total_manons = 15000.0
+
+[[formulas]]
+name = "Потенциальный концентратор"
+x = "1.9*cos(t)"
+y = "0.0"
+z = "1.9*sin(t)"
+segments = 128
+thickness = 0.045
+color = [0.3, 0.95, 0.55]
+
+[formulas.trap]
+capacity = 7000.0
+capture_rate = 0.22
+release_rate = 0.002
+binding_energy = 0.07
+heat_capacity = 150.0
+reference_temperature = 300.0
+activation_temperature = 250.0
+max_flux = 500.0
+
+[[field_sources]]
+formula = 0
+strength = -200.0
+
+# One circuit is simultaneously a physical trap, field source and
+# boundary conductor. This is a constraint on the numerical potential,
+# not a separate graphic effect.
+[[local_boundaries]]
+formula = 0
+kind = "dirichlet"
+value = -4.0
