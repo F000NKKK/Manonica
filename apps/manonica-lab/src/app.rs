@@ -133,12 +133,14 @@ impl App {
             let mut state = lock_bridge(&self.bridge);
             if input.was_key_pressed(KeyCode::E) && !state.editor.open {
                 state.editor.open = true;
+                window.set_ime_allowed(true);
                 state.mouse_locked = false;
                 window.set_cursor_grabbed(false);
                 state.editor.load(&self.experiment.formulas);
             } else if state.editor.open {
                 if input.was_key_pressed(KeyCode::Escape) {
                     state.editor.open = false;
+                    window.set_ime_allowed(false);
                     state.mouse_locked = true;
                     window.set_cursor_grabbed(true);
                 } else if input.was_key_pressed(KeyCode::Tab) {
@@ -224,6 +226,7 @@ impl App {
                 Ok(_) => {
                     state.editor.message = "APPLIED - physics reset; mana capture is active".into();
                     state.editor.open = false;
+                    window.set_ime_allowed(false);
                     state.mouse_locked = true;
                     window.set_cursor_grabbed(true);
                     state.experiment = Arc::new(experiment.clone());
@@ -256,6 +259,7 @@ impl App {
                     state.wisps = experiment.visualization.wisps;
                     self.experiment = experiment.clone();
                     self.simulation.replace_experiment(experiment);
+                    window.surface_target().set_title("Manonica Lab — Сравнение трёх формул");
                     eprintln!("Manonica: switched to 3-formula comparison (key C)");
                 }
                 Err(err) => eprintln!("Cannot load comparison experiment: {err}"),
