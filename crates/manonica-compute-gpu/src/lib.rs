@@ -170,7 +170,9 @@ mod tests {
         if std::env::var_os("CI").is_some()
             && std::env::var("MANONICA_GPU_TEST").as_deref() != Ok("1")
         {
-            eprintln!("Skipping hardware GPU parity in CI; set MANONICA_GPU_TEST=1 on a GPU runner");
+            eprintln!(
+                "Skipping hardware GPU parity in CI; set MANONICA_GPU_TEST=1 on a GPU runner"
+            );
             return;
         }
         let shape = GridShape::new(9, 7, 5).unwrap();
