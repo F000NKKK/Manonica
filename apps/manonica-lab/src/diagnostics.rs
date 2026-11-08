@@ -11,7 +11,7 @@ use meridian_sdk::{
 };
 
 const WIDTH: usize = 520;
-const HEIGHT: usize = 418;
+const HEIGHT: usize = 448;
 const HISTORY: usize = 180;
 const UPDATE_PERIOD: Duration = Duration::from_millis(200);
 
@@ -33,6 +33,9 @@ pub struct FrameMetrics {
     pub field_heat_joules: f64,
     pub field_work_joules: f64,
     pub potential_transport: f64,
+    pub trap_temperature_kelvin: f64,
+    pub exported_heat_joules: f64,
+    pub field_shutdown: bool,
     pub initial_total: f64,
     pub peak_density: f64,
     pub shown_slices: usize,
@@ -256,7 +259,16 @@ impl DebugHud {
         );
         canvas.text(
             12,
-            409,
+            412,
+            &format!("TRAP T {:.1} K   EXPORTED {:.2} J   {}",
+                m.trap_temperature_kelvin, m.exported_heat_joules,
+                if m.field_shutdown { "SOURCE DECAYING" } else { "SOURCE ACTIVE" }),
+            1,
+            [160, 223, 255, 255],
+        );
+        canvas.text(
+            12,
+            437,
             "CPU frame interval and solver timings; not GPU execution",
             1,
             [118, 147, 177, 255],
@@ -410,6 +422,9 @@ mod tests {
                 field_heat_joules: 0.0,
                 field_work_joules: 0.0,
                 potential_transport: 0.0,
+                trap_temperature_kelvin: 300.0,
+                exported_heat_joules: 0.0,
+                field_shutdown: false,
                 initial_total: 10.0,
                 peak_density: 3.0,
                 shown_slices: 20,
