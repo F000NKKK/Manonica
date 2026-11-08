@@ -122,7 +122,7 @@ impl FreeManaField {
     /// Borrowing the slice avoids one indexed method call per interpolation
     /// sample while retaining validated, typed physical quantities.
     pub fn densities(&self) -> &[Quantity<ManonDensity>] {
-        &self.values
+        &self.concentrations
     }
 
     pub(crate) fn values(&self) -> &[Quantity<ManonDensity>] {
