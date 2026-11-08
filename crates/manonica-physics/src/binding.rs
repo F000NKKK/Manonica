@@ -250,6 +250,77 @@ impl MaterialLattice {
                 .sum(),
         })
     }
+    /// Passive thermal conduction between neighbouring material cells.
+    /// Thermal conductance is in J/(s·K) per neighbouring cell pair.
+    /// The reference baseline is fixed; no unmodelled heat enters the system.
+    /// Changes are transactional and conserve the tracked thermal energy.
+    pub fn conduct_heat(
+        &mut self,
+        dt: f64,
+        conductance: f64,
+    ) -> Result<(), BaseError> {
+        positive(dt, "thermal_dt")?;
+        nonnegative(conductance, "thermal_conductance")?;
+        if conductance == 0.0 {
+            return Ok(());
+        }
+        let mut next = self.cells.clone();
+        let mut before = 0.0;
+        for cell in &next {
+            if let Some(material) = cell.material {
+                material.validate()?;
+                nonnegative(cell.heat, "thermal_heat")?;
+                before += cell.heat;
+            }
+        }
+        for z in 0..self.shape.nz() {
+            for y in 0..self.shape.ny() {
+                for x in 0..self.shape.nx() {
+                    let a = self.shape.index(x, y, z).unwrap();
+                    for (nx, ny, nz) in [(x + 1, y, z), (x, y + 1, z), (x, y, z + 1)] {
+                        let Some(b) = self.shape.index(nx, ny, nz) else {
+                            continue;
+                        };
+                        let (Some(ma), Some(mb)) = (next[a].material, next[b].material) else {
+                            continue;
+                        };
+                        let ta = ma.reference_temperature + next[a].heat / ma.heat_capacity;
+                        let tb = mb.reference_temperature + next[b].heat / mb.heat_capacity;
+                        let delta_t = ta - tb;
+                        if delta_t == 0.0 {
+                            continue;
+                        }
+                        // Bounded symmetric exchange: never overshoot equilibrium.
+                        let equilibrium = delta_t.abs() /
+                            (1.0 / ma.heat_capacity + 1.0 / mb.heat_capacity);
+                        let proposed = conductance * delta_t.abs() * dt;
+                        let amount = proposed.min(equilibrium).min(if delta_t > 0.0 {
+                            next[a].heat
+                        } else {
+                            next[b].heat
+                        });
+                        nonnegative(amount, "thermal_transfer")?;
+                        if delta_t > 0.0 {
+                            next[a].heat -= amount;
+                            next[b].heat += amount;
+                        } else {
+                            next[a].heat += amount;
+                            next[b].heat -= amount;
+                        }
+                    }
+                }
+            }
+        }
+        let after: f64 = next.iter().map(|c| c.heat).sum();
+        if !before.is_finite() || !after.is_finite()
+            || (before - after).abs() > before.abs().max(1.0) * 1e-9
+        {
+            return Err(invalid("thermal_conservation"));
+        }
+        self.cells = next;
+        Ok(())
+    }
+
     /// Transactional step: all validation and transfers run on copies.
     /// No externally supplied source of mana or energy is assumed.
     pub fn step(&mut self, field: &mut FreeManaField, dt: f64) -> Result<Balance, BaseError> {
@@ -434,6 +505,34 @@ mod tests {
                 .is_err()
         );
         assert_eq!(sites.balance(&field).unwrap().manons(), snapshot.manons());
+    }
+
+    #[test]
+    fn passive_heat_conduction_equalizes_and_conserves_energy() {
+        let shape = GridShape::new(2, 1, 1).unwrap();
+        let mut field = FreeManaField::uniform(
+            shape, 1.0, Quantity::nonnegative(20.0).unwrap(),
+        ).unwrap();
+        let mut sites = MaterialLattice::new(shape);
+        let mut material = material();
+        material.release_rate = 0.0;
+        sites.install([0, 0, 0], material).unwrap();
+        sites.install([1, 0, 0], material).unwrap();
+        field.set(1, 0, 0, Quantity::nonnegative(0.0).unwrap()).unwrap();
+        sites.step(&mut field, 1.0).unwrap();
+        let before = sites.balance(&field).unwrap();
+        let t0 = sites.at(0, 0, 0).unwrap().temperature().unwrap();
+        let t1 = sites.at(1, 0, 0).unwrap().temperature().unwrap();
+        assert!(t0 > t1);
+        sites.conduct_heat(0.2, 2.0).unwrap();
+        let after = sites.balance(&field).unwrap();
+        let t0_after = sites.at(0, 0, 0).unwrap().temperature().unwrap();
+        let t1_after = sites.at(1, 0, 0).unwrap().temperature().unwrap();
+        assert!(t0_after < t0 && t1_after > t1);
+        assert!(t0_after >= t1_after);
+        assert!((after.energy() - before.energy()).abs() < 1e-9);
+        assert!((after.manons() - before.manons()).abs() < 1e-9);
+        assert!(sites.conduct_heat(f64::NAN, 1.0).is_err());
     }
 
     #[test]
