@@ -282,14 +282,30 @@ fn law_local_neumann_blocks_gradient_driven_manon_transfer() {
             index: shape.index(0, 0, 0).unwrap(),
             condition: LocalPotentialBoundary::Neumann,
         }],
-    ).unwrap();
+    )
+    .unwrap();
     let mut n = FreeManaField::uniform(shape, 1.0, density(0.0)).unwrap();
     n.set(1, 0, 0, density(10.0)).unwrap();
     let before = n.total_manons().unwrap().value();
     let report = field.drift(&mut n, 0.5, 0.1).unwrap();
-    close("no gradient transfer across insulating interface", report.transported_manons, 0.0, 1e-12);
-    close("no drift density change", n.at(1,0,0).unwrap().value(), 10.0, 1e-12);
-    close("conserved inventory", n.total_manons().unwrap().value(), before, 1e-12);
+    close(
+        "no gradient transfer across insulating interface",
+        report.transported_manons,
+        0.0,
+        1e-12,
+    );
+    close(
+        "no drift density change",
+        n.at(1, 0, 0).unwrap().value(),
+        10.0,
+        1e-12,
+    );
+    close(
+        "conserved inventory",
+        n.total_manons().unwrap().value(),
+        before,
+        1e-12,
+    );
 }
 
 /// LAW-LOCAL-ROB-001: surface exchange satisfies the cell-centre
