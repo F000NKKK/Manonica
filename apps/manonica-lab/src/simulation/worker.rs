@@ -13,6 +13,33 @@ use crate::experiment::Experiment;
 
 const SNAPSHOT_PERIOD: Duration = Duration::from_millis(50);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComputeBackend {
+    Cpu,
+    GpuHybrid,
+    CpuFallback,
+}
+impl ComputeBackend {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cpu => "CPU",
+            Self::GpuHybrid => "GPU HYBRID",
+            Self::CpuFallback => "CPU FALLBACK",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub struct ComputeTelemetry {
+    pub backend: ComputeBackend,
+    /// End-to-end GPU operator wall time, including upload and readback.
+    pub diffusion_wall_ms: f64,
+}
+impl Default for ComputeTelemetry {
+    fn default() -> Self {
+        Self { backend: ComputeBackend::Cpu, diffusion_wall_ms: 0.0 }
+    }
+}
+
 #[derive(Clone)]
 pub struct SimulationSnapshot {
     pub field: Arc<FreeManaField>,
@@ -32,13 +59,14 @@ pub struct SimulationSnapshot {
     pub field_shutdown: bool,
     pub equilibrium: super::EquilibriumState,
     pub sim_cpu_ms: f64,
+    pub compute: ComputeTelemetry,
     pub paused: bool,
     pub error: Option<String>,
     pub captured_at: Instant,
 }
 
 impl SimulationSnapshot {
-    fn capture(sim: &Simulation, cpu_ms: f64, paused: bool, error: Option<String>) -> Self {
+    fn capture(sim: &Simulation, cpu_ms: f64, paused: bool, error: Option<String>, compute: ComputeTelemetry) -> Self {
         Self {
             field: Arc::new(sim.field().clone()),
             elapsed: sim.elapsed(),
@@ -61,6 +89,7 @@ impl SimulationSnapshot {
             field_shutdown: sim.shutdown_active(),
             equilibrium: sim.equilibrium_state(),
             sim_cpu_ms: cpu_ms,
+            compute,
             paused,
             error,
             captured_at: Instant::now(),
@@ -85,7 +114,7 @@ pub struct SimulationWorker {
 
 impl SimulationWorker {
     pub fn spawn(simulation: Simulation) -> (Self, SimulationSnapshot) {
-        let initial = SimulationSnapshot::capture(&simulation, 0.0, false, None);
+        let initial = SimulationSnapshot::capture(&simulation, 0.0, false, None, ComputeTelemetry::default());
         let (commands_tx, commands_rx) = mpsc::channel();
         let (snapshots_tx, snapshots_rx) = mpsc::sync_channel(1);
         let handle = thread::Builder::new()
@@ -146,10 +175,11 @@ fn publish(
     cpu_ms: f64,
     paused: bool,
     error: &Option<String>,
+    compute: ComputeTelemetry,
 ) {
     // A delayed renderer may keep the previous snapshot. Never block physics
     // on the graphics thread or queue unlimited full-grid copies.
-    let snapshot = SimulationSnapshot::capture(sim, cpu_ms, paused, error.clone());
+    let snapshot = SimulationSnapshot::capture(sim, cpu_ms, paused, error.clone(), compute);
     let _ = tx.try_send(snapshot);
 }
 
@@ -181,6 +211,16 @@ fn run_simulation(
         }
     };
     let mut gpu = create_gpu(&sim);
+    let mut compute = ComputeTelemetry {
+        backend: if gpu.is_some() {
+            ComputeBackend::GpuHybrid
+        } else if gpu_requested {
+            ComputeBackend::CpuFallback
+        } else {
+            ComputeBackend::Cpu
+        },
+        diffusion_wall_ms: 0.0,
+    };
 
     loop {
         let now = Instant::now();
@@ -194,7 +234,7 @@ fn run_simulation(
             Ok(Command::Pause(next)) => {
                 paused = next;
                 next_tick = Instant::now() + period;
-                publish(&updates, &sim, cpu_ms, paused, &error);
+                publish(&updates, &sim, cpu_ms, paused, &error, compute);
             }
             Ok(Command::Reset) => {
                 match sim.reset() {
@@ -208,12 +248,20 @@ fn run_simulation(
                         paused = true;
                     }
                 }
-                publish(&updates, &sim, cpu_ms, paused, &error);
+                publish(&updates, &sim, cpu_ms, paused, &error, compute);
             }
             Ok(Command::Replace(experiment)) => match Simulation::new(experiment) {
                 Ok(next) => {
                     sim = next;
                     gpu = create_gpu(&sim);
+                    compute.backend = if gpu.is_some() {
+                        ComputeBackend::GpuHybrid
+                    } else if gpu_requested {
+                        ComputeBackend::CpuFallback
+                    } else {
+                        ComputeBackend::Cpu
+                    };
+                    compute.diffusion_wall_ms = 0.0;
                     period = Duration::from_secs_f64(sim.experiment.physics.dt);
                     max_catch_up = sim.experiment.physics.steps_per_frame;
                     error = None;
@@ -221,12 +269,12 @@ fn run_simulation(
                     cpu_ms = 0.0;
                     next_tick = Instant::now() + period;
                     next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
-                    publish(&updates, &sim, cpu_ms, paused, &error);
+                    publish(&updates, &sim, cpu_ms, paused, &error, compute);
                 }
                 Err(err) => {
                     error = Some(err.to_string());
                     paused = true;
-                    publish(&updates, &sim, cpu_ms, paused, &error);
+                    publish(&updates, &sim, cpu_ms, paused, &error, compute);
                 }
             },
             Err(RecvTimeoutError::Disconnected) => break,
@@ -243,6 +291,9 @@ fn run_simulation(
                 } else {
                     sim.step()
                 };
+                if let Some(device) = gpu.as_ref() {
+                    compute.diffusion_wall_ms = device.last_wall_ms();
+                }
                 if let Err(err) = result {
                     error = Some(err.to_string());
                     paused = true;
@@ -259,7 +310,7 @@ fn run_simulation(
             }
         }
         if now >= next_snapshot || paused {
-            publish(&updates, &sim, cpu_ms, paused, &error);
+            publish(&updates, &sim, cpu_ms, paused, &error, compute);
             next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
         }
     }
