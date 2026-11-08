@@ -10,6 +10,7 @@ use manonica_error::{BaseError, ErrorCode};
 use manonica_physics::FreeManaField;
 use meridian_gpu_wgpu::{Buffer, BufferUsage, ComputePipeline};
 use meridian_sdk::GpuComputeDevice;
+use std::time::Instant;
 
 const SHADER: &str = include_str!("gpu_diffusion.wgsl");
 
@@ -25,6 +26,7 @@ pub struct GpuDiffusion {
     output: Buffer,
     parameters: Buffer,
     dimensions: [usize; 3],
+    last_wall_ms: f64,
 }
 
 impl GpuDiffusion {
@@ -51,7 +53,13 @@ impl GpuDiffusion {
         let parameters = raw.create_buffer(16, BufferUsage::Storage);
         Ok(Self {
             runtime, device, pipeline, input, output, parameters, dimensions,
+            last_wall_ms: 0.0,
         })
+    }
+
+    /// Wall-clock upload + compute + readback + validation (not GPU kernel timer).
+    pub fn last_wall_ms(&self) -> f64 {
+        self.last_wall_ms
     }
 
     /// Advances a single explicit diffusion step: J=-D grad(n).
@@ -62,6 +70,7 @@ impl GpuDiffusion {
         diffusivity: f64,
         dt: f64,
     ) -> Result<(), BaseError> {
+        let started = Instant::now();
         let shape = field.shape();
         if [shape.nx(), shape.ny(), shape.nz()] != self.dimensions {
             return Err(invalid("gpu_grid_changed"));
@@ -122,6 +131,7 @@ impl GpuDiffusion {
             .map(|n| Quantity::<ManonDensity>::nonnegative(n.max(0.0) * mass_scale))
             .collect::<Result<Vec<_>, _>>()?;
         field.try_replace_densities(updated)?;
+        self.last_wall_ms = started.elapsed().as_secs_f64() * 1000.0;
         Ok(())
     }
 }
