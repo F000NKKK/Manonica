@@ -113,7 +113,11 @@ pub enum LocalBoundarySpec {
     /// Zero normal exchange across rasterized circuit interfaces.
     Neumann { formula: usize },
     /// Coupling to an external potential reservoir.
-    Robin { formula: usize, reference: f64, exchange: f64 },
+    Robin {
+        formula: usize,
+        reference: f64,
+        exchange: f64,
+    },
 }
 impl LocalBoundarySpec {
     pub fn formula(&self) -> usize {
@@ -125,20 +129,29 @@ impl LocalBoundarySpec {
     }
     pub fn physics(&self) -> manonica_physics::LocalPotentialBoundary {
         match *self {
-            Self::Dirichlet { value, .. } =>
-                manonica_physics::LocalPotentialBoundary::Dirichlet { value },
-            Self::Neumann { .. } =>
-                manonica_physics::LocalPotentialBoundary::Neumann,
-            Self::Robin { reference, exchange, .. } =>
-                manonica_physics::LocalPotentialBoundary::Robin { reference, exchange },
+            Self::Dirichlet { value, .. } => {
+                manonica_physics::LocalPotentialBoundary::Dirichlet { value }
+            }
+            Self::Neumann { .. } => manonica_physics::LocalPotentialBoundary::Neumann,
+            Self::Robin {
+                reference,
+                exchange,
+                ..
+            } => manonica_physics::LocalPotentialBoundary::Robin {
+                reference,
+                exchange,
+            },
         }
     }
     fn valid(&self) -> bool {
         match self {
             Self::Dirichlet { value, .. } => value.is_finite(),
             Self::Neumann { .. } => true,
-            Self::Robin { reference, exchange, .. } =>
-                reference.is_finite() && exchange.is_finite() && *exchange > 0.0,
+            Self::Robin {
+                reference,
+                exchange,
+                ..
+            } => reference.is_finite() && exchange.is_finite() && *exchange > 0.0,
         }
     }
 }
