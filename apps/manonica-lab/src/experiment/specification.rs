@@ -296,8 +296,35 @@ pub struct ChannelSpec {
     pub area: f64,
     pub conductance: f64,
     pub max_flux: f64,
+    /// Optional dimensionless crystal tensor; legacy scalar channels are unchanged.
+    #[serde(default)]
+    pub anisotropy: Option<DirectionalConductivitySpec>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectionalConductivitySpec {
+    pub principal: [f64; 3],
+    #[serde(default)]
+    pub rotation_z_radians: f64,
+}
+impl DirectionalConductivitySpec {
+    pub fn physics(&self) -> manonica_physics::DirectionalConductivity {
+        manonica_physics::DirectionalConductivity {
+            principal: self.principal,
+            rotation_z_radians: self.rotation_z_radians,
+        }
+    }
 }
 impl ChannelSpec {
+    pub fn install(
+        &self,
+        lattice: &mut manonica_physics::MaterialLattice,
+    ) -> Result<(), manonica_error::BaseError> {
+        match &self.anisotropy {
+            Some(material) => lattice.add_directional_channel(self.physics(), material.physics()),
+            None => lattice.add_channel(self.physics()),
+        }
+    }
     pub fn physics(&self) -> manonica_physics::ManaChannel {
         manonica_physics::ManaChannel {
             from: self.from,
@@ -547,7 +574,7 @@ impl Experiment {
         let shape = manonica_physics::GridShape::new(nx, ny, nz)?;
         let mut lattice = manonica_physics::MaterialLattice::new(shape);
         for channel in &self.channels {
-            lattice.add_channel(channel.physics())?;
+            channel.install(&mut lattice)?;
         }
         let v = &self.visualization;
         check(
