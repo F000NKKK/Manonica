@@ -121,7 +121,7 @@ impl GpuDiffusion {
         let updated = densities.into_iter()
             .map(|n| Quantity::<ManonDensity>::nonnegative(n.max(0.0) * mass_scale))
             .collect::<Result<Vec<_>, _>>()?;
-        field.replace(updated);
+        field.try_replace_densities(updated)?;
         Ok(())
     }
 }
