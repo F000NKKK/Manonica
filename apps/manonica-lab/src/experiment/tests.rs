@@ -188,6 +188,7 @@ fn formula_constructs_real_capture_sites_and_conserves_inventory() {
     assert_eq!(exp.formulas.len(), 1);
     let mut sim = Simulation::new(exp).unwrap();
     let initial = sim.material_balance().unwrap();
+    let initial_energy = sim.tracked_energy().unwrap();
     for _ in 0..30 {
         sim.step().unwrap();
     }
@@ -197,7 +198,8 @@ fn formula_constructs_real_capture_sites_and_conserves_inventory() {
         "parametric ring must capture mana"
     );
     assert!((initial.manons() - final_balance.manons()).abs() < 1e-6);
-    assert!((initial.energy() - final_balance.energy()).abs() < 1e-6);
+    let supplied_work = sim.field_ledger().map_or(0.0, |ledger| ledger.operating_work_joules);
+    assert!((sim.tracked_energy().unwrap() - initial_energy - supplied_work).abs() < 1e-6);
     sim.reset().unwrap();
     assert_eq!(sim.material_balance().unwrap().bound, 0.0);
 }
@@ -235,6 +237,7 @@ fn three_formula_demo_has_distinct_geometry_and_independent_capture() {
 
     let mut simulation = Simulation::new(experiment).unwrap();
     let initial = simulation.material_balance().unwrap();
+    let initial_energy = simulation.tracked_energy().unwrap();
     for _ in 0..40 {
         simulation.step().unwrap();
     }
@@ -243,7 +246,12 @@ fn three_formula_demo_has_distinct_geometry_and_independent_capture() {
     assert!(captures.iter().all(|&amount| amount > 0.0), "{captures:?}");
     let final_balance = simulation.material_balance().unwrap();
     assert!((final_balance.manons() - initial.manons()).abs() < 1e-6);
-    assert!((final_balance.energy() - initial.energy()).abs() < 1e-6);
+    let supplied_work = simulation.field_ledger()
+        .map_or(0.0, |ledger| ledger.operating_work_joules);
+    assert!(
+        (simulation.tracked_energy().unwrap() - initial_energy - supplied_work).abs() < 1e-6,
+        "full closed-system energy balance includes field, exported heat and external work"
+    );
 }
 
 #[test]
