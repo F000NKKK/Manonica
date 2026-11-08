@@ -10,7 +10,7 @@ pub mod field;
 pub mod manon;
 pub mod system;
 
-pub use binding::{Balance, ManaChannel, MaterialLattice, TrapCell, TrapMaterial};
+pub use binding::{Balance, DischargeReport, ManaChannel, MaterialLattice, TrapCell, TrapMaterial};
 pub use dynamics::{FreeMotion, ParticleLaw};
 pub use error::PhysicsError;
 pub use field::{
