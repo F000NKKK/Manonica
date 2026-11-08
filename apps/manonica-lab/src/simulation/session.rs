@@ -2,7 +2,9 @@ use manonica_core::{
     Evolution, Quantity, TimeStep,
     units::{Diffusivity, ManonCount},
 };
-use manonica_physics::{ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, MaterialLattice};
+use manonica_physics::{
+    ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, MaterialLattice,
+};
 
 use super::field::seeded_field;
 use crate::experiment::{AmbientFlow, Experiment, ExperimentError};
@@ -57,7 +59,9 @@ impl Simulation {
         self.steps
     }
     pub fn total(&self) -> Result<Quantity<ManonCount>, ExperimentError> {
-        Ok(Quantity::nonnegative(self.materials.balance(&self.field)?.manons())?)
+        Ok(Quantity::nonnegative(
+            self.materials.balance(&self.field)?.manons(),
+        )?)
     }
 
     pub fn step(&mut self) -> Result<ConservationReport, ExperimentError> {
@@ -68,7 +72,8 @@ impl Simulation {
         self.advection.evolve(&mut candidate, dt)?;
         let mut next_materials = self.materials.clone();
         next_materials.step(&mut candidate, dt.seconds())?;
-        let after = Quantity::<ManonCount>::nonnegative(next_materials.balance(&candidate)?.manons())?;
+        let after =
+            Quantity::<ManonCount>::nonnegative(next_materials.balance(&candidate)?.manons())?;
         let absolute_error =
             Quantity::<ManonCount>::nonnegative((after.value() - before.value()).abs())?;
         // Diffusion + advection form one transactional operator-split step.
@@ -94,7 +99,10 @@ impl Simulation {
     }
 }
 
-fn build_materials(experiment: &Experiment, field: &FreeManaField) -> Result<MaterialLattice, ExperimentError> {
+fn build_materials(
+    experiment: &Experiment,
+    field: &FreeManaField,
+) -> Result<MaterialLattice, ExperimentError> {
     let mut materials = MaterialLattice::new(field.shape());
     for site in &experiment.materials {
         materials.install(site.cell, site.physics())?;

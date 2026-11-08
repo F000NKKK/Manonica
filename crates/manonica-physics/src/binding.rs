@@ -410,9 +410,8 @@ mod tests {
     #[test]
     fn controlled_discharge_consumes_work_and_preserves_energy() {
         let shape = GridShape::new(1, 1, 1).unwrap();
-        let mut field = FreeManaField::uniform(
-            shape, 1.0, Quantity::nonnegative(20.0).unwrap(),
-        ).unwrap();
+        let mut field =
+            FreeManaField::uniform(shape, 1.0, Quantity::nonnegative(20.0).unwrap()).unwrap();
         let mut sites = MaterialLattice::new(shape);
         let mut m = material();
         m.release_rate = 0.0;
@@ -421,15 +420,19 @@ mod tests {
         let before = sites.balance(&field).unwrap();
         assert!(before.bound > 0.0);
         let requested = before.bound.min(2.0);
-        let report = sites.release_with_work(
-            &mut field, [0, 0, 0], requested, 10.0, 1.0,
-        ).unwrap();
+        let report = sites
+            .release_with_work(&mut field, [0, 0, 0], requested, 10.0, 1.0)
+            .unwrap();
         let after = sites.balance(&field).unwrap();
         assert!((before.manons() - after.manons()).abs() < 1e-8);
         assert!((before.energy() + report.work_used_joules - after.energy()).abs() < 1e-8);
         assert!((report.released - requested).abs() < 1e-8);
         let snapshot = sites.balance(&field).unwrap();
-        assert!(sites.release_with_work(&mut field, [0, 0, 0], 1.0, -1.0, 1.0).is_err());
+        assert!(
+            sites
+                .release_with_work(&mut field, [0, 0, 0], 1.0, -1.0, 1.0)
+                .is_err()
+        );
         assert_eq!(sites.balance(&field).unwrap().manons(), snapshot.manons());
     }
 

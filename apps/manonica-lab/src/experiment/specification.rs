@@ -329,11 +329,17 @@ impl Experiment {
                 "circle_color",
             )?;
         }
-        check(self.materials.len() <= volume.unwrap_or(0), "materials_count")?;
+        check(
+            self.materials.len() <= volume.unwrap_or(0),
+            "materials_count",
+        )?;
         check(self.channels.len() <= 4096, "channels_count")?;
         let mut occupied = std::collections::HashSet::new();
         for site in &self.materials {
-            check(site.cell[0] < nx && site.cell[1] < ny && site.cell[2] < nz, "material_cell")?;
+            check(
+                site.cell[0] < nx && site.cell[1] < ny && site.cell[2] < nz,
+                "material_cell",
+            )?;
             check(occupied.insert(site.cell), "duplicate_material_cell")?;
             site.physics().validate()?;
         }

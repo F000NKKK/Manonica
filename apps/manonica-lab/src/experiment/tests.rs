@@ -138,7 +138,7 @@ fn rejects_nonphysical_optical_settings() {
 
 #[test]
 fn crystal_trap_and_channel_conserve_total_inventory() {
-    use super::{MaterialSite, ChannelSpec};
+    use super::{ChannelSpec, MaterialSite};
     let mut experiment = ExperimentBuilder::new("materials")
         .grid([2, 1, 1], 1.0)
         .diffusion(0.0, 0.1, 1)
@@ -146,20 +146,31 @@ fn crystal_trap_and_channel_conserve_total_inventory() {
         .build()
         .unwrap();
     experiment.materials.push(MaterialSite {
-        cell: [0, 0, 0], capacity: 8.0, capture_rate: 4.0,
-        release_rate: 0.05, binding_energy: 1.5,
-        heat_capacity: 10.0, reference_temperature: 290.0,
-        activation_temperature: 100.0, max_flux: 3.0,
+        cell: [0, 0, 0],
+        capacity: 8.0,
+        capture_rate: 4.0,
+        release_rate: 0.05,
+        binding_energy: 1.5,
+        heat_capacity: 10.0,
+        reference_temperature: 290.0,
+        activation_temperature: 100.0,
+        max_flux: 3.0,
         conductivity: 1.0,
     });
     experiment.channels.push(ChannelSpec {
-        from: [0, 0, 0], to: [1, 0, 0],
-        length: 2.0, area: 1.0, conductance: 1.0, max_flux: 5.0,
+        from: [0, 0, 0],
+        to: [1, 0, 0],
+        length: 2.0,
+        area: 1.0,
+        conductance: 1.0,
+        max_flux: 5.0,
     });
     let mut sim = Simulation::new(experiment).unwrap();
     let initial = sim.total().unwrap().value();
     let initial_energy = sim.material_balance().unwrap().energy();
-    for _ in 0..50 { sim.step().unwrap(); }
+    for _ in 0..50 {
+        sim.step().unwrap();
+    }
     let balance = sim.material_balance().unwrap();
     assert!(balance.bound > 0.0 && balance.bound <= 8.0);
     assert!((balance.manons() - initial).abs() < 1e-7);
