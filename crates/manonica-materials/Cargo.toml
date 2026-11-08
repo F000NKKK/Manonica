@@ -1,0 +1,10 @@
+[package]
+name = "manonica-materials"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+manonica-core = { path = "../manonica-core" }
+manonica-error = { path = "../manonica-error" }
+manonica-physics = { path = "../manonica-physics" }
