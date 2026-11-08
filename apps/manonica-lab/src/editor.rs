@@ -16,6 +16,8 @@ pub struct FormulaEditor {
     pub open: bool,
     pub expressions: [String; 3],
     pub selected: usize,
+    /// Select-all is confined to the active formula coordinate.
+    pub selection_all: bool,
     pub circuit: usize,
     pub circuits: usize,
     /// Geometric centre of the selected circuit; presets keep its position.
@@ -28,6 +30,7 @@ impl Default for FormulaEditor {
             open: false,
             expressions: ["2*cos(t)".into(), "-0.8".into(), "2*sin(t)".into()],
             selected: 0,
+            selection_all: false,
             circuit: 0,
             circuits: 1,
             center: [0.0; 3],
@@ -36,23 +39,46 @@ impl Default for FormulaEditor {
     }
 }
 impl FormulaEditor {
+    /// Replace active selection with keyboard or clipboard text. All
+    /// insertions share the same ASCII and maximum-length constraints.
     pub fn input(&mut self, value: &str) {
-        for ch in value.chars() {
-            if !ch.is_control()
-                && ch.is_ascii()
-                && self.expressions[self.selected].len() < MAX_EXPRESSION
-            {
-                self.expressions[self.selected].push(ch);
-            }
+        let filtered: String = value.chars()
+            .filter(|ch| ch.is_ascii() && !ch.is_control())
+            .take(MAX_EXPRESSION)
+            .collect();
+        let field = &mut self.expressions[self.selected];
+        if self.selection_all {
+            field.clear();
+            self.selection_all = false;
         }
+        let remaining = MAX_EXPRESSION.saturating_sub(field.len());
+        field.extend(filtered.chars().take(remaining));
+    }
+    pub fn select_all(&mut self) {
+        self.selection_all = true;
+    }
+    /// Copy text only when an explicit selection exists, matching usual
+    /// single-line text-field behavior.
+    pub fn selected_text(&self) -> Option<&str> {
+        self.selection_all.then_some(&self.expressions[self.selected])
+    }
+    pub fn paste(&mut self, text: &str) {
+        self.input(text);
     }
     pub fn backspace(&mut self) {
-        self.expressions[self.selected].pop();
+        if self.selection_all {
+            self.expressions[self.selected].clear();
+            self.selection_all = false;
+        } else {
+            self.expressions[self.selected].pop();
+        }
     }
     pub fn next(&mut self) {
         self.selected = (self.selected + 1) % 3;
+        self.selection_all = false;
     }
     pub fn load(&mut self, formulas: &[Formula]) {
+        self.selection_all = false;
         self.circuits = formulas.len().max(1);
         self.circuit = self.circuit.min(self.circuits - 1);
         if let Some(formula) = formulas.get(self.circuit) {
@@ -100,6 +126,7 @@ impl FormulaEditor {
             ],
             _ => return,
         };
+        self.selection_all = false;
         self.expressions = std::array::from_fn(|axis| {
             format!("({})+({:.4})", expressions[axis], self.center[axis])
         });
@@ -156,8 +183,8 @@ impl EditorOverlay {
             return None;
         }
         let signature = format!(
-            "{:?}|{}|{}",
-            editor.expressions, editor.selected, editor.message
+            "{:?}|{}|{}|{}",
+            editor.expressions, editor.selected, editor.selection_all, editor.message
         );
         if self.texture.is_none() || self.signature != signature {
             let next = base.render.recorder.upload(&editor.image());
@@ -272,7 +299,24 @@ impl FormulaEditor {
                 &format!("{}(t) = {}", ["x", "y", "z"][i], displayed),
                 [220, 240, 255, 255],
             );
-            if i == self.selected {
+            if i == self.selected && self.selection_all {
+                rect(
+                    &mut pixels,
+                    19,
+                    y + 8,
+                    (expr.chars().take(40).count() * 8 + 60).min(408),
+                    19,
+                    [56, 102, 152, 255],
+                );
+                text(
+                    &mut pixels,
+                    21,
+                    y + 13,
+                    &format!("{}(t) = {}", ["x", "y", "z"][i], displayed),
+                    [246, 250, 255, 255],
+                );
+            }
+            if i == self.selected && !self.selection_all {
                 let cursor_x = 21 + (7 + displayed.len()) * 8;
                 rect(
                     &mut pixels,
@@ -346,7 +390,7 @@ impl FormulaEditor {
             &mut pixels,
             13,
             246,
-            "1/2/3 PRESETS   TAB FIELD   LEFT/RIGHT CIRCUIT   ENTER APPLY   ESC THEN C: COMPARE",
+            "CTRL+A SELECT  CTRL+C COPY  CTRL+V PASTE   TAB FIELD  ENTER APPLY",
             [167, 191, 213, 255],
         );
         ImageAsset {
@@ -499,6 +543,25 @@ mod tests {
         let mean_x = points.iter().map(|p| p[0]).sum::<f32>() / points.len() as f32;
         assert!((mean_x + 4.2).abs() < 0.01, "{mean_x}");
         assert!(points.iter().any(|p| p[2].abs() > 0.7));
+    }
+
+    #[test]
+    fn select_copy_paste_replaces_only_active_axis_and_limits_length() {
+        let mut editor = FormulaEditor::default();
+        let original_y = editor.expressions[1].clone();
+        editor.select_all();
+        assert_eq!(editor.selected_text(), Some("2*cos(t)"));
+        editor.paste("sin(t)+2*sin(2*t)\n");
+        assert_eq!(editor.expressions[0], "sin(t)+2*sin(2*t)");
+        assert_eq!(editor.expressions[1], original_y);
+        assert_eq!(editor.selected_text(), None);
+        editor.select_all();
+        editor.backspace();
+        assert!(editor.expressions[0].is_empty());
+        editor.input(&"a".repeat(MAX_EXPRESSION + 30));
+        assert_eq!(editor.expressions[0].len(), MAX_EXPRESSION);
+        editor.next();
+        assert!(!editor.selection_all);
     }
 
     #[test]
