@@ -1,35 +1,128 @@
-//! View-dependent volume slicing backed by *one RGBA atlas texture*.
-//!
-//! No sprites/icospheres per manon or per cell. A regular 3D density grid is
-//! interpolated onto a modest number of translucent planes. The camera-facing
-//! axis is chosen automatically; planes sort back-to-front through Meridian's
-//! transparent scene pipeline. Physical density is never mutated here.
+//! GPU-facing side of the manon volume. The costly trilinear resampling
+//! runs in a separate CPU worker, never inside the window/redraw callback.
+
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use meridian_sdk::{
     BlendMode, GraphicsSession, ImageAsset, Material, MaterialHandle, MeshHandle,
     MeshSource, Motor3, Renderable3d, Scale3, Scene3d, TextureHandle, TextureStore, Vec3,
 };
-
-use crate::experiment::Experiment;
-use crate::simulation::Simulation;
 use manonica_physics::FreeManaField;
 
-const TEXTURE_SIZE: usize = 96;
+use crate::experiment::Experiment;
+use crate::simulation::SimulationSnapshot;
+
+const TEXTURE_SIZE: usize = 64;
 const BORDER_ROWS: usize = 2;
-const MAX_PLANES: usize = 24;
-const REFRESH_INTERVAL: u64 = 6;
+const MAX_PLANES: usize = 20;
+const ATLAS_PERIOD: Duration = Duration::from_millis(100);
+
+struct AtlasRequest {
+    field: Arc<FreeManaField>,
+    axis: usize,
+    planes: usize,
+    threshold: f64,
+    step: u64,
+}
+
+struct AtlasResult {
+    image: ImageAsset,
+    axis: usize,
+    threshold: f64,
+    step: u64,
+    peak: f64,
+    cpu_ms: f64,
+}
+
+/// Bounded one-slot queues: if rendering is behind, work is dropped instead
+/// of accumulating stale frames or blocking the main thread.
+struct AtlasWorker {
+    sender: Option<SyncSender<AtlasRequest>>,
+    receiver: Receiver<AtlasResult>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl AtlasWorker {
+    fn spawn() -> Self {
+        let (request_tx, request_rx) = mpsc::sync_channel::<AtlasRequest>(1);
+        let (result_tx, result_rx) = mpsc::sync_channel::<AtlasResult>(1);
+        let thread = thread::Builder::new()
+            .name("manonica-volume".into())
+            .spawn(move || {
+                while let Ok(request) = request_rx.recv() {
+                    let now = Instant::now();
+                    let peak = request
+                        .field
+                        .densities()
+                        .iter()
+                        .map(|n| n.value())
+                        .fold(0.0_f64, f64::max);
+                    let image = build_density_atlas(
+                        &request.field,
+                        request.axis,
+                        request.planes,
+                        request.threshold,
+                        peak,
+                    );
+                    let result = AtlasResult {
+                        image,
+                        axis: request.axis,
+                        threshold: request.threshold,
+                        step: request.step,
+                        peak,
+                        cpu_ms: now.elapsed().as_secs_f64() * 1000.0,
+                    };
+                    if result_tx.try_send(result).is_err() {
+                        // Renderer has not yet consumed the previous texture.
+                        // The most recent state will be requested again.
+                    }
+                }
+            })
+            .expect("failed to spawn volume sampling thread");
+        Self {
+            sender: Some(request_tx),
+            receiver: result_rx,
+            thread: Some(thread),
+        }
+    }
+
+    fn offer(&self, request: AtlasRequest) -> bool {
+        self.sender
+            .as_ref()
+            .is_some_and(|sender| sender.try_send(request).is_ok())
+    }
+
+    fn latest(&self) -> Option<AtlasResult> {
+        let mut newest = None;
+        while let Ok(result) = self.receiver.try_recv() {
+            newest = Some(result);
+        }
+        newest
+    }
+}
+
+impl Drop for AtlasWorker {
+    fn drop(&mut self) {
+        self.sender.take();
+        if let Some(handle) = self.thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
 
 pub struct ManaVolume {
-    /// For each of X/Y/Z normals, pre-register all plane geometries once.
     meshes: [Vec<MeshHandle>; 3],
     material: Option<MaterialHandle>,
     texture: Option<TextureHandle>,
-    previous_axis: Option<usize>,
-    previous_step: Option<u64>,
-    previous_threshold: f64,
-    frames: u64,
+    worker: AtlasWorker,
+    last_requested: Option<(usize, u64, f64)>,
+    last_submitted: Option<Instant>,
     count: usize,
     peak: f64,
+    cpu_ms: f64,
 }
 
 impl ManaVolume {
@@ -41,7 +134,13 @@ impl ManaVolume {
                 meshes[axis].push(
                     base.render
                         .meshes
-                        .register(plane_mesh(exp.grid.dimensions, exp.grid.cell_size, axis, layer, count))
+                        .register(plane_mesh(
+                            exp.grid.dimensions,
+                            exp.grid.cell_size,
+                            axis,
+                            layer,
+                            count,
+                        ))
                         .map_err(|err| format!("volume plane {axis}/{layer}: {err}"))?,
                 );
             }
@@ -50,12 +149,12 @@ impl ManaVolume {
             meshes,
             material: None,
             texture: None,
-            previous_axis: None,
-            previous_step: None,
-            previous_threshold: f64::NAN,
-            frames: 0,
+            worker: AtlasWorker::spawn(),
+            last_requested: None,
+            last_submitted: None,
             count: 0,
             peak: 0.0,
+            cpu_ms: 0.0,
         })
     }
 
@@ -67,67 +166,96 @@ impl ManaVolume {
         self.peak
     }
 
+    pub fn sampling_cpu_ms(&self) -> f64 {
+        self.cpu_ms
+    }
+
+    /// Nonblocking: uploads a ready image at most once and queues a new
+    /// sampling job only when the field, camera direction or threshold changes.
     pub fn update(
         &mut self,
         base: &mut GraphicsSession,
         scene: &mut Scene3d,
         static_count: usize,
-        simulation: &Simulation,
+        snapshot: &SimulationSnapshot,
+        experiment: &Experiment,
     ) {
-        self.frames = self.frames.wrapping_add(1);
         let eye = scene.camera.frame.transform_point(Vec3::ZERO);
         let components = [eye.x.abs(), eye.y.abs(), eye.z.abs()];
         let axis = (0..3)
             .max_by(|&a, &b| components[a].total_cmp(&components[b]))
             .unwrap_or(2);
-        let exp = &simulation.experiment;
-        let threshold = exp.visualization.relative_threshold;
-        let has_new_data = self.previous_step != Some(simulation.steps());
-        let has_new_axis = self.previous_axis != Some(axis);
-        let has_new_threshold = self.previous_threshold != threshold;
+        let threshold = experiment.visualization.relative_threshold;
 
-        if !has_new_axis && !has_new_threshold && !has_new_data {
-            return;
-        }
-        if !has_new_axis && !has_new_threshold && self.frames % REFRESH_INTERVAL != 0 {
-            return;
+        if let Some(result) = self.worker.latest() {
+            // A moving camera may make a completed job obsolete. Never
+            // display an X slice after the camera has switched to Y slices.
+            if result.axis == axis && result.threshold == threshold {
+                self.apply_atlas(base, scene, static_count, result, experiment);
+            }
         }
 
-        let field = simulation.field();
-        self.peak = field.densities().iter().map(|n| n.value()).fold(0.0_f64, f64::max);
-        scene.renderables.truncate(static_count);
-        self.count = 0;
-        self.previous_step = Some(simulation.steps());
-        self.previous_axis = Some(axis);
-        self.previous_threshold = threshold;
-        if self.peak <= 0.0 {
+        let requested = (axis, snapshot.steps, threshold);
+        if self.last_requested == Some(requested) {
+            return;
+        }
+        let urgent = self
+            .last_requested
+            .is_none_or(|(old_axis, _, old_threshold)| {
+                axis != old_axis || old_threshold != threshold
+            });
+        if !urgent && self.last_submitted.is_some_and(|time| time.elapsed() < ATLAS_PERIOD) {
             return;
         }
 
-        let count = self.meshes[axis].len();
-        let image = build_density_atlas(field, axis, count, threshold, self.peak);
-        let texture = base.render.recorder.upload(&image);
+        let sent = self.worker.offer(AtlasRequest {
+            field: Arc::clone(&snapshot.field),
+            axis,
+            planes: self.meshes[axis].len(),
+            threshold,
+            step: snapshot.steps,
+        });
+        if sent {
+            self.last_requested = Some(requested);
+            self.last_submitted = Some(Instant::now());
+        }
+    }
+
+    fn apply_atlas(
+        &mut self,
+        base: &mut GraphicsSession,
+        scene: &mut Scene3d,
+        static_count: usize,
+        result: AtlasResult,
+        experiment: &Experiment,
+    ) {
+        let texture = base.render.recorder.upload(&result.image);
         let material = base.render.materials.register(Material {
             albedo: Some(texture),
             base_color_factor: [
-                1.5 * exp.visualization.exposure.sqrt(),
-                1.4 * exp.visualization.exposure.sqrt(),
-                1.4 * exp.visualization.exposure.sqrt(),
+                1.5 * experiment.visualization.exposure.sqrt(),
+                1.4 * experiment.visualization.exposure.sqrt(),
+                1.4 * experiment.visualization.exposure.sqrt(),
                 1.0,
             ],
             blend: BlendMode::AlphaBlend,
             unlit: true,
             ..Default::default()
         });
-
-        if let Some(old_material) = self.material.replace(material) {
-            base.render.materials.unregister(old_material);
+        if let Some(old) = self.material.replace(material) {
+            base.render.materials.unregister(old);
         }
-        if let Some(old_texture) = self.texture.replace(texture) {
-            base.render.recorder.release(old_texture);
+        if let Some(old) = self.texture.replace(texture) {
+            base.render.recorder.release(old);
         }
 
-        let lengths = exp.grid.dimensions.map(|n| n as f32 * exp.grid.cell_size as f32);
+        scene.renderables.truncate(static_count);
+        let axis = result.axis;
+        let count = self.meshes[axis].len();
+        let lengths = experiment
+            .grid
+            .dimensions
+            .map(|n| n as f32 * experiment.grid.cell_size as f32);
         for (layer, &mesh) in self.meshes[axis].iter().enumerate() {
             let coordinate = (layer as f32 + 0.5) * lengths[axis] / count as f32
                 - lengths[axis] / 2.0;
@@ -137,7 +265,9 @@ impl ManaVolume {
                 mesh,
                 material,
                 frame: Motor3::translation(Vec3::new(
-                    position[0], position[1], position[2],
+                    position[0],
+                    position[1],
+                    position[2],
                 )),
                 scale: Scale3::UNIT,
                 billboard: false,
@@ -147,6 +277,8 @@ impl ManaVolume {
             });
         }
         self.count = count;
+        self.peak = result.peak;
+        self.cpu_ms = result.cpu_ms;
     }
 }
 
