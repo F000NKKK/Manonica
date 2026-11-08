@@ -300,8 +300,9 @@ impl DebugHud {
             12,
             465,
             &format!(
-                "PHYSICS {}   DIFF WALL {:>6.2} ms",
+                "PHYSICS {}{}   DIFF WALL {:>6.2} ms",
                 m.compute.backend.label(),
+                if m.compute.cpu_fallback { " (FALLBACK)" } else { "" },
                 m.compute.diffusion_wall_ms
             ),
             1,
