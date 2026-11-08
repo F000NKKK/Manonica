@@ -45,11 +45,7 @@ impl GpuDiffusion {
         let raw = device.gpu_driver_device();
         let shader = raw.create_shader("manonica-3d-diffusion", SHADER);
         let pipeline = raw.create_compute_pipeline(&shader, "diffusion");
-        let dimensions = [
-            field.shape().nx(),
-            field.shape().ny(),
-            field.shape().nz(),
-        ];
+        let dimensions = [field.shape().nx(), field.shape().ny(), field.shape().nz()];
         let len = field.shape().len();
         let input = raw.create_buffer(len * 4, BufferUsage::Storage);
         let output = raw.create_buffer(len * 4, BufferUsage::Storage);
@@ -57,7 +53,14 @@ impl GpuDiffusion {
         let layout = pipeline.wgpu_pipeline().get_bind_group_layout(0);
         let bind = raw.create_bind_group(&layout, &[&input, &output, &parameters]);
         Ok(Self {
-            runtime, device, pipeline, input, output, parameters, bind, dimensions,
+            runtime,
+            device,
+            pipeline,
+            input,
+            output,
+            parameters,
+            bind,
+            dimensions,
             last_wall_ms: 0.0,
         })
     }
@@ -107,14 +110,17 @@ impl GpuDiffusion {
         raw.write_buffer(&self.parameters, &settings);
         let mut commands = raw.create_command_buffer();
         commands.dispatch_compute_with_bind_group(
-            &self.pipeline, &self.bind, (shape.len() as u32).div_ceil(64),
+            &self.pipeline,
+            &self.bind,
+            (shape.len() as u32).div_ceil(64),
         );
         commands.submit();
         let result = self.runtime.block_on(self.device.read_buffer(&self.output));
         if result.len() != shape.len() * 4 {
             return Err(invalid("gpu_diffusion_readback"));
         }
-        let densities: Vec<f64> = result.chunks_exact(4)
+        let densities: Vec<f64> = result
+            .chunks_exact(4)
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64)
             .collect();
         if densities.iter().any(|v| !v.is_finite() || *v < -1e-5) {
@@ -128,7 +134,8 @@ impl GpuDiffusion {
             return Err(invalid("gpu_diffusion_accuracy"));
         }
         let mass_scale = if total > 0.0 { before / total } else { 1.0 };
-        let updated = densities.into_iter()
+        let updated = densities
+            .into_iter()
             .map(|n| Quantity::<ManonDensity>::nonnegative(n.max(0.0) * mass_scale))
             .collect::<Result<Vec<_>, _>>()?;
         field.try_replace_densities(updated)?;
@@ -160,10 +167,15 @@ mod tests {
     fn gpu_diffusion_matches_cpu_when_an_adapter_exists() {
         let shape = GridShape::new(9, 7, 5).unwrap();
         let mut cpu = FreeManaField::uniform(
-            shape, 0.5, Quantity::<ManonDensity>::nonnegative(0.0).unwrap(),
-        ).unwrap();
-        cpu.set(3, 3, 2, Quantity::nonnegative(100.0).unwrap()).unwrap();
-        cpu.set(6, 4, 3, Quantity::nonnegative(45.0).unwrap()).unwrap();
+            shape,
+            0.5,
+            Quantity::<ManonDensity>::nonnegative(0.0).unwrap(),
+        )
+        .unwrap();
+        cpu.set(3, 3, 2, Quantity::nonnegative(100.0).unwrap())
+            .unwrap();
+        cpu.set(6, 4, 3, Quantity::nonnegative(45.0).unwrap())
+            .unwrap();
         let mut accelerated = cpu.clone();
         let Some(mut gpu) = GpuDiffusion::new(&accelerated).ok() else {
             eprintln!("Skipping hardware parity: no GPU compute adapter in CI");
@@ -177,13 +189,17 @@ mod tests {
             .evolve(&mut cpu, TimeStep::from_seconds(dt).unwrap())
             .unwrap();
         gpu.evolve(&mut accelerated, diffusivity, dt).unwrap();
-        for (i, (expected, actual)) in cpu.densities().iter()
-            .zip(accelerated.densities()).enumerate()
+        for (i, (expected, actual)) in cpu
+            .densities()
+            .iter()
+            .zip(accelerated.densities())
+            .enumerate()
         {
             assert!(
                 (expected.value() - actual.value()).abs() <= 4e-5,
                 "GPU/CPU stencil mismatch at cell {i}: {} vs {}",
-                expected.value(), actual.value(),
+                expected.value(),
+                actual.value(),
             );
         }
         assert!(
@@ -198,12 +214,16 @@ mod tests {
     fn benchmark_gpu_vs_cpu_including_transfer_overhead() {
         let shape = GridShape::new(32, 32, 32).unwrap();
         let mut cpu = FreeManaField::uniform(
-            shape, 0.5, Quantity::<ManonDensity>::nonnegative(1.0).unwrap(),
-        ).unwrap();
+            shape,
+            0.5,
+            Quantity::<ManonDensity>::nonnegative(1.0).unwrap(),
+        )
+        .unwrap();
         for z in 14..18 {
             for y in 14..18 {
                 for x in 14..18 {
-                    cpu.set(x, y, z, Quantity::nonnegative(100.0).unwrap()).unwrap();
+                    cpu.set(x, y, z, Quantity::nonnegative(100.0).unwrap())
+                        .unwrap();
                 }
             }
         }
@@ -215,12 +235,12 @@ mod tests {
         const ITERATIONS: usize = 100;
         let dt = 0.01;
         let d = 0.08;
-        let solver = FreeDiffusion::new(
-            Quantity::<Diffusivity>::nonnegative(d).unwrap()
-        ).unwrap();
+        let solver = FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(d).unwrap()).unwrap();
         let start_cpu = Instant::now();
         for _ in 0..ITERATIONS {
-            solver.evolve(&mut cpu, TimeStep::from_seconds(dt).unwrap()).unwrap();
+            solver
+                .evolve(&mut cpu, TimeStep::from_seconds(dt).unwrap())
+                .unwrap();
         }
         let cpu_wall = start_cpu.elapsed().as_secs_f64() * 1000.0;
         let start_gpu = Instant::now();
@@ -228,14 +248,28 @@ mod tests {
             gpu.evolve(&mut accelerated, d, dt).unwrap();
         }
         let gpu_wall = start_gpu.elapsed().as_secs_f64() * 1000.0;
-        let maximum_error = cpu.densities().iter().zip(accelerated.densities())
-            .map(|(a,b)| (a.value() - b.value()).abs()).fold(0.0_f64, f64::max);
+        let maximum_error = cpu
+            .densities()
+            .iter()
+            .zip(accelerated.densities())
+            .map(|(a, b)| (a.value() - b.value()).abs())
+            .fold(0.0_f64, f64::max);
         let total_error = (cpu.total_manons().unwrap().value()
-            - accelerated.total_manons().unwrap().value()).abs();
-        println!("{} cells x {} steps: CPU {:.2} ms, GPU {:.2} ms, ratio CPU/GPU {:.3}, max cell error {:.3e}",
-            shape.len(), ITERATIONS, cpu_wall, gpu_wall, cpu_wall/gpu_wall, maximum_error);
-        assert!(maximum_error < 0.001, "GPU must remain close to CPU reference");
+            - accelerated.total_manons().unwrap().value())
+        .abs();
+        println!(
+            "{} cells x {} steps: CPU {:.2} ms, GPU {:.2} ms, ratio CPU/GPU {:.3}, max cell error {:.3e}",
+            shape.len(),
+            ITERATIONS,
+            cpu_wall,
+            gpu_wall,
+            cpu_wall / gpu_wall,
+            maximum_error
+        );
+        assert!(
+            maximum_error < 0.001,
+            "GPU must remain close to CPU reference"
+        );
         assert!(total_error < 1e-6, "GPU must conserve total manons");
     }
-
 }

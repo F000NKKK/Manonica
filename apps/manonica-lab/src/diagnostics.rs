@@ -301,15 +301,18 @@ impl DebugHud {
             465,
             &format!(
                 "PHYSICS {}   DIFF WALL {:>6.2} ms",
-                m.compute.backend.label(), m.compute.diffusion_wall_ms
+                m.compute.backend.label(),
+                m.compute.diffusion_wall_ms
             ),
             1,
             [118, 147, 177, 255],
         );
         canvas.text(
-            12, 484,
+            12,
+            484,
             "GPU DIFF WALL includes transfers; not GPU kernel time",
-            1, [118, 147, 177, 255],
+            1,
+            [118, 147, 177, 255],
         );
         ImageAsset {
             width: WIDTH as u32,

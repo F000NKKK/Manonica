@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use manonica_physics::FreeManaField;
 
 use super::Simulation;
-use manonica_compute_gpu::GpuDiffusion;
 use crate::experiment::Experiment;
+use manonica_compute_gpu::GpuDiffusion;
 
 const SNAPSHOT_PERIOD: Duration = Duration::from_millis(50);
 
@@ -37,7 +37,10 @@ pub struct ComputeTelemetry {
 }
 impl Default for ComputeTelemetry {
     fn default() -> Self {
-        Self { backend: ComputeBackend::Cpu, diffusion_wall_ms: 0.0 }
+        Self {
+            backend: ComputeBackend::Cpu,
+            diffusion_wall_ms: 0.0,
+        }
     }
 }
 
@@ -67,7 +70,13 @@ pub struct SimulationSnapshot {
 }
 
 impl SimulationSnapshot {
-    fn capture(sim: &Simulation, cpu_ms: f64, paused: bool, error: Option<String>, compute: ComputeTelemetry) -> Self {
+    fn capture(
+        sim: &Simulation,
+        cpu_ms: f64,
+        paused: bool,
+        error: Option<String>,
+        compute: ComputeTelemetry,
+    ) -> Self {
         Self {
             field: Arc::new(sim.field().clone()),
             elapsed: sim.elapsed(),
@@ -115,7 +124,8 @@ pub struct SimulationWorker {
 
 impl SimulationWorker {
     pub fn spawn(simulation: Simulation) -> (Self, SimulationSnapshot) {
-        let initial = SimulationSnapshot::capture(&simulation, 0.0, false, None, ComputeTelemetry::default());
+        let initial =
+            SimulationSnapshot::capture(&simulation, 0.0, false, None, ComputeTelemetry::default());
         let (commands_tx, commands_rx) = mpsc::channel();
         let (snapshots_tx, snapshots_rx) = mpsc::sync_channel(1);
         let handle = thread::Builder::new()
@@ -196,10 +206,12 @@ fn run_simulation(
     let mut paused = false;
     let mut error: Option<String> = None;
     let mut cpu_ms = 0.0;
-    let gpu_requested = std::env::var("MANONICA_SIM_BACKEND")
-        .is_ok_and(|mode| mode.eq_ignore_ascii_case("gpu"));
+    let gpu_requested =
+        std::env::var("MANONICA_SIM_BACKEND").is_ok_and(|mode| mode.eq_ignore_ascii_case("gpu"));
     let create_gpu = |sim: &Simulation| {
-        if !gpu_requested { return None; }
+        if !gpu_requested {
+            return None;
+        }
         match GpuDiffusion::new(sim.field()) {
             Ok(gpu) => {
                 eprintln!("Manonica: GPU compute diffusion enabled (hybrid physics)");
