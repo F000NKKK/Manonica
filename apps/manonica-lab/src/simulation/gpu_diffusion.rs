@@ -125,3 +125,48 @@ impl GpuDiffusion {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use manonica_core::{Evolution, TimeStep, units::Diffusivity};
+    use manonica_physics::{FreeDiffusion, GridShape};
+
+    /// Stage-GPU-001: compare a complete 3D GPU diffusion step against
+    /// independent f64 CPU finite-volume reference; no display required.
+    #[test]
+    fn gpu_diffusion_matches_cpu_when_an_adapter_exists() {
+        let shape = GridShape::new(9, 7, 5).unwrap();
+        let mut cpu = FreeManaField::uniform(
+            shape, 0.5, Quantity::<ManonDensity>::nonnegative(0.0).unwrap(),
+        ).unwrap();
+        cpu.set(3, 3, 2, Quantity::nonnegative(100.0).unwrap()).unwrap();
+        cpu.set(6, 4, 3, Quantity::nonnegative(45.0).unwrap()).unwrap();
+        let mut accelerated = cpu.clone();
+        let Some(mut gpu) = GpuDiffusion::new(&accelerated).ok() else {
+            eprintln!("Skipping hardware parity: no GPU compute adapter in CI");
+            return;
+        };
+        let before = accelerated.total_manons().unwrap().value();
+        let diffusivity = 0.25;
+        let dt = 0.02;
+        FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(diffusivity).unwrap())
+            .unwrap()
+            .evolve(&mut cpu, TimeStep::from_seconds(dt).unwrap())
+            .unwrap();
+        gpu.evolve(&mut accelerated, diffusivity, dt).unwrap();
+        for (i, (expected, actual)) in cpu.densities().iter()
+            .zip(accelerated.densities()).enumerate()
+        {
+            assert!(
+                (expected.value() - actual.value()).abs() <= 4e-5,
+                "GPU/CPU stencil mismatch at cell {i}: {} vs {}",
+                expected.value(), actual.value(),
+            );
+        }
+        assert!(
+            (accelerated.total_manons().unwrap().value() - before).abs() < 1e-7,
+            "GPU solver must conserve physical manon count",
+        );
+    }
+}
