@@ -13,7 +13,9 @@ resolver = "3"
 manonica-core = { path = "../../crates/manonica-core" }
 manonica-error = { path = "../../crates/manonica-error" }
 manonica-physics = { path = "../../crates/manonica-physics" }
-meridian-sdk = "0.8"
+# Temporary Git pin until an SDK patch release includes Surface::enable_vsync.
+# The package remains meridian-sdk 0.8.0; only its presentation API differs.
+meridian-sdk = { git = "https://github.com/F000NKKK/Meridian-Engine", rev = "a50643f8b167ca57b6e48245f2fd0013e8711eaa" }
 serde = { version = "1", features = ["derive"] }
 toml = "1.2"
 font8x8 = "0.3"

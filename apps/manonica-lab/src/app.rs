@@ -22,7 +22,8 @@ use crate::{
 };
 
 const INPUT_POLL_PERIOD: Duration = Duration::from_millis(2);
-const DEFAULT_RENDER_FPS: u32 = 120;
+// With FIFO VSync enabled the swapchain controls normal frame pacing.
+// A software cap is available only when explicitly requested.
 
 /// Only short-lived CPU state crosses the main/render boundary. Neither
 /// GraphicsSession nor a mutable physics field is shared between threads.
@@ -203,12 +204,11 @@ impl AppHandler for App {
     }
 }
 
-fn target_render_rate() -> u32 {
+fn target_render_rate() -> Option<u32> {
     std::env::var("MANONICA_RENDER_FPS")
         .ok()
         .and_then(|s| s.parse::<u32>().ok())
         .filter(|fps| (30..=360).contains(fps))
-        .unwrap_or(DEFAULT_RENDER_FPS)
 }
 
 fn render_loop(
@@ -218,13 +218,17 @@ fn render_loop(
     running: Arc<AtomicBool>,
 ) {
     let runtime = tokio::runtime::Runtime::new().expect("Tokio runtime");
-    let target_fps = target_render_rate();
-    let interval = Duration::from_secs_f64(1.0 / f64::from(target_fps));
+    let frame_cap = target_render_rate();
+    let interval = frame_cap.map(|fps| Duration::from_secs_f64(1.0 / f64::from(fps)));
     let size = [window.width().max(1), window.height().max(1)];
     let target = window.surface_target();
-    let (device, surface) = runtime
+    let (device, mut surface) = runtime
         .block_on(Device::new_windowed(target, size[0], size[1]))
         .expect("failed to initialize Meridian WGPU device on rendering thread");
+    // The SDK 0.8 source revision exposes explicit FIFO selection.
+    // Do this *before* building GraphicsSession so its swapchain is paced
+    // by vertical blanking rather than a second 120 Hz software timer.
+    surface.enable_vsync(&device);
     let base = GraphicsSession::new(device, surface, size[0], size[1]);
     let mut graphics = FieldView::new(base, &experiment)
         .expect("failed to initialize manon rendering resources");
@@ -235,20 +239,28 @@ fn render_loop(
     let mut last_draw_cpu_ms = 0.0;
     let initial_manons = lock_bridge(&bridge).snapshot.total;
     let mut current_size = size;
-    eprintln!("Manonica: renderer running on separate thread at target {target_fps} FPS");
+    eprintln!(
+        "Manonica: separate renderer with FIFO VSync{}",
+        frame_cap.map_or_else(
+            || " (no extra software limit)".to_string(),
+            |fps| format!(" (extra cap: {fps} FPS)"),
+        )
+    );
 
     while running.load(Ordering::Acquire) {
-        let now = Instant::now();
-        if now < deadline {
-            thread::sleep(deadline - now);
+        if let Some(interval) = interval {
+            let now = Instant::now();
+            if now < deadline {
+                thread::sleep(deadline - now);
+            }
+            deadline += interval;
+            if deadline <= Instant::now() {
+                deadline = Instant::now() + interval;
+            }
         }
         let frame_begin = Instant::now();
         let dt = frame_begin.duration_since(last_frame).as_secs_f64();
         last_frame = frame_begin;
-        deadline += interval;
-        if deadline <= frame_begin {
-            deadline = frame_begin + interval;
-        }
 
         let render_input = lock_bridge(&bridge).take_render_input();
         if render_input.size[0] == 0 || render_input.size[1] == 0 {

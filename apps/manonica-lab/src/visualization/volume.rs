@@ -17,7 +17,7 @@ use crate::simulation::SimulationSnapshot;
 
 const TEXTURE_SIZE: usize = 64;
 const BORDER_ROWS: usize = 2;
-const MAX_PLANES: usize = 20;
+const MAX_PLANES: usize = 24;
 const ATLAS_PERIOD: Duration = Duration::from_millis(100);
 
 struct AtlasRequest {
@@ -362,6 +362,21 @@ fn sample_density(field: &FreeManaField, position: [f64; 3]) -> f64 {
     result
 }
 
+/// Mask the *visual* volume near the finite simulation box. Reflecting
+/// boundary conditions remain in the physics solver, but density is not
+/// artificially extended into opaque, rectangular planes by rendering.
+fn boundary_visibility(position: [f64; 3], dimensions: [usize; 3], dx: f64) -> f64 {
+    const SOFT_EDGE_CELLS: f64 = 2.5;
+    let mut opacity = 1.0;
+    for axis in 0..3 {
+        let half = dimensions[axis] as f64 * dx * 0.5;
+        let distance = half - position[axis].abs();
+        let t = (distance / (dx * SOFT_EDGE_CELLS)).clamp(0.0, 1.0);
+        opacity *= t * t * (3.0 - 2.0 * t);
+    }
+    opacity
+}
+
 fn build_density_atlas(
     field: &FreeManaField,
     axis: usize,
@@ -389,8 +404,11 @@ fn build_density_atlas(
                 p[v] = ((yy as f64 + 0.5) / TEXTURE_SIZE as f64 - 0.5)
                     * dimensions[v] as f64 * dx;
 
+                // Visual fading is applied *after* sampling; physical density
+                // and no-flux conservation are not modified.
                 let relative = (sample_density(field, p) / peak).clamp(0.0, 1.0);
-                let visible = ((relative - threshold) / (1.0 - threshold)).max(0.0);
+                let visible = ((relative - threshold) / (1.0 - threshold)).max(0.0)
+                    * boundary_visibility(p, dimensions, dx);
                 let brightness = visible.sqrt();
                 // Beer-Lambert optical depth: the thickness is compensated
                 // when the number of view slices changes.
@@ -443,6 +461,17 @@ mod tests {
         assert_eq!(atlas.pixels.len(), atlas.width as usize * atlas.height as usize * 4);
         assert!(atlas.pixels.chunks_exact(4).any(|px| px[3] > 0));
         assert!(atlas.pixels.chunks_exact(4).any(|px| px[2] == 255));
+    }
+
+    #[test]
+    fn visual_boundary_fades_to_zero_without_affecting_density() {
+        let dims = [12, 12, 12];
+        let center = boundary_visibility([0.0, 0.0, 0.0], dims, 0.5);
+        let near_edge = boundary_visibility([2.6, 0.0, 0.0], dims, 0.5);
+        let edge = boundary_visibility([3.0, 0.0, 0.0], dims, 0.5);
+        assert!((center - 1.0).abs() < 1e-12);
+        assert!(near_edge > 0.0 && near_edge < center);
+        assert_eq!(edge, 0.0);
     }
 
     #[test]
