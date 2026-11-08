@@ -16,7 +16,8 @@ pub use conductivity::DirectionalConductivity;
 pub use dynamics::{FreeMotion, ParticleLaw};
 pub use error::PhysicsError;
 pub use field::{
-    ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, GridShape, LocalBoundarySite,
+    ConservationReport, FreeAdvection, FreeDiffusion, FreeManaDiffusionBackend, FreeManaField,
+    GridShape, LocalBoundarySite,
     LocalPotentialBoundary, PotentialBoundary, PotentialField, PotentialStep, VelocityField,
 };
 pub use manon::{Manon, ManonId, ManonState};
