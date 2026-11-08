@@ -391,6 +391,8 @@ fn render_loop(
             steps: render_input.snapshot.steps,
             total: render_input.snapshot.total,
             bound: render_input.snapshot.bound,
+            formula_bound: std::array::from_fn(|i| render_input.snapshot.formula_bound.get(i).copied().unwrap_or(0.0)),
+            formula_count: render_input.snapshot.formula_bound.len(),
             material_energy: render_input.snapshot.material_energy,
             initial_total: initial_manons,
             peak_density: graphics.peak_density(),
