@@ -112,9 +112,9 @@ pub struct App {
 
 impl App {
     pub fn new(simulation: Simulation) -> Self {
-        let backend = BackendPreference::resolve(
-            None, std::env::var("MANONICA_SIM_BACKEND").ok().as_deref()
-        ).expect("Invalid MANONICA_SIM_BACKEND");
+        let backend =
+            BackendPreference::resolve(None, std::env::var("MANONICA_SIM_BACKEND").ok().as_deref())
+                .expect("Invalid MANONICA_SIM_BACKEND");
         Self::with_backend(simulation, backend)
     }
 

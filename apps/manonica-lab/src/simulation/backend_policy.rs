@@ -22,8 +22,12 @@ impl BackendPreference {
     pub fn resolve(cli: Option<&str>, env: Option<&str>) -> Result<Self, String> {
         Self::parse(cli.or(env).unwrap_or("auto"))
     }
-    pub fn attempts_gpu(self) -> bool { self != Self::Cpu }
-    pub fn allows_cpu_fallback(self) -> bool { self == Self::Auto }
+    pub fn attempts_gpu(self) -> bool {
+        self != Self::Cpu
+    }
+    pub fn allows_cpu_fallback(self) -> bool {
+        self == Self::Auto
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -44,8 +48,14 @@ mod tests {
     }
     #[test]
     fn cli_overrides_environment_and_invalid_modes_fail() {
-        assert_eq!(BackendPreference::resolve(Some("CPU"), Some("gpu")).unwrap(), BackendPreference::Cpu);
-        assert_eq!(BackendPreference::resolve(None, Some("GPU")).unwrap(), BackendPreference::Gpu);
+        assert_eq!(
+            BackendPreference::resolve(Some("CPU"), Some("gpu")).unwrap(),
+            BackendPreference::Cpu
+        );
+        assert_eq!(
+            BackendPreference::resolve(None, Some("GPU")).unwrap(),
+            BackendPreference::Gpu
+        );
         assert!(BackendPreference::resolve(Some("cuda"), None).is_err());
     }
 }

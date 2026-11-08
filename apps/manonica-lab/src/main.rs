@@ -70,7 +70,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = BackendPreference::resolve(
         backend_arg.as_deref(),
         std::env::var("MANONICA_SIM_BACKEND").ok().as_deref(),
-    ).map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
+    )
+    .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
     println!("Physics compute backend policy: {backend:?}");
     let mut experiment = Experiment::from_file(&path)?;
     if let Some(formula) = formula {

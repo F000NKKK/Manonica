@@ -86,9 +86,7 @@ impl GpuDiffusion {
         }
         let dx = field.cell_width_metres();
         let alpha = diffusivity * dt / dx.powi(2);
-        if !alpha.is_finite() || !(0.0..=1.0/6.0).contains(&alpha)
-            || alpha > f32::MAX as f64
-        {
+        if !alpha.is_finite() || !(0.0..=1.0 / 6.0).contains(&alpha) || alpha > f32::MAX as f64 {
             return Err(invalid("gpu_diffusion_cfl"));
         }
         let source: Vec<f32> = field.densities().iter().map(|n| n.value() as f32).collect();
@@ -98,10 +96,14 @@ impl GpuDiffusion {
         let before = field.total_manons()?.value();
         let raw = self.device.gpu_driver_device();
         let mut bytes = Vec::with_capacity(source.len() * 4);
-        for n in source { bytes.extend_from_slice(&n.to_le_bytes()); }
+        for n in source {
+            bytes.extend_from_slice(&n.to_le_bytes());
+        }
         raw.write_buffer(&self.input, &bytes);
         let mut params = Vec::with_capacity(16);
-        for n in self.dimensions { params.extend_from_slice(&(n as u32).to_le_bytes()); }
+        for n in self.dimensions {
+            params.extend_from_slice(&(n as u32).to_le_bytes());
+        }
         params.extend_from_slice(&(alpha as f32).to_bits().to_le_bytes());
         raw.write_buffer(&self.parameters, &params);
         let workgroups = (shape.len() as u32).div_ceil(64);
@@ -109,28 +111,41 @@ impl GpuDiffusion {
         for step in 0..steps {
             commands.dispatch_compute_with_bind_group(
                 &self.pipeline,
-                if step % 2 == 0 { &self.bind } else { &self.reverse_bind },
+                if step % 2 == 0 {
+                    &self.bind
+                } else {
+                    &self.reverse_bind
+                },
                 workgroups,
             );
         }
         commands.submit();
-        let last = if steps % 2 == 0 { &self.input } else { &self.output };
+        let last = if steps % 2 == 0 {
+            &self.input
+        } else {
+            &self.output
+        };
         let result = self.runtime.block_on(self.device.read_buffer(last));
-        if result.len() != shape.len() * 4 { return Err(invalid("gpu_diffusion_readback")); }
-        let densities: Vec<f64> = result.chunks_exact(4)
+        if result.len() != shape.len() * 4 {
+            return Err(invalid("gpu_diffusion_readback"));
+        }
+        let densities: Vec<f64> = result
+            .chunks_exact(4)
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64)
             .collect();
         if densities.iter().any(|v| !v.is_finite() || *v < -1e-5) {
             return Err(invalid("gpu_diffusion_result"));
         }
         let total = densities.iter().sum::<f64>() * dx.powi(3);
-        if !total.is_finite() || (before > 0.0 && total <= 0.0)
+        if !total.is_finite()
+            || (before > 0.0 && total <= 0.0)
             || (before > 0.0 && ((before - total) / before).abs() > 5e-4)
         {
             return Err(invalid("gpu_diffusion_mass"));
         }
         let factor = if total > 0.0 { before / total } else { 1.0 };
-        let updated = densities.into_iter()
+        let updated = densities
+            .into_iter()
             .map(|n| Quantity::<ManonDensity>::nonnegative(n.max(0.0) * factor))
             .collect::<Result<Vec<_>, _>>()?;
         field.try_replace_densities(updated)?;
@@ -307,31 +322,47 @@ mod tests {
         }
         let shape = GridShape::new(10, 6, 4).unwrap();
         let mut reference = FreeManaField::uniform(
-            shape, 0.5, Quantity::<ManonDensity>::nonnegative(1.0).unwrap()
-        ).unwrap();
-        reference.set(3, 2, 1, Quantity::nonnegative(90.0).unwrap()).unwrap();
+            shape,
+            0.5,
+            Quantity::<ManonDensity>::nonnegative(1.0).unwrap(),
+        )
+        .unwrap();
+        reference
+            .set(3, 2, 1, Quantity::nonnegative(90.0).unwrap())
+            .unwrap();
         let mut actual = reference.clone();
         let mut device = match GpuDiffusion::new(&actual) {
             Ok(device) => device,
-            Err(error) if std::env::var("MANONICA_GPU_TEST").as_deref() == Ok("1") =>
-                panic!("hardware GPU parity required: {error}"),
+            Err(error) if std::env::var("MANONICA_GPU_TEST").as_deref() == Ok("1") => {
+                panic!("hardware GPU parity required: {error}")
+            }
             Err(_) => return,
         };
         let initial = actual.total_manons().unwrap().value();
         let diffusivity = 0.12;
         let dt = 0.02;
-        let solver = FreeDiffusion::new(
-            Quantity::<Diffusivity>::nonnegative(diffusivity).unwrap()
-        ).unwrap();
+        let solver =
+            FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(diffusivity).unwrap()).unwrap();
         for _ in 0..25 {
-            solver.evolve(&mut reference, TimeStep::from_seconds(dt).unwrap()).unwrap();
+            solver
+                .evolve(&mut reference, TimeStep::from_seconds(dt).unwrap())
+                .unwrap();
         }
-        device.evolve_resident_batch(&mut actual, diffusivity, dt, 25).unwrap();
-        let max_error = reference.densities().iter().zip(actual.densities())
-            .map(|(a,b)| (a.value()-b.value()).abs()).fold(0.0_f64,f64::max);
-        assert!(max_error < 1e-4, "25-step GPU resident batch mismatch: {max_error}");
+        device
+            .evolve_resident_batch(&mut actual, diffusivity, dt, 25)
+            .unwrap();
+        let max_error = reference
+            .densities()
+            .iter()
+            .zip(actual.densities())
+            .map(|(a, b)| (a.value() - b.value()).abs())
+            .fold(0.0_f64, f64::max);
         assert!(
-            (actual.total_manons().unwrap().value()-initial).abs() < 1e-7,
+            max_error < 1e-4,
+            "25-step GPU resident batch mismatch: {max_error}"
+        );
+        assert!(
+            (actual.total_manons().unwrap().value() - initial).abs() < 1e-7,
             "resident batch must preserve total manons"
         );
     }

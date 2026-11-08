@@ -124,10 +124,9 @@ pub struct SimulationWorker {
 
 impl SimulationWorker {
     pub fn spawn(simulation: Simulation) -> (Self, SimulationSnapshot) {
-        let backend = BackendPreference::resolve(
-            None,
-            std::env::var("MANONICA_SIM_BACKEND").ok().as_deref(),
-        ).expect("Invalid MANONICA_SIM_BACKEND");
+        let backend =
+            BackendPreference::resolve(None, std::env::var("MANONICA_SIM_BACKEND").ok().as_deref())
+                .expect("Invalid MANONICA_SIM_BACKEND");
         Self::spawn_with_backend(simulation, backend)
     }
 
@@ -228,7 +227,9 @@ fn run_simulation(
                 Some(device)
             }
             Err(error) if backend.allows_cpu_fallback() => {
-                eprintln!("Manonica: GPU initialization unavailable ({error}); falling back to CPU");
+                eprintln!(
+                    "Manonica: GPU initialization unavailable ({error}); falling back to CPU"
+                );
                 None
             }
             Err(error) => {
@@ -383,7 +384,10 @@ mod tests {
             .gaussian([0.0; 3], 200.0, 0.6)
             .build()
             .unwrap();
-        let (worker, initial) = SimulationWorker::spawn_with_backend(Simulation::new(exp).unwrap(), BackendPreference::Cpu);
+        let (worker, initial) = SimulationWorker::spawn_with_backend(
+            Simulation::new(exp).unwrap(),
+            BackendPreference::Cpu,
+        );
         assert_eq!(initial.steps, 0);
         thread::sleep(Duration::from_millis(110));
         let snapshot = worker.poll_latest().expect("worker publishes snapshots");
@@ -407,7 +411,10 @@ mod tests {
             .grid([5, 5, 5], 1.0)
             .build()
             .unwrap();
-        let (worker, _) = SimulationWorker::spawn_with_backend(Simulation::new(exp).unwrap(), BackendPreference::Cpu);
+        let (worker, _) = SimulationWorker::spawn_with_backend(
+            Simulation::new(exp).unwrap(),
+            BackendPreference::Cpu,
+        );
         drop(worker);
     }
 }
