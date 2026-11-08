@@ -1,4 +1,5 @@
 name: Format local potential boundaries
+# Re-run after explicit kind-tagged boundary parsing fix.
 on:
   push:
     paths:
