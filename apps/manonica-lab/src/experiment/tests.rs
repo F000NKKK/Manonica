@@ -408,3 +408,47 @@ fn driven_uniform_flow_is_not_mistaken_for_equilibrium() {
     assert_eq!(sim.equilibrium_state().phase, EquilibriumPhase::Charging);
     assert_eq!(sim.equilibrium_state().stable_steps, 0);
 }
+
+#[test]
+fn formula_rasterization_installs_real_local_boundary_potential() {
+    let constrained = Experiment::parse(
+        include_str!("../../experiments/local_boundary_conductor.toml")
+    ).unwrap();
+    assert_eq!(constrained.local_boundaries.len(), 1);
+    let mut baseline = constrained.clone();
+    baseline.local_boundaries.clear();
+    let constrained_sim = Simulation::new(constrained).unwrap();
+    let baseline_sim = Simulation::new(baseline).unwrap();
+    let a = constrained_sim.potential().unwrap();
+    let b = baseline_sim.potential().unwrap();
+    let shape = a.shape();
+    let dx = constrained_sim.field().cell_width_metres();
+    let formula = &constrained_sim.experiment.formulas[0];
+    let cells = super::capture_cells(formula, [shape.nx(),shape.ny(),shape.nz()], dx).unwrap();
+    assert!(!cells.is_empty());
+    for [x,y,z] in cells {
+        assert!(
+            (a.at(x,y,z).unwrap() + 4.0).abs() < 1e-9,
+            "fixed local potential is imposed at every sampled circuit cell"
+        );
+    }
+    let deviation = a.values().iter().zip(b.values())
+        .map(|(x,y)| (x-y).abs()).sum::<f64>();
+    assert!(deviation > 1.0, "local condition must alter physics, not just rendered mesh");
+}
+
+#[test]
+fn formula_boundary_overlap_and_bad_parameters_are_rejected() {
+    use super::{LocalBoundaryKind, LocalBoundarySpec};
+    let mut experiment = Experiment::parse(
+        include_str!("../../experiments/local_boundary_conductor.toml")
+    ).unwrap();
+    experiment.local_boundaries.push(experiment.local_boundaries[0].clone());
+    assert!(Simulation::new(experiment.clone()).is_err());
+    experiment.local_boundaries.truncate(1);
+    experiment.local_boundaries[0] = LocalBoundarySpec {
+        formula: 0,
+        condition: LocalBoundaryKind::Robin {reference: 0.0, exchange: -1.0},
+    };
+    assert!(experiment.validate().is_err());
+}
