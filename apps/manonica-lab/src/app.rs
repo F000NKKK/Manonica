@@ -192,11 +192,11 @@ impl App {
                     state.editor.switch(&self.experiment.formulas, -1);
                 } else if input.was_key_pressed(KeyCode::ArrowRight) {
                     state.editor.switch(&self.experiment.formulas, 1);
-                } else if input.was_key_pressed(KeyCode::Digit1) {
+                } else if ctrl && input.was_key_pressed(KeyCode::Digit1) {
                     state.editor.preset(1);
-                } else if input.was_key_pressed(KeyCode::Digit2) {
+                } else if ctrl && input.was_key_pressed(KeyCode::Digit2) {
                     state.editor.preset(2);
-                } else if input.was_key_pressed(KeyCode::Digit3) {
+                } else if ctrl && input.was_key_pressed(KeyCode::Digit3) {
                     state.editor.preset(3);
                 } else if input.was_key_pressed(KeyCode::Backspace) {
                     state.editor.backspace();
@@ -247,6 +247,9 @@ impl App {
                     state.look_delta.0 += delta.0;
                     state.look_delta.1 += delta.1;
                 }
+            }
+            if state.editor.open {
+                state.editor.validate_physical_preview(&self.experiment);
             }
             if let Some(snapshot) = self.simulation.poll_latest() {
                 state.paused = snapshot.paused;
