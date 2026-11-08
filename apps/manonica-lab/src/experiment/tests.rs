@@ -1,4 +1,4 @@
-use super::{AmbientFlow, Circle, Experiment, ExperimentBuilder, Visualization};
+use super::{AmbientFlow, Experiment, ExperimentBuilder, Formula, Visualization};
 use crate::simulation::Simulation;
 
 #[test]
@@ -7,19 +7,19 @@ fn builder_and_parser_share_same_rules() {
         .grid([10, 10, 10], 1.0)
         .diffusion(0.3, 0.1, 2)
         .gaussian([0.0, 0.0, 0.0], 100.0, 0.9)
-        .circle(Circle {
+        .formula(Formula {
             name: "test".into(),
-            center: [0.0; 3],
-            normal: [0.0, 1.0, 0.0],
-            radius: 2.0,
+            x: "2*cos(t)".into(),
+            y: "0".into(),
+            z: "2*sin(t)".into(),
             thickness: 0.04,
-            spokes: 8,
             segments: 64,
             color: [0.3, 0.7, 1.0],
+            trap: None,
         })
         .build()
         .unwrap();
-    assert_eq!(model.circles.len(), 1);
+    assert_eq!(model.formulas.len(), 1);
     let text = include_str!("../../experiments/mana_flame.toml");
     let parsed = Experiment::parse(text).unwrap();
     assert!(!parsed.seeds.is_empty());
