@@ -10,7 +10,10 @@ use manonica_core::{
 };
 use manonica_error::{BaseError, ErrorCode};
 
-use crate::{PhysicsError, field::{ConservationReport, FreeManaField}};
+use crate::{
+    PhysicsError,
+    field::{ConservationReport, FreeManaField},
+};
 
 /// Velocity of the surrounding medium at an arbitrary point in metres.
 pub trait VelocityField: Send + Sync {
@@ -66,9 +69,9 @@ impl<V: VelocityField> Evolution<FreeManaField> for FreeAdvection<V> {
                             (z as f64 + 0.5 - shape.nz() as f64 * 0.5) * dx,
                         ];
                         face[axis] += 0.5 * dx;
-                        let velocity = self.velocity.at(Vec3::try_values(
-                            face[0], face[1], face[2],
-                        )?)?;
+                        let velocity = self
+                            .velocity
+                            .at(Vec3::try_values(face[0], face[1], face[2])?)?;
                         let speed = match axis {
                             0 => velocity.x.value(),
                             1 => velocity.y.value(),
@@ -76,7 +79,9 @@ impl<V: VelocityField> Evolution<FreeManaField> for FreeAdvection<V> {
                         };
                         let signed_fraction = ratio * speed;
                         if !signed_fraction.is_finite() {
-                            return Err(BaseError::new(ErrorCode::NonFinite, "advection_speed").into());
+                            return Err(
+                                BaseError::new(ErrorCode::NonFinite, "advection_speed").into()
+                            );
                         }
                         let (donor, amount) = if signed_fraction >= 0.0 {
                             (i, signed_fraction * old[i])
@@ -93,14 +98,19 @@ impl<V: VelocityField> Evolution<FreeManaField> for FreeAdvection<V> {
 
         // In an explicit upwind scheme each donor must retain at least 0%
         // of its concentration. Check the sum over all outgoing faces.
-        if outgoing.iter().any(|fraction| !fraction.is_finite() || *fraction > 1.0) {
+        if outgoing
+            .iter()
+            .any(|fraction| !fraction.is_finite() || *fraction > 1.0)
+        {
             return Err(BaseError::new(ErrorCode::NumericalInstability, "advection_cfl").into());
         }
 
         let mut converted = Vec::with_capacity(next.len());
         for density in next {
             if !density.is_finite() || density < -1e-12 {
-                return Err(BaseError::new(ErrorCode::NumericalInstability, "advection_density").into());
+                return Err(
+                    BaseError::new(ErrorCode::NumericalInstability, "advection_density").into(),
+                );
             }
             converted.push(Quantity::<ManonDensity>::nonnegative(density.max(0.0))?);
         }
@@ -109,13 +119,19 @@ impl<V: VelocityField> Evolution<FreeManaField> for FreeAdvection<V> {
         let after_value = converted.iter().map(|n| n.value()).sum::<f64>() * cell_volume;
         let absolute_error = (after_value - before.value()).abs();
         if !after_value.is_finite() || absolute_error > 1e-10 * before.value().max(1.0) {
-            return Err(BaseError::new(ErrorCode::NumericalInstability, "advection_conservation").into());
+            return Err(
+                BaseError::new(ErrorCode::NumericalInstability, "advection_conservation").into(),
+            );
         }
 
         let after = Quantity::<ManonCount>::nonnegative(after_value)?;
         let absolute_error = Quantity::<ManonCount>::nonnegative(absolute_error)?;
         field.replace(converted);
-        Ok(ConservationReport { before, after, absolute_error })
+        Ok(ConservationReport {
+            before,
+            after,
+            absolute_error,
+        })
     }
 }
 
@@ -138,8 +154,10 @@ mod tests {
             GridShape::new(3, 1, 1).unwrap(),
             1.0,
             Quantity::<ManonDensity>::nonnegative(0.0).unwrap(),
-        ).unwrap();
-        f.set(0, 0, 0, Quantity::nonnegative(100.0).unwrap()).unwrap();
+        )
+        .unwrap();
+        f.set(0, 0, 0, Quantity::nonnegative(100.0).unwrap())
+            .unwrap();
         f
     }
 
@@ -147,7 +165,9 @@ mod tests {
     fn positive_x_flux_moves_mass_to_neighbour_without_leaking() {
         let mut field = test_field();
         let law = FreeAdvection::new(Constant([1.0, 0.0, 0.0]));
-        let result = law.evolve(&mut field, TimeStep::from_seconds(0.25).unwrap()).unwrap();
+        let result = law
+            .evolve(&mut field, TimeStep::from_seconds(0.25).unwrap())
+            .unwrap();
         assert_eq!(field.at(0, 0, 0).unwrap().value(), 75.0);
         assert_eq!(field.at(1, 0, 0).unwrap().value(), 25.0);
         assert_eq!(field.total_manons().unwrap().value(), 100.0);
@@ -157,10 +177,15 @@ mod tests {
     #[test]
     fn negative_velocity_uses_the_other_face_donor() {
         let mut field = test_field();
-        field.set(0, 0, 0, Quantity::nonnegative(0.0).unwrap()).unwrap();
-        field.set(2, 0, 0, Quantity::nonnegative(40.0).unwrap()).unwrap();
+        field
+            .set(0, 0, 0, Quantity::nonnegative(0.0).unwrap())
+            .unwrap();
+        field
+            .set(2, 0, 0, Quantity::nonnegative(40.0).unwrap())
+            .unwrap();
         FreeAdvection::new(Constant([-1.0, 0.0, 0.0]))
-            .evolve(&mut field, TimeStep::from_seconds(0.5).unwrap()).unwrap();
+            .evolve(&mut field, TimeStep::from_seconds(0.5).unwrap())
+            .unwrap();
         assert_eq!(field.at(2, 0, 0).unwrap().value(), 20.0);
         assert_eq!(field.at(1, 0, 0).unwrap().value(), 20.0);
     }
@@ -170,7 +195,10 @@ mod tests {
         let mut field = test_field();
         let initial = field.at(0, 0, 0);
         let law = FreeAdvection::new(Constant([5.0, 0.0, 0.0]));
-        assert!(law.evolve(&mut field, TimeStep::from_seconds(0.5).unwrap()).is_err());
+        assert!(
+            law.evolve(&mut field, TimeStep::from_seconds(0.5).unwrap())
+                .is_err()
+        );
         assert_eq!(field.at(0, 0, 0), initial);
     }
 
@@ -179,7 +207,8 @@ mod tests {
         let mut field = test_field();
         let law = FreeAdvection::new(Constant([0.75, 0.0, 0.0]));
         for _ in 0..400 {
-            law.evolve(&mut field, TimeStep::from_seconds(0.1).unwrap()).unwrap();
+            law.evolve(&mut field, TimeStep::from_seconds(0.1).unwrap())
+                .unwrap();
         }
         assert!((field.total_manons().unwrap().value() - 100.0).abs() < 1e-8);
         assert!(field.at(2, 0, 0).unwrap().value() > 99.999);
