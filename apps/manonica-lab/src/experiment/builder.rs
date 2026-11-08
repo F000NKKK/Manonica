@@ -28,6 +28,7 @@ impl ExperimentBuilder {
                 seeds: Vec::new(),
                 formulas: Vec::new(),
                 field_sources: Vec::new(),
+                local_boundaries: Vec::new(),
                 materials: Vec::new(),
                 channels: Vec::new(),
                 visualization: Visualization::default(),
@@ -58,6 +59,11 @@ impl ExperimentBuilder {
 
     pub fn potential(mut self, settings: super::PotentialConfig) -> Self {
         self.experiment.physics.potential = Some(settings);
+        self
+    }
+
+    pub fn local_boundary(mut self, boundary: super::LocalBoundarySpec) -> Self {
+        self.experiment.local_boundaries.push(boundary);
         self
     }
 
