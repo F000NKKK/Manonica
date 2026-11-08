@@ -158,7 +158,7 @@ impl Simulation {
 
     fn step_internal(
         &mut self,
-        gpu: Option<&mut super::gpu_diffusion::GpuDiffusion>,
+        gpu: Option<&mut manonica_compute_gpu::GpuDiffusion>,
     ) -> Result<ConservationReport, ExperimentError> {
         let dt = TimeStep::from_seconds(self.experiment.physics.dt)?;
         let before = self.total()?;
