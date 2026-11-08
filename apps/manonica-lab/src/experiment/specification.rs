@@ -32,8 +32,39 @@ pub struct Diffusion {
     /// Эталонный начальный закон J = -D grad(n).
     pub diffusivity: f64,
     pub dt: f64,
+    #[serde(default)]
+    pub flow: AmbientFlow,
     #[serde(default = "one")]
     pub steps_per_frame: usize,
+}
+
+/// Prescribed movement of the surrounding medium (not a magic-circle law).
+/// A rigid vortex has v = angular_speed * (axis × (p - origin)) + axial_speed * axis.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AmbientFlow {
+    Still,
+    Uniform {
+        /// Metres per second in world X/Y/Z.
+        velocity: [f64; 3],
+    },
+    Vortex {
+        /// Axis anchor, in metres.
+        origin: [f64; 3],
+        /// Arbitrary nonzero axis; normalized when sampled.
+        axis: [f64; 3],
+        /// Radians per second.
+        angular_speed: f64,
+        /// Constant motion along the normalized axis (m/s).
+        #[serde(default)]
+        axial_speed: f64,
+    },
+}
+
+impl Default for AmbientFlow {
+    fn default() -> Self {
+        Self::Still
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -141,6 +172,20 @@ impl Experiment {
         check(p.diffusivity.is_finite() && p.diffusivity >= 0.0, "diffusivity")?;
         check(p.dt.is_finite() && p.dt > 0.0, "dt")?;
         check((1..=16).contains(&p.steps_per_frame), "steps_per_frame")?;
+        match &p.flow {
+            AmbientFlow::Still => {}
+            AmbientFlow::Uniform { velocity } => {
+                check(good_position(*velocity), "flow_velocity")?;
+            }
+            AmbientFlow::Vortex { origin, axis, angular_speed, axial_speed } => {
+                check(good_position(*origin), "flow_origin")?;
+                check(good_position(*axis), "flow_axis")?;
+                let norm_squared: f64 = axis.iter().map(|v| v * v).sum();
+                check(norm_squared.is_finite() && norm_squared > 1e-24, "flow_axis")?;
+                check(angular_speed.is_finite(), "flow_angular_speed")?;
+                check(axial_speed.is_finite(), "flow_axial_speed")?;
+            }
+        }
         check(
             (p.diffusivity * p.dt / dx.powi(2)).is_finite()
                 && p.diffusivity * p.dt / dx.powi(2) <= 1.0 / 6.0,

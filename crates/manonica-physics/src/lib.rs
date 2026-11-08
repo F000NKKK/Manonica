@@ -11,6 +11,6 @@ pub mod system;
 
 pub use dynamics::{FreeMotion, ParticleLaw};
 pub use error::PhysicsError;
-pub use field::{ConservationReport, FreeDiffusion, FreeManaField, GridShape};
+pub use field::{ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, GridShape, VelocityField};
 pub use manon::{Manon, ManonId, ManonState};
 pub use system::ManonSystem;

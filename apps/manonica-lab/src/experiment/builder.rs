@@ -1,4 +1,4 @@
-use super::{Circle, Diffusion, Experiment, ExperimentError, FieldSeed, Grid, SeedShape, Visualization};
+use super::{AmbientFlow, Circle, Diffusion, Experiment, ExperimentError, FieldSeed, Grid, SeedShape, Visualization};
 
 /// Rust-строитель воспроизводимых экспериментов; эквивалент TOML-схемы.
 pub struct ExperimentBuilder {
@@ -11,7 +11,12 @@ impl ExperimentBuilder {
             experiment: Experiment {
                 name: name.into(),
                 grid: Grid { dimensions: [24, 24, 24], cell_size: 0.5 },
-                physics: Diffusion { diffusivity: 0.25, dt: 0.02, steps_per_frame: 1 },
+                physics: Diffusion {
+                    diffusivity: 0.25,
+                    dt: 0.02,
+                    flow: AmbientFlow::Still,
+                    steps_per_frame: 1,
+                },
                 seeds: Vec::new(),
                 circles: Vec::new(),
                 visualization: Visualization::default(),
@@ -26,6 +31,11 @@ impl ExperimentBuilder {
 
     pub fn diffusion(mut self, diffusivity: f64, dt: f64, steps_per_frame: usize) -> Self {
         self.experiment.physics = Diffusion { diffusivity, dt, steps_per_frame };
+        self
+    }
+
+    pub fn flow(mut self, flow: AmbientFlow) -> Self {
+        self.experiment.physics.flow = flow;
         self
     }
 

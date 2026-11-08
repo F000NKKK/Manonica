@@ -1,4 +1,4 @@
-use super::{Circle, Experiment, ExperimentBuilder, Visualization};
+use super::{AmbientFlow, Circle, Experiment, ExperimentBuilder, Visualization};
 use crate::simulation::Simulation;
 
 #[test]
@@ -49,4 +49,49 @@ fn validates_unstable_timestep_and_visualization() {
             relative_threshold: 2.0, ..Visualization::default()
         }).build();
     assert!(invalid.is_err());
+}
+
+#[test]
+fn true_advection_displaces_mass_without_creating_manons() {
+    let exp = ExperimentBuilder::new("advected")
+        .grid([18, 12, 12], 0.6)
+        .diffusion(0.0, 0.04, 1)
+        .flow(AmbientFlow::Uniform { velocity: [0.7, 0.0, 0.0] })
+        .gaussian([-2.0, 0.0, 0.0], 1500.0, 0.7)
+        .build().unwrap();
+    let mut simulation = Simulation::new(exp).unwrap();
+    let initial = simulation.total().unwrap().value();
+    let centroid = |sim: &Simulation| {
+        let shape = sim.field().shape();
+        let dx = sim.field().cell_width_metres();
+        let mut mass = 0.0;
+        let mut weighted_x = 0.0;
+        for z in 0..shape.nz() {
+            for y in 0..shape.ny() {
+                for x in 0..shape.nx() {
+                    let n = sim.field().at(x,y,z).unwrap().value();
+                    mass += n;
+                    weighted_x += n * (x as f64 + 0.5 - shape.nx() as f64 * 0.5) * dx;
+                }
+            }
+        }
+        weighted_x / mass
+    };
+    let before = centroid(&simulation);
+    for _ in 0..40 {
+        simulation.step().unwrap();
+    }
+    assert!(centroid(&simulation) > before + 0.7, "cloud must move in +x");
+    assert!((simulation.total().unwrap().value() - initial).abs() < 1e-7);
+}
+
+#[test]
+fn excessive_flow_is_rejected_before_rendering() {
+    let invalid = ExperimentBuilder::new("unstable")
+        .grid([4, 4, 4], 1.0)
+        .diffusion(0.0, 1.0, 1)
+        .flow(AmbientFlow::Uniform { velocity: [9.0, 0.0, 0.0] })
+        .gaussian([0.0; 3], 50.0, 1.0)
+        .build().unwrap();
+    assert!(Simulation::new(invalid).is_err());
 }

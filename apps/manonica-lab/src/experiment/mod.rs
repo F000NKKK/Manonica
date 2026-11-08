@@ -7,7 +7,7 @@ mod specification;
 pub use builder::ExperimentBuilder;
 pub use error::ExperimentError;
 pub use specification::{
-    Circle, Diffusion, Experiment, FieldSeed, Grid, SeedShape, Visualization,
+    AmbientFlow, Circle, Diffusion, Experiment, FieldSeed, Grid, SeedShape, Visualization,
 };
 
 #[cfg(test)]
