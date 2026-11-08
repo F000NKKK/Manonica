@@ -7,7 +7,7 @@ use manonica_physics::{
     PotentialField,
 };
 
-use super::field::seeded_field;
+use super::{equilibrium::{EquilibriumMonitor, EquilibriumState}, field::seeded_field};
 use crate::experiment::{AmbientFlow, Experiment, ExperimentError};
 
 /// Energy state of the externally established, quasi-static field.
@@ -38,6 +38,7 @@ pub struct Simulation {
     potential: Option<PotentialField>,
     field_ledger: Option<FieldLedger>,
     shutdown: bool,
+    equilibrium: EquilibriumMonitor,
     solver: FreeDiffusion,
     advection: FreeAdvection<AmbientFlow>,
     time_seconds: f64,
@@ -65,6 +66,7 @@ impl Simulation {
             potential,
             field_ledger,
             shutdown: false,
+            equilibrium: EquilibriumMonitor::default(),
             solver,
             advection,
             time_seconds: 0.0,
@@ -108,6 +110,9 @@ impl Simulation {
     }
     pub fn peak_trap_temperature_kelvin(&self) -> Option<f64> {
         self.materials.peak_temperature_kelvin()
+    }
+    pub fn equilibrium_state(&self) -> EquilibriumState {
+        self.equilibrium.state()
     }
     pub fn shutdown_active(&self) -> bool {
         self.shutdown
@@ -238,6 +243,17 @@ impl Simulation {
         self.shutdown = shutdown;
         self.time_seconds += dt.seconds();
         self.steps += 1;
+        let source_active = self.potential.is_some() && !self.shutdown;
+        let potential_peak = self.potential.as_ref().map_or(0.0, PotentialField::peak_absolute);
+        self.equilibrium.observe(
+            &self.field,
+            after.value(),
+            self.materials.total_bound(),
+            potential_peak,
+            self.materials.peak_temperature_excess_kelvin(),
+            source_active,
+            dt.seconds(),
+        );
         Ok(ConservationReport {
             before,
             after,
@@ -252,6 +268,7 @@ impl Simulation {
         self.potential = potential;
         self.field_ledger = field_ledger;
         self.shutdown = false;
+        self.equilibrium = EquilibriumMonitor::default();
         self.field = field;
         self.materials = materials;
         self.steps = 0;
