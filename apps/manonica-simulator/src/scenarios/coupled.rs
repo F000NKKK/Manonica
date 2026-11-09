@@ -8,7 +8,18 @@ use manonica_physics::{
 use manonica_simulation::{CoupledState, FieldControl, FieldLedger, MediumFlow, StepParameters};
 
 pub fn coupled_crystal() -> Result<(CoupledState, StepParameters), Box<dyn std::error::Error>> {
-    let shape = GridShape::new(8, 6, 4)?;
+    coupled_crystal_grid([8, 6, 4])
+}
+
+pub fn coupled_crystal_grid(
+    dimensions: [usize; 3],
+) -> Result<(CoupledState, StepParameters), Box<dyn std::error::Error>> {
+    if dimensions[0] < 8 || dimensions[1] < 6 || dimensions[2] < 4 {
+        return Err(
+            std::io::Error::other("crystal scenario requires at least 8 x 6 x 4 cells").into(),
+        );
+    }
+    let shape = GridShape::new(dimensions[0], dimensions[1], dimensions[2])?;
     let mut field = FreeManaField::uniform(shape, 0.5, Quantity::nonnegative(2.0)?)?;
     field.set(2, 3, 2, Quantity::nonnegative(40.0)?)?;
     let mut materials = MaterialLattice::new(shape);

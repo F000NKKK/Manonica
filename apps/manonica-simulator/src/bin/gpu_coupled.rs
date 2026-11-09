@@ -1,21 +1,56 @@
 //! End-to-end coupled physics parity and timing without Lab or a window.
 use manonica_compute_gpu::GpuCoupled;
-use manonica_simulator::scenarios::coupled_crystal;
+use manonica_simulator::scenarios::coupled_crystal_grid;
 use std::time::Instant;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (mut cpu, params) = coupled_crystal()?;
+    let mut dimensions = [8, 6, 4];
+    let mut steps = 200u32;
+    let mut batch = 50u32;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--grid" => {
+                for axis in &mut dimensions {
+                    *axis = args.next().ok_or("--grid requires nx ny nz")?.parse()?;
+                }
+            }
+            "--steps" => steps = args.next().ok_or("--steps requires a count")?.parse()?,
+            "--batch" => batch = args.next().ok_or("--batch requires a count")?.parse()?,
+            _ => return Err(format!("unknown argument {arg}").into()),
+        }
+    }
+    if steps == 0 || batch == 0 || batch > 4096 {
+        return Err("steps and batch must be positive; batch <=4096".into());
+    }
+    let (mut cpu, params) = coupled_crystal_grid(dimensions)?;
     let initial = cpu.materials.balance(&cpu.field)?;
     let mut gpu = GpuCoupled::new(&cpu, &params).map_err(std::io::Error::other)?;
+    // Warm shader compilation and driver resources before timing either path.
+    gpu.advance(1)?;
+    cpu.step(&params)?;
     let started = Instant::now();
-    for _ in 0..200 {
+    for _ in 0..steps {
         cpu.step(&params)?;
     }
     let cpu_ms = started.elapsed().as_secs_f64() * 1000.0;
     let started = Instant::now();
-    for _ in 0..4 {
-        gpu.advance(50)?;
+    let mut remaining = steps;
+    let mut samples = Vec::new();
+    while remaining > 0 {
+        let count = remaining.min(batch);
+        let stamp = Instant::now();
+        gpu.advance(count)?;
+        samples.push(stamp.elapsed().as_secs_f64() * 1000.0);
+        remaining -= count;
     }
     let gpu_ms = started.elapsed().as_secs_f64() * 1000.0;
+    samples.sort_by(f64::total_cmp);
+    let p50 = samples[samples.len() / 2];
+    let p95 = samples[((samples.len() - 1) as f64 * 0.95).ceil() as usize];
+    println!(
+        "batch <= {batch} steps: p50 {p50:.3} ms, p95 {p95:.3} ms; mean {:.3} ms/step",
+        gpu_ms / f64::from(steps)
+    );
     let actual = gpu.snapshot();
     let error = cpu
         .field
@@ -34,8 +69,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mass_error = (actual.materials.balance(&actual.field)?.manons() - initial.manons()).abs();
     println!("adapter: {}", gpu.adapter_name());
     println!(
-        "{} cells, 200 coupled steps, 4 snapshots: CPU {cpu_ms:.3} ms, GPU end-to-end {gpu_ms:.3} ms",
-        cpu.field.shape().len()
+        "{} cells, {steps} timed coupled steps (+1 warmup), {} snapshots: CPU {cpu_ms:.3} ms, GPU end-to-end {gpu_ms:.3} ms",
+        cpu.field.shape().len(),
+        samples.len()
     );
     println!(
         "maximum free-density error {error:.3e}; maximum bound/heat error {material_error:.3e}; inventory error {mass_error:.3e}"
