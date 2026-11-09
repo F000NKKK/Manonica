@@ -20,3 +20,25 @@ impl Kernel {
         Self { pipeline, bind }
     }
 }
+
+pub(super) fn dispatch(
+    commands: &mut meridian_gpu_wgpu::CommandBuffer<'_>,
+    kernel: &Kernel,
+    groups: u32,
+) {
+    commands.dispatch_compute_with_bind_group(&kernel.pipeline, &kernel.bind, groups);
+}
+pub(super) fn copy(
+    commands: &mut meridian_gpu_wgpu::CommandBuffer<'_>,
+    source: &Buffer,
+    target: &Buffer,
+    offset: u64,
+) {
+    commands.encoder_mut().copy_buffer_to_buffer(
+        source.wgpu_buffer(),
+        0,
+        target.wgpu_buffer(),
+        offset,
+        source.byte_len as u64,
+    );
+}
