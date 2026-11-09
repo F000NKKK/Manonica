@@ -11,11 +11,21 @@
 
 mod advection;
 mod backend;
+mod channels;
+mod coupled;
+mod coupled_transport;
 mod diffusion;
+mod energy;
 mod error;
+mod kernel;
+mod layout;
+mod material_exchange;
 mod potential;
+mod potential_drift;
+mod thermal;
 
 pub use backend::GpuDiffusion;
+pub use coupled::GpuCoupled;
 pub use potential::GpuPotential;
 
 #[cfg(test)]

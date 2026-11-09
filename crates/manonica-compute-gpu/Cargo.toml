@@ -13,6 +13,8 @@ resolver = "3"
 manonica-core = { path = "../manonica-core" }
 manonica-error = { path = "../manonica-error" }
 manonica-physics = { path = "../manonica-physics" }
+manonica-materials = { path = "../manonica-materials" }
+manonica-simulation = { path = "../manonica-simulation" }
 meridian-sdk = { git = "https://github.com/F000NKKK/Meridian-Engine", rev = "a50643f8b167ca57b6e48245f2fd0013e8711eaa" }
 meridian-gpu-wgpu = { git = "https://github.com/F000NKKK/Meridian-Engine", rev = "a50643f8b167ca57b6e48245f2fd0013e8711eaa" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
