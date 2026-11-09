@@ -9,6 +9,8 @@ publish = false
 manonica-core = { path = "../../crates/manonica-core" }
 manonica-physics = { path = "../../crates/manonica-physics" }
 manonica-control = { path = "../../crates/manonica-control" }
+manonica-materials = { path = "../../crates/manonica-materials" }
+manonica-simulation = { path = "../../crates/manonica-simulation" }
 
 [features]
 gpu = ["dep:manonica-compute-gpu"]
@@ -20,4 +22,9 @@ optional = true
 [[bin]]
 name = "gpu-transport"
 path = "src/bin/gpu_transport.rs"
+required-features = ["gpu"]
+
+[[bin]]
+name = "gpu-coupled"
+path = "src/bin/gpu_coupled.rs"
 required-features = ["gpu"]
