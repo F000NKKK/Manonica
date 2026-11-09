@@ -82,7 +82,6 @@ struct AtlasRequest {
     threshold: f64,
     optical_density: f64,
     view: SliceView,
-    step: u64,
 }
 
 struct AtlasResult {
@@ -91,7 +90,6 @@ struct AtlasResult {
     threshold: f64,
     optical_density: f64,
     view: SliceView,
-    step: u64,
     peak: f64,
     cpu_ms: f64,
 }
@@ -134,7 +132,6 @@ impl AtlasWorker {
                         threshold: request.threshold,
                         optical_density: request.optical_density,
                         view: request.view,
-                        step: request.step,
                         peak,
                         cpu_ms: now.elapsed().as_secs_f64() * 1000.0,
                     };
@@ -191,10 +188,10 @@ pub struct ManaVolume {
 impl ManaVolume {
     pub fn new(base: &mut GraphicsSession, exp: &Experiment) -> Result<Self, String> {
         let mut meshes: [Vec<MeshHandle>; 3] = std::array::from_fn(|_| Vec::new());
-        for axis in 0..3 {
+        for (axis, axis_meshes) in meshes.iter_mut().enumerate() {
             let count = MAX_PLANES;
             for layer in 0..count {
-                meshes[axis].push(
+                axis_meshes.push(
                     base.render
                         .meshes
                         .register(plane_mesh(
@@ -297,7 +294,6 @@ impl ManaVolume {
             threshold,
             optical_density,
             view,
-            step: snapshot.steps,
         });
         if sent {
             self.last_requested = Some(requested);
@@ -664,11 +660,13 @@ mod tests {
             atlas.pixels.len(),
             atlas.width as usize * atlas.height as usize * 4
         );
-        assert!(atlas.pixels.chunks_exact(4).any(|px| px[3] > 0));
+        assert!(atlas.pixels.as_chunks::<4>().0.iter().any(|px| px[3] > 0));
         assert!(
             atlas
                 .pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .any(|px| px[3] > 0 && px[2] >= 230 && px[2] > px[0])
         );
     }
@@ -784,7 +782,7 @@ mod interpolation_regressions {
             0.18,
             SliceView::new(Vec3::new(0.0, 0.0, -2.4), Vec3::new(0.0, 0.0, 1.0), 2, 0.3),
         );
-        assert!(atlas.pixels.chunks_exact(4).all(|px| px[3] == 0));
+        assert!(atlas.pixels.as_chunks::<4>().0.iter().all(|px| px[3] == 0));
     }
 }
 

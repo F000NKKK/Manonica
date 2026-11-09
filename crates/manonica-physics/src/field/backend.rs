@@ -6,7 +6,7 @@ use manonica_error::BaseError;
 
 use super::FreeManaField;
 
-/// Replace only the conservative free-mana diffusion operator.
+/// Accelerate conservative diffusion and optionally uniform transport.
 /// Implementations must atomically reject invalid inputs and maintain the
 /// inventory invariant. Material, field, and thermal steps remain owned by
 /// the deterministic physics simulation.
@@ -30,6 +30,41 @@ pub trait FreeManaDiffusionBackend {
         _velocity: [f64; 3],
     ) -> Result<bool, BaseError> {
         Ok(false)
+    }
+
+    /// Executes diffusion then uniform advection at each step. The default
+    /// commits only after every step succeeds. A backend without fused
+    /// transport rejects this operation without modifying the field.
+    fn evolve_uniform_flow_batch(
+        &mut self,
+        field: &mut FreeManaField,
+        diffusivity: f64,
+        dt_seconds: f64,
+        velocity: [f64; 3],
+        steps: u32,
+    ) -> Result<(), BaseError> {
+        if steps == 0 {
+            return Err(BaseError::new(
+                manonica_error::ErrorCode::InvalidRange,
+                "flow_batch_steps",
+            ));
+        }
+        let mut candidate = field.clone();
+        for _ in 0..steps {
+            if !self.evolve_diffusion_and_uniform_flow(
+                &mut candidate,
+                diffusivity,
+                dt_seconds,
+                velocity,
+            )? {
+                return Err(BaseError::new(
+                    manonica_error::ErrorCode::InvalidRange,
+                    "flow_batch_unsupported",
+                ));
+            }
+        }
+        *field = candidate;
+        Ok(())
     }
 
     /// Executes consecutive diffusion steps without exposing intermediate

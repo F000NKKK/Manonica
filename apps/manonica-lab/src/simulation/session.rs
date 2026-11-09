@@ -1,3 +1,5 @@
+mod resident;
+
 use manonica_core::{
     Evolution, Quantity, TimeStep,
     units::{Diffusivity, ManonCount},
@@ -8,7 +10,7 @@ use manonica_physics::{
 };
 
 use super::{
-    equilibrium::{EquilibriumMonitor, EquilibriumState},
+    equilibrium::{EquilibriumMonitor, EquilibriumObservation, EquilibriumState},
     field::seeded_field,
 };
 use crate::experiment::{AmbientFlow, Experiment, ExperimentError};
@@ -157,70 +159,6 @@ impl Simulation {
         self.step_internal(Some(backend))
     }
 
-    /// Only a simulation with no other enabled physical interaction can
-    /// safely execute multiple time steps without CPU-side material updates.
-    /// This guard is about laws, not the visual presence of a formula.
-    pub fn supports_resident_diffusion(&self) -> bool {
-        self.potential.is_none()
-            && matches!(self.experiment.physics.flow, AmbientFlow::Still)
-            && self.experiment.materials.is_empty()
-            && self.experiment.channels.is_empty()
-            && self.experiment.formulas.iter().all(|f| f.trap.is_none())
-    }
-
-    /// Runs a complete diffusion-only interval through a backend's resident
-    /// batch interface; rejects scenarios requiring intermediate interactions.
-    pub fn step_diffusion_batch(
-        &mut self,
-        backend: &mut dyn manonica_physics::FreeManaDiffusionBackend,
-        steps: u32,
-    ) -> Result<ConservationReport, ExperimentError> {
-        if !self.supports_resident_diffusion() || steps == 0 {
-            return Err(manonica_error::BaseError::new(
-                manonica_error::ErrorCode::InvalidRange,
-                "resident_batch_requires_diffusion_only",
-            )
-            .into());
-        }
-        let dt = TimeStep::from_seconds(self.experiment.physics.dt)?;
-        let before = self.total()?;
-        let mut candidate = self.field.clone();
-        backend.evolve_diffusion_batch(
-            &mut candidate,
-            self.experiment.physics.diffusivity,
-            dt.seconds(),
-            steps,
-        )?;
-        let after = candidate.total_manons()?;
-        let error = (after.value() - before.value()).abs();
-        if !error.is_finite() || error > 1e-8 * before.value().max(1.0) {
-            return Err(manonica_error::BaseError::new(
-                manonica_error::ErrorCode::NumericalInstability,
-                "resident_diffusion_conservation",
-            )
-            .into());
-        }
-        self.field = candidate;
-        self.time_seconds += dt.seconds() * steps as f64;
-        self.steps += u64::from(steps);
-        // A batch provides one real observation; it must not manufacture
-        // the 40 distinct observations required by the equilibrium monitor.
-        self.equilibrium.observe(
-            &self.field,
-            after.value(),
-            0.0,
-            0.0,
-            0.0,
-            false,
-            dt.seconds() * steps as f64,
-        );
-        Ok(ConservationReport {
-            before,
-            after,
-            absolute_error: Quantity::<ManonCount>::nonnegative(error)?,
-        })
-    }
-
     fn step_internal(
         &mut self,
         backend: Option<&mut dyn manonica_physics::FreeManaDiffusionBackend>,
@@ -264,11 +202,9 @@ impl Simulation {
             {
                 shutdown = true;
             }
-            if shutdown {
-                if let Some(potential) = next_potential.as_mut() {
-                    let decay = (-settings.shutdown_decay_rate * dt.seconds()).exp();
-                    *potential = potential.scaled(decay)?;
-                }
+            if shutdown && let Some(potential) = next_potential.as_mut() {
+                let decay = (-settings.shutdown_decay_rate * dt.seconds()).exp();
+                *potential = potential.scaled(decay)?;
             }
         }
         let old_energy = match &self.potential {
@@ -366,12 +302,14 @@ impl Simulation {
             .map_or(0.0, PotentialField::peak_absolute);
         self.equilibrium.observe(
             &self.field,
-            after.value(),
-            self.materials.total_bound(),
-            potential_peak,
-            self.materials.peak_temperature_excess_kelvin(),
-            source_active,
-            dt.seconds(),
+            EquilibriumObservation {
+                total_manons: after.value(),
+                bound_manons: self.materials.total_bound(),
+                peak_potential: potential_peak,
+                temperature_excess_kelvin: self.materials.peak_temperature_excess_kelvin(),
+                powered_source: source_active,
+                dt: dt.seconds(),
+            },
         );
         Ok(ConservationReport {
             before,

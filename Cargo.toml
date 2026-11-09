@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["crates/manonica-compute-gpu", "apps/manonica-lab"]
 members = [
     "crates/manonica-error",
     "crates/manonica-core",

@@ -1,0 +1,72 @@
+version = 2
+project = "Manonica"
+profiles = ["systems"]
+
+[assurance]
+format = true
+clippy = true
+test = true
+docs = true
+
+[constraints]
+unsafe_review_required = true
+
+[[dependency_rule]]
+from = "manonica-error"
+disallow = "manonica-core"
+
+[[dependency_rule]]
+from = "manonica-error"
+disallow = "manonica-physics"
+
+[[dependency_rule]]
+from = "manonica-error"
+disallow = "manonica-materials"
+
+[[dependency_rule]]
+from = "manonica-error"
+disallow = "manonica-compute-gpu"
+
+[[dependency_rule]]
+from = "manonica-error"
+disallow = "manonica-lab"
+
+[[dependency_rule]]
+from = "manonica-core"
+disallow = "manonica-physics"
+
+[[dependency_rule]]
+from = "manonica-core"
+disallow = "manonica-materials"
+
+[[dependency_rule]]
+from = "manonica-core"
+disallow = "manonica-compute-gpu"
+
+[[dependency_rule]]
+from = "manonica-core"
+disallow = "manonica-lab"
+
+[[dependency_rule]]
+from = "manonica-physics"
+disallow = "manonica-materials"
+
+[[dependency_rule]]
+from = "manonica-physics"
+disallow = "manonica-compute-gpu"
+
+[[dependency_rule]]
+from = "manonica-physics"
+disallow = "manonica-lab"
+
+[[dependency_rule]]
+from = "manonica-materials"
+disallow = "manonica-compute-gpu"
+
+[[dependency_rule]]
+from = "manonica-materials"
+disallow = "manonica-lab"
+
+[[dependency_rule]]
+from = "manonica-compute-gpu"
+disallow = "manonica-lab"

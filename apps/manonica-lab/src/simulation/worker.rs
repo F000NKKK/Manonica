@@ -112,7 +112,7 @@ impl SimulationSnapshot {
 enum Command {
     Pause(bool),
     Reset,
-    Replace(Experiment),
+    Replace(Box<Experiment>),
 }
 
 /// Owned by the app; only the worker owns `Simulation`.
@@ -167,7 +167,7 @@ impl SimulationWorker {
 
     pub fn replace_experiment(&self, experiment: Experiment) {
         if let Some(tx) = &self.commands {
-            let _ = tx.send(Command::Replace(experiment));
+            let _ = tx.send(Command::Replace(Box::new(experiment)));
         }
     }
 
@@ -278,7 +278,7 @@ fn run_simulation(
                 }
                 publish(&updates, &sim, cpu_ms, paused, &error, compute);
             }
-            Ok(Command::Replace(experiment)) => match Simulation::new(experiment) {
+            Ok(Command::Replace(experiment)) => match Simulation::new(*experiment) {
                 Ok(next) => {
                     sim = next;
                     gpu = create_gpu(&sim);
@@ -314,18 +314,18 @@ fn run_simulation(
             while now >= next_tick && ran < max_catch_up {
                 let started = Instant::now();
                 // Coalesce only overdue steps, and only if no material,
-                // advection or potential law requires intermediate states.
+                // vortex or potential law requires intermediate states.
                 let overdue = (now.duration_since(next_tick).as_secs_f64() / period.as_secs_f64())
                     .floor() as usize
                     + 1;
-                let steps = if gpu.is_some() && sim.supports_resident_diffusion() {
+                let steps = if gpu.is_some() && sim.supports_resident_transport() {
                     overdue.min(max_catch_up - ran).min(u32::MAX as usize)
                 } else {
                     1
                 };
                 let result = if let Some(device) = gpu.as_mut() {
                     if steps > 1 {
-                        sim.step_diffusion_batch(device, steps as u32)
+                        sim.step_transport_batch(device, steps as u32)
                     } else {
                         sim.step_with_backend(device)
                     }

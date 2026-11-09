@@ -158,9 +158,10 @@ impl LocalBoundarySpec {
 
 /// Prescribed movement of the surrounding medium (not a magic-circle law).
 /// A rigid vortex has v = angular_speed * (axis × (p - origin)) + axial_speed * axis.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AmbientFlow {
+    #[default]
     Still,
     Uniform {
         /// Metres per second in world X/Y/Z.
@@ -177,12 +178,6 @@ pub enum AmbientFlow {
         #[serde(default)]
         axial_speed: f64,
     },
-}
-
-impl Default for AmbientFlow {
-    fn default() -> Self {
-        Self::Still
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

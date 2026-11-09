@@ -23,9 +23,12 @@ additional backend. Forcing `--backend gpu` prevents fallback.
 
 ## Current computational coverage
 
-The **only** GPU-accelerated physical law so far is 3D free-manon
+GPU-accelerated operators include 3D free-manon
 diffusion, `J=-D grad(n)`, with an explicit finite-volume six-face
-stencil and zero flux through domain boundaries.
+stencil and zero flux through domain boundaries, and conservative upwind
+advection by a uniform medium. A standalone GPU screened-potential solver
+supports local Dirichlet, Neumann and Robin constraints; Lab still uses the
+CPU potential and energy cycle.
 
 Material capture/release, heat flow, potential solve, potential drift,
 conduction channels and energy auditing **remain on CPU**. The
@@ -33,18 +36,26 @@ simulation continues to enforce material and manon conservation and
 transactional updates; GPU numerical results are checked, mass-adjusted
 for f32 roundoff and committed to a validated physics-core field.
 
-A new `GpuDiffusion::evolve_resident_batch` provides a ping-pong
-device-resident path for **diffusion-only** numerical experiments:
-many explicit diffusion steps are dispatched in one submission with one
-initial upload and one final readback. Its output is checked against
-the CPU reference in `resident_diffusion_batch_matches_cpu_reference`.
-The main Lab still uses the full coupled operator-split simulation with
-materials and heat, which requires a CPU exchange after each step until
-those operators are ported and fused. Thus the Lab still performs one
-upload/dispatch/readback per physics step. On **small grids** this can
-be slower than the CPU. A PhysX-like performance target requires
-resident buffers, fused kernels, sparse updates, asynchronous transfers,
-material locality and representative profiling, not merely a GPU switch.
+`GpuDiffusion::evolve_resident_batch` executes diffusion-only intervals.
+`GpuDiffusion::evolve_uniform_flow_batch` executes diffusion followed by
+uniform advection at every step. Both paths use persistent ping-pong buffers,
+one initial upload, one command submission, and one final readback. Numerical
+validation and inventory correction happen before committing the final field.
+Lab coalesces overdue steps for these scenarios only when materials, traps,
+channels and potential interactions are absent. Vortex flow and coupled
+multi-physics scenarios still require individual transactional steps.
+
+Run a headless, checked 100-step transport comparison in the simulator:
+
+```bash
+cargo run -p manonica-simulator --features gpu --bin gpu-transport
+```
+
+The command requires a compute adapter, compares every cell against the
+independent f64 CPU laws and exits unsuccessfully if accuracy or conservation
+checks fail. Software Vulkan can validate shader execution, but its timing
+does not measure performance on a physical GPU. The default simulator and
+core tests do not build the optional graphics dependencies.
 
 ## Selecting the backend
 

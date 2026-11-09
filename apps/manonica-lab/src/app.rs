@@ -2,6 +2,7 @@
 //! - winit main thread: OS events, input capture and command dispatch
 //! - graphics thread: Meridian SDK / WGPU, camera, overlays and presentation
 //! - physics thread: fixed-step manon simulation and immutable snapshots
+//!
 //! Additional atlas worker resamples the field for visualization.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -516,12 +517,11 @@ fn render_loop(
             running.store(false, Ordering::Release);
         }
         let mut overlays = Vec::new();
-        if render_input.debug {
-            if let Some(overlay) =
+        if render_input.debug
+            && let Some(overlay) =
                 debug.overlay(&mut graphics.base, current_size, render_input.editor.open)
-            {
-                overlays.push(overlay);
-            }
+        {
+            overlays.push(overlay);
         }
         if let Some(overlay) =
             editor_overlay.draw(&mut graphics.base, &render_input.editor, current_size)

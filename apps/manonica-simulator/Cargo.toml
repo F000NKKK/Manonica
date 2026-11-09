@@ -1,5 +1,6 @@
 [package]
 name = "manonica-simulator"
+default-run = "manonica-simulator"
 version.workspace = true
 edition.workspace = true
 publish = false
@@ -8,3 +9,15 @@ publish = false
 manonica-core = { path = "../../crates/manonica-core" }
 manonica-physics = { path = "../../crates/manonica-physics" }
 manonica-control = { path = "../../crates/manonica-control" }
+
+[features]
+gpu = ["dep:manonica-compute-gpu"]
+
+[dependencies.manonica-compute-gpu]
+path = "../../crates/manonica-compute-gpu"
+optional = true
+
+[[bin]]
+name = "gpu-transport"
+path = "src/bin/gpu_transport.rs"
+required-features = ["gpu"]

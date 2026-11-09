@@ -49,6 +49,16 @@ impl Default for EquilibriumState {
     }
 }
 
+/// Physical observations used to classify equilibrium; no solver inputs.
+pub struct EquilibriumObservation {
+    pub total_manons: f64,
+    pub bound_manons: f64,
+    pub peak_potential: f64,
+    pub temperature_excess_kelvin: f64,
+    pub powered_source: bool,
+    pub dt: f64,
+}
+
 #[derive(Default)]
 pub struct EquilibriumMonitor {
     previous_density: Option<Vec<f64>>,
@@ -62,16 +72,15 @@ impl EquilibriumMonitor {
 
     /// Evaluate the actual latest physical state, comparing consecutive
     /// solver steps. No elapsed-time shortcut can force equilibrium.
-    pub fn observe(
-        &mut self,
-        field: &FreeManaField,
-        total_manons: f64,
-        bound_manons: f64,
-        peak_potential: f64,
-        temperature_excess_kelvin: f64,
-        powered_source: bool,
-        dt: f64,
-    ) {
+    pub fn observe(&mut self, field: &FreeManaField, observation: EquilibriumObservation) {
+        let EquilibriumObservation {
+            total_manons,
+            bound_manons,
+            peak_potential,
+            temperature_excess_kelvin,
+            powered_source,
+            dt,
+        } = observation;
         let sample: Vec<f64> = field
             .densities()
             .iter()
@@ -151,11 +160,31 @@ mod tests {
         let f = uniform();
         let mut monitor = EquilibriumMonitor::default();
         for _ in 0..HOLD_STEPS {
-            monitor.observe(&f, 80.0, 0.0, 0.0, 0.0, false, 0.1);
+            monitor.observe(
+                &f,
+                EquilibriumObservation {
+                    total_manons: 80.0,
+                    bound_manons: 0.0,
+                    peak_potential: 0.0,
+                    temperature_excess_kelvin: 0.0,
+                    powered_source: false,
+                    dt: 0.1,
+                },
+            );
             assert_ne!(monitor.state().phase, EquilibriumPhase::Charging);
         }
         assert_eq!(monitor.state().phase, EquilibriumPhase::Relaxing);
-        monitor.observe(&f, 80.0, 0.0, 0.0, 0.0, false, 0.1);
+        monitor.observe(
+            &f,
+            EquilibriumObservation {
+                total_manons: 80.0,
+                bound_manons: 0.0,
+                peak_potential: 0.0,
+                temperature_excess_kelvin: 0.0,
+                powered_source: false,
+                dt: 0.1,
+            },
+        );
         assert_eq!(monitor.state().phase, EquilibriumPhase::Equilibrium);
         assert_eq!(monitor.state().density_rate, 0.0);
     }
@@ -165,11 +194,31 @@ mod tests {
         let f = uniform();
         let mut monitor = EquilibriumMonitor::default();
         for _ in 0..100 {
-            monitor.observe(&f, 80.0, 0.0, 2.0, 0.0, false, 0.1);
+            monitor.observe(
+                &f,
+                EquilibriumObservation {
+                    total_manons: 80.0,
+                    bound_manons: 0.0,
+                    peak_potential: 2.0,
+                    temperature_excess_kelvin: 0.0,
+                    powered_source: false,
+                    dt: 0.1,
+                },
+            );
         }
         assert_eq!(monitor.state().phase, EquilibriumPhase::Decaying);
         assert_eq!(monitor.state().stable_steps, 0);
-        monitor.observe(&f, 80.0, 0.0, 0.0, 0.0, true, 0.1);
+        monitor.observe(
+            &f,
+            EquilibriumObservation {
+                total_manons: 80.0,
+                bound_manons: 0.0,
+                peak_potential: 0.0,
+                temperature_excess_kelvin: 0.0,
+                powered_source: true,
+                dt: 0.1,
+            },
+        );
         assert_eq!(monitor.state().phase, EquilibriumPhase::Charging);
     }
 
@@ -178,12 +227,42 @@ mod tests {
         let f = uniform();
         let mut monitor = EquilibriumMonitor::default();
         for _ in 0..50 {
-            monitor.observe(&f, 80.0, 0.0, 0.0, 0.0, false, 0.1);
+            monitor.observe(
+                &f,
+                EquilibriumObservation {
+                    total_manons: 80.0,
+                    bound_manons: 0.0,
+                    peak_potential: 0.0,
+                    temperature_excess_kelvin: 0.0,
+                    powered_source: false,
+                    dt: 0.1,
+                },
+            );
         }
         assert_eq!(monitor.state().phase, EquilibriumPhase::Equilibrium);
-        monitor.observe(&f, 80.0, 1.0, 0.0, 0.0, false, 0.1);
+        monitor.observe(
+            &f,
+            EquilibriumObservation {
+                total_manons: 80.0,
+                bound_manons: 1.0,
+                peak_potential: 0.0,
+                temperature_excess_kelvin: 0.0,
+                powered_source: false,
+                dt: 0.1,
+            },
+        );
         assert_eq!(monitor.state().phase, EquilibriumPhase::Relaxing);
-        monitor.observe(&f, 80.0, 1.0, 0.0, 0.3, false, 0.1);
+        monitor.observe(
+            &f,
+            EquilibriumObservation {
+                total_manons: 80.0,
+                bound_manons: 1.0,
+                peak_potential: 0.0,
+                temperature_excess_kelvin: 0.3,
+                powered_source: false,
+                dt: 0.1,
+            },
+        );
         assert_eq!(monitor.state().stable_steps, 0);
     }
 }

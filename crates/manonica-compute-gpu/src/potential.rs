@@ -174,7 +174,7 @@ impl GpuPotential {
             );
         }
         commands.submit();
-        let last = if iterations % 2 == 0 {
+        let last = if iterations.is_multiple_of(2) {
             &self.previous
         } else {
             &self.next
@@ -184,7 +184,9 @@ impl GpuPotential {
             return Err(invalid("gpu_potential_readback_shape"));
         }
         let output: Vec<f64> = result
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64)
             .collect();
         if output.iter().any(|value| !value.is_finite()) {

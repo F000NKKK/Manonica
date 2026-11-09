@@ -4,8 +4,11 @@ on:
   push:
     paths:
       - 'apps/manonica-lab/**'
+      - 'apps/manonica-simulator/**'
+      - 'Cargo.toml'
       - 'crates/manonica-core/**'
       - 'crates/manonica-physics/**'
+      - 'crates/manonica-materials/**'
       - 'crates/manonica-compute-gpu/**'
       - 'crates/manonica-error/**'
       - '.github/workflows/lab.yml'
@@ -26,7 +29,7 @@ jobs:
       - name: Linux dependencies for Meridian audio/window backend
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev pkg-config libx11-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y libasound2-dev libudev-dev pkg-config libx11-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache compilation
@@ -39,7 +42,11 @@ jobs:
         run: cargo test --manifest-path apps/manonica-lab/Cargo.toml
       - name: Check automatic GPU-first policy and strict explicit selection
         run: cargo test --manifest-path apps/manonica-lab/Cargo.toml backend_policy::tests -- --nocapture
-      - name: GPU compute parity tests (headless adapter when available)
+      - name: GPU compute parity tests (software Vulkan required)
+        env:
+          MANONICA_GPU_TEST: '1'
         run: cargo test --manifest-path crates/manonica-compute-gpu/Cargo.toml
+      - name: Headless resident transport experiment
+        run: cargo run -p manonica-simulator --features gpu --bin gpu-transport
       - name: Check compute crate formatting
         run: cargo fmt --manifest-path crates/manonica-compute-gpu/Cargo.toml --all -- --check

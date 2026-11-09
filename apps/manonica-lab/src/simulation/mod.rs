@@ -2,6 +2,8 @@ mod backend_policy;
 mod equilibrium;
 mod field;
 mod flow;
+#[cfg(test)]
+mod resident_tests;
 mod session;
 mod worker;
 
