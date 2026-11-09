@@ -3,6 +3,8 @@
 //!         J_potential = -mobility * n * grad(phi).
 //! Source strength, mobility, screening and dielectric response are model
 //! parameters, NOT real-world constants. No external boundary manon flux.
+mod snapshot;
+
 use super::{FreeManaField, GridShape};
 use manonica_core::{Quantity, units::ManonDensity};
 use manonica_error::{BaseError, ErrorCode};
@@ -43,6 +45,8 @@ pub struct PotentialField {
     permittivity: f64,
     screening: f64,
     local: Vec<Option<LocalPotentialBoundary>>,
+    sources: Vec<f64>,
+    iterations: usize,
 }
 #[derive(Debug, Clone, Copy)]
 pub struct PotentialStep {
@@ -207,6 +211,8 @@ impl PotentialField {
             permittivity,
             screening,
             local,
+            sources: sources.to_vec(),
+            iterations,
         })
     }
     /// Scale an already solved potential without rerunning the Poisson solve.
@@ -216,6 +222,9 @@ impl PotentialField {
             return Err(bad("potential_scale"));
         }
         let mut next = self.clone();
+        for source in &mut next.sources {
+            *source *= factor;
+        }
         for value in &mut next.values {
             *value *= factor;
         }

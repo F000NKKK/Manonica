@@ -1,6 +1,8 @@
 //! Conservative free/bound manon exchange in material traps.
 //! A minimal discrete model for specification v0.1 §§3, 6-8, 10.
 //! Units: count (manons), energy (J), temperature (K), time (s).
+mod snapshot;
+
 use crate::DirectionalConductivity;
 use manonica_core::{Quantity, units::ManonDensity};
 use manonica_error::{BaseError, ErrorCode};
