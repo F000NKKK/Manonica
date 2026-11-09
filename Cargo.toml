@@ -6,6 +6,7 @@ members = [
     "crates/manonica-core",
     "crates/manonica-physics",
     "crates/manonica-materials",
+    "crates/manonica-simulation",
     "crates/manonica-control",
     "apps/manonica-simulator",
 ]

@@ -8,6 +8,7 @@ Rendering never determines the numerical outcome of physical experiments.
 | Component | Responsibilities |
 | --- | --- |
 | `manonica-physics` | Scalar typed physical quantities, conservation, diffusion, advection, potential, material kinetics and reference numerical laws |
+| `manonica-simulation` | Coupled state, f64 CPU reference, field control and energy ledger; independent of experiments and rendering |
 | `manonica-compute-gpu` | Optional Meridian/WGPU compute adapter, validated field readback, GPU/CPU parity checks; no window |
 | `manonica-lab` | Assemble TOML experiments, own the simulation loop and F3 display; no physical laws encoded into the renderer |
 | Fabric mod (future) | Use the same physical core and choose a CPU or GPU backend at runtime; no dependency on the Lab UI |

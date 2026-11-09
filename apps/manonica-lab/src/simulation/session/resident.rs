@@ -9,7 +9,7 @@ impl Simulation {
     /// safely execute multiple time steps without CPU-side material updates.
     /// This guard is about laws, not the visual presence of a formula.
     pub fn supports_resident_diffusion(&self) -> bool {
-        self.potential.is_none()
+        self.state.potential.is_none()
             && matches!(self.experiment.physics.flow, AmbientFlow::Still)
             && self.experiment.materials.is_empty()
             && self.experiment.channels.is_empty()
@@ -19,7 +19,7 @@ impl Simulation {
     /// Resident transport is safe only without intermediate material,
     /// potential or thermal interactions. Vortex transport is not supported.
     pub fn supports_resident_transport(&self) -> bool {
-        self.potential.is_none()
+        self.state.potential.is_none()
             && matches!(
                 self.experiment.physics.flow,
                 AmbientFlow::Still | AmbientFlow::Uniform { .. }
@@ -68,7 +68,7 @@ impl Simulation {
         }
         let dt = TimeStep::from_seconds(self.experiment.physics.dt)?;
         let before = self.total()?;
-        let mut candidate = self.field.clone();
+        let mut candidate = self.state.field.clone();
         if let AmbientFlow::Uniform { velocity } = self.experiment.physics.flow {
             backend.evolve_uniform_flow_batch(
                 &mut candidate,
@@ -94,12 +94,12 @@ impl Simulation {
             )
             .into());
         }
-        self.field = candidate;
+        self.state.field = candidate;
         self.time_seconds += dt.seconds() * steps as f64;
         self.steps += u64::from(steps);
         // A batch provides one real observation; it must not manufacture
         // the 40 distinct observations required by the equilibrium monitor.
-        self.equilibrium.observe(&self.field, EquilibriumObservation {
+        self.equilibrium.observe(&self.state.field, EquilibriumObservation {
             total_manons: after.value(),
             bound_manons: 0.0,
             peak_potential: 0.0,

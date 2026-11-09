@@ -1,12 +1,8 @@
 mod resident;
 
-use manonica_core::{
-    Evolution, Quantity, TimeStep,
-    units::{Diffusivity, ManonCount},
-};
+use manonica_core::{Evolution, Quantity, TimeStep, units::ManonCount};
 use manonica_physics::{
-    ConservationReport, FreeAdvection, FreeDiffusion, FreeManaField, LocalBoundarySite,
-    PotentialField,
+    ConservationReport, FreeAdvection, FreeManaField, LocalBoundarySite, PotentialField,
 };
 
 use super::{
@@ -16,37 +12,14 @@ use super::{
 use crate::experiment::{AmbientFlow, Experiment, ExperimentError};
 use manonica_materials::MaterialLattice;
 
-/// Energy state of the externally established, quasi-static field.
-#[derive(Clone, Copy, Debug)]
-pub struct FieldLedger {
-    pub field_energy_joules: f64,
-    pub manon_potential_joules: f64,
-    pub dissipated_heat_joules: f64,
-    /// Work supplied by external controller after field installation.
-    pub operating_work_joules: f64,
-    pub last_transport_manons: f64,
-    pub peak_potential: f64,
-    /// Heat carried into the ambient reservoir, part of global energy audit.
-    pub exported_heat_joules: f64,
-    pub shutdown: bool,
-}
-impl FieldLedger {
-    pub fn tracked_energy(self) -> f64 {
-        self.field_energy_joules + self.manon_potential_joules + self.dissipated_heat_joules
-    }
-}
+pub use manonica_simulation::FieldLedger;
+use manonica_simulation::{CoupledState, FieldControl, StepParameters};
 
 /// Расчётная сессия, ничего не знающая о рендеринге.
 pub struct Simulation {
     pub experiment: Experiment,
-    field: FreeManaField,
-    materials: MaterialLattice,
-    potential: Option<PotentialField>,
-    field_ledger: Option<FieldLedger>,
-    shutdown: bool,
+    state: CoupledState,
     equilibrium: EquilibriumMonitor,
-    solver: FreeDiffusion,
-    advection: FreeAdvection<AmbientFlow>,
     time_seconds: f64,
     steps: u64,
 }
@@ -54,9 +27,6 @@ pub struct Simulation {
 impl Simulation {
     pub fn new(experiment: Experiment) -> Result<Self, ExperimentError> {
         experiment.validate()?;
-        let solver = FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(
-            experiment.physics.diffusivity,
-        )?)?;
         let field = seeded_field(&experiment)?;
         let advection = FreeAdvection::new(experiment.physics.flow.clone());
         let materials = build_materials(&experiment, &field)?;
@@ -67,33 +37,33 @@ impl Simulation {
         advection.evolve(&mut probe, TimeStep::from_seconds(experiment.physics.dt)?)?;
         Ok(Self {
             experiment,
-            field,
-            materials,
-            potential,
-            field_ledger,
-            shutdown: false,
+            state: CoupledState {
+                field,
+                materials,
+                potential,
+                field_ledger,
+                shutdown: false,
+            },
             equilibrium: EquilibriumMonitor::default(),
-            solver,
-            advection,
             time_seconds: 0.0,
             steps: 0,
         })
     }
 
     pub fn field(&self) -> &FreeManaField {
-        &self.field
+        &self.state.field
     }
     /// Total free + bound inventory and the closed thermal/binding ledger.
     pub fn material_balance(&self) -> Result<manonica_materials::Balance, ExperimentError> {
-        Ok(self.materials.balance(&self.field)?)
+        Ok(self.state.materials.balance(&self.state.field)?)
     }
 
     /// Bound manon inventories for each geometric formula, in experiment order.
     /// The same discrete cells are used by the solver and scene geometry.
     pub fn formula_bound(&self) -> Result<Vec<f64>, ExperimentError> {
-        let shape = self.field.shape();
+        let shape = self.state.field.shape();
         let dimensions = [shape.nx(), shape.ny(), shape.nz()];
-        let dx = self.field.cell_width_metres();
+        let dx = self.state.field.cell_width_metres();
         self.experiment
             .formulas
             .iter()
@@ -104,7 +74,7 @@ impl Simulation {
                 let cells = crate::experiment::capture_cells(formula, dimensions, dx)?;
                 Ok(cells
                     .into_iter()
-                    .filter_map(|c| self.materials.at(c[0], c[1], c[2]))
+                    .filter_map(|c| self.state.materials.at(c[0], c[1], c[2]))
                     .map(|cell| cell.bound)
                     .sum())
             })
@@ -112,24 +82,25 @@ impl Simulation {
     }
 
     pub fn potential(&self) -> Option<&PotentialField> {
-        self.potential.as_ref()
+        self.state.potential.as_ref()
     }
     pub fn peak_trap_temperature_kelvin(&self) -> Option<f64> {
-        self.materials.peak_temperature_kelvin()
+        self.state.materials.peak_temperature_kelvin()
     }
     pub fn equilibrium_state(&self) -> EquilibriumState {
         self.equilibrium.state()
     }
     pub fn shutdown_active(&self) -> bool {
-        self.shutdown
+        self.state.shutdown
     }
     pub fn field_ledger(&self) -> Option<FieldLedger> {
-        self.field_ledger
+        self.state.field_ledger
     }
     pub fn tracked_energy(&self) -> Result<f64, ExperimentError> {
         let material = self.material_balance()?.energy();
         Ok(material
             + self
+                .state
                 .field_ledger
                 .map_or(0.0, |p| p.tracked_energy() + p.exported_heat_joules))
     }
@@ -142,7 +113,7 @@ impl Simulation {
     }
     pub fn total(&self) -> Result<Quantity<ManonCount>, ExperimentError> {
         Ok(Quantity::nonnegative(
-            self.materials.balance(&self.field)?.manons(),
+            self.state.materials.balance(&self.state.field)?.manons(),
         )?)
     }
 
@@ -163,125 +134,10 @@ impl Simulation {
         &mut self,
         backend: Option<&mut dyn manonica_physics::FreeManaDiffusionBackend>,
     ) -> Result<ConservationReport, ExperimentError> {
-        let dt = TimeStep::from_seconds(self.experiment.physics.dt)?;
-        let before = self.total()?;
-        let mut candidate = self.field.clone();
-        let mut fused_advection = false;
-        if let Some(backend) = backend {
-            if let AmbientFlow::Uniform { velocity } = &self.experiment.physics.flow {
-                fused_advection = backend.evolve_diffusion_and_uniform_flow(
-                    &mut candidate,
-                    self.experiment.physics.diffusivity,
-                    dt.seconds(),
-                    *velocity,
-                )?;
-            }
-            if !fused_advection {
-                backend.evolve_free_diffusion(
-                    &mut candidate,
-                    self.experiment.physics.diffusivity,
-                    dt.seconds(),
-                )?;
-            }
-        } else {
-            self.solver.evolve(&mut candidate, dt)?;
-        }
-        if !fused_advection {
-            self.advection.evolve(&mut candidate, dt)?;
-        }
-        let mut ledger = self.field_ledger;
-        let mut next_potential = self.potential.clone();
-        let mut shutdown = self.shutdown;
-        // Automatic power-down starts only when actual physical traps
-        // reach the specified filling ratio, never at an arbitrary tick.
-        if let Some(settings) = &self.experiment.physics.potential {
-            let capacity = self.materials.total_capacity();
-            if settings.shutdown_at_bound_fraction > 0.0
-                && capacity > 0.0
-                && self.materials.total_bound() / capacity >= settings.shutdown_at_bound_fraction
-            {
-                shutdown = true;
-            }
-            if shutdown && let Some(potential) = next_potential.as_mut() {
-                let decay = (-settings.shutdown_decay_rate * dt.seconds()).exp();
-                *potential = potential.scaled(decay)?;
-            }
-        }
-        let old_energy = match &self.potential {
-            Some(potential) => {
-                potential.manon_potential_energy(&self.field)?
-                    + self.materials.bound_potential_energy(potential.values())?
-                    + potential.field_energy_joules()
-            }
-            None => 0.0,
-        };
-        if let (Some(potential), Some(state), Some(settings)) = (
-            &next_potential,
-            ledger.as_mut(),
-            self.experiment.physics.potential.as_ref(),
-        ) {
-            let drift = potential.drift(&mut candidate, settings.mobility, dt.seconds())?;
-            state.last_transport_manons = drift.transported_manons;
-        }
-        let mut next_materials = self.materials.clone();
-        next_materials.step(&mut candidate, dt.seconds())?;
-        next_materials.conduct_heat(dt.seconds(), self.experiment.physics.thermal_conductance)?;
-        let exported = next_materials
-            .cool_into_bath(dt.seconds(), self.experiment.physics.ambient_cooling_rate)?;
-        if let (Some(potential), Some(state), Some(settings)) = (
-            &next_potential,
-            ledger.as_mut(),
-            self.experiment.physics.potential.as_ref(),
-        ) {
-            let mobile_energy = potential.manon_potential_energy(&candidate)?;
-            let bound_energy = next_materials.bound_potential_energy(potential.values())?;
-            let stored_field = potential.field_energy_joules();
-            let new_energy = mobile_energy + bound_energy + stored_field;
-            let change = new_energy - old_energy;
-            if !change.is_finite() {
-                return Err(manonica_error::BaseError::new(
-                    manonica_error::ErrorCode::InvalidRange,
-                    "potential_energy_overflow",
-                )
-                .into());
-            }
-            if change < 0.0 {
-                state.dissipated_heat_joules += -change;
-            } else {
-                let heat_used = change.min(state.dissipated_heat_joules);
-                let external = (change - heat_used).max(0.0);
-                if external > settings.max_power_joules_per_second * dt.seconds() + 1e-10 {
-                    return Err(manonica_error::BaseError::new(
-                        manonica_error::ErrorCode::InvalidRange,
-                        "field_external_power",
-                    )
-                    .into());
-                }
-                state.dissipated_heat_joules -= heat_used;
-                state.operating_work_joules += external;
-            }
-            state.manon_potential_joules = mobile_energy + bound_energy;
-            state.field_energy_joules = stored_field;
-            state.peak_potential = potential.peak_absolute();
-            state.shutdown = shutdown;
-            state.exported_heat_joules += exported;
-            // Field heat may leave to the environment, but does not vanish
-            // from the global closed-system energy audit.
-            let heat_loss = state.dissipated_heat_joules
-                * (1.0 - (-self.experiment.physics.ambient_cooling_rate * dt.seconds()).exp());
-            state.dissipated_heat_joules -= heat_loss;
-            state.exported_heat_joules += heat_loss;
-        }
-        let after =
-            Quantity::<ManonCount>::nonnegative(next_materials.balance(&candidate)?.manons())?;
-        let absolute_error =
-            Quantity::<ManonCount>::nonnegative((after.value() - before.value()).abs())?;
-        // Diffusion + advection form one transactional operator-split step.
-        self.field = candidate;
-        self.materials = next_materials;
-        self.field_ledger = ledger;
-        self.potential = next_potential;
-        self.shutdown = shutdown;
+        let parameters = self.step_parameters();
+        let dt = TimeStep::from_seconds(parameters.dt)?;
+        let report = self.state.step_with_diffusion(&parameters, backend)?;
+        let after = report.after;
         self.time_seconds += dt.seconds();
         self.steps += 1;
         // A stationary density snapshot is not thermodynamic equilibrium if
@@ -295,39 +151,58 @@ impl Simulation {
                 ..
             } => *angular_speed != 0.0 || *axial_speed != 0.0,
         };
-        let source_active = (self.potential.is_some() && !self.shutdown) || medium_driven;
+        let source_active =
+            (self.state.potential.is_some() && !self.state.shutdown) || medium_driven;
         let potential_peak = self
+            .state
             .potential
             .as_ref()
             .map_or(0.0, PotentialField::peak_absolute);
         self.equilibrium.observe(
-            &self.field,
+            &self.state.field,
             EquilibriumObservation {
                 total_manons: after.value(),
-                bound_manons: self.materials.total_bound(),
+                bound_manons: self.state.materials.total_bound(),
                 peak_potential: potential_peak,
-                temperature_excess_kelvin: self.materials.peak_temperature_excess_kelvin(),
+                temperature_excess_kelvin: self.state.materials.peak_temperature_excess_kelvin(),
                 powered_source: source_active,
                 dt: dt.seconds(),
             },
         );
-        Ok(ConservationReport {
-            before,
-            after,
-            absolute_error,
-        })
+        Ok(report)
+    }
+
+    pub(crate) fn step_parameters(&self) -> StepParameters {
+        StepParameters {
+            diffusivity: self.experiment.physics.diffusivity,
+            dt: self.experiment.physics.dt,
+            flow: self.experiment.physics.flow.physical(),
+            thermal_conductance: self.experiment.physics.thermal_conductance,
+            ambient_cooling_rate: self.experiment.physics.ambient_cooling_rate,
+            field: self
+                .experiment
+                .physics
+                .potential
+                .as_ref()
+                .map(|p| FieldControl {
+                    mobility: p.mobility,
+                    max_power_joules_per_second: p.max_power_joules_per_second,
+                    shutdown_at_bound_fraction: p.shutdown_at_bound_fraction,
+                    shutdown_decay_rate: p.shutdown_decay_rate,
+                }),
+        }
     }
 
     pub fn reset(&mut self) -> Result<(), ExperimentError> {
         let field = seeded_field(&self.experiment)?;
         let materials = build_materials(&self.experiment, &field)?;
         let (potential, field_ledger) = build_potential(&self.experiment, &field)?;
-        self.potential = potential;
-        self.field_ledger = field_ledger;
-        self.shutdown = false;
+        self.state.potential = potential;
+        self.state.field_ledger = field_ledger;
+        self.state.shutdown = false;
         self.equilibrium = EquilibriumMonitor::default();
-        self.field = field;
-        self.materials = materials;
+        self.state.field = field;
+        self.state.materials = materials;
         self.steps = 0;
         self.time_seconds = 0.0;
         Ok(())

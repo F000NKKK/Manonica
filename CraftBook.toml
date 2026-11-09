@@ -70,3 +70,23 @@ disallow = "manonica-lab"
 [[dependency_rule]]
 from = "manonica-compute-gpu"
 disallow = "manonica-lab"
+
+[[dependency_rule]]
+from = "manonica-core"
+disallow = "manonica-simulation"
+
+[[dependency_rule]]
+from = "manonica-physics"
+disallow = "manonica-simulation"
+
+[[dependency_rule]]
+from = "manonica-materials"
+disallow = "manonica-simulation"
+
+[[dependency_rule]]
+from = "manonica-simulation"
+disallow = "manonica-compute-gpu"
+
+[[dependency_rule]]
+from = "manonica-simulation"
+disallow = "manonica-lab"
