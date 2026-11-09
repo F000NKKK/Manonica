@@ -16,3 +16,7 @@ fn neighbour(i: u32, axis: u32, side: i32, dims: vec3<u32>) -> u32 {
     if (side < 0) { return i-stride[axis]; }
     return i+stride[axis];
 }
+
+// Hierarchical physical reductions. a=(field,manon,material,count),
+// b=(bound,capacity,peak,exported), c=(transported,0,0,0).
+struct Summary { a: vec4<f32>, b: vec4<f32>, c: vec4<f32> }
