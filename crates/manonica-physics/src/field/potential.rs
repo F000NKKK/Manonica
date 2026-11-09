@@ -104,6 +104,36 @@ impl PotentialField {
         iterations: usize,
         sites: &[LocalBoundarySite],
     ) -> Result<Self, BaseError> {
+        Self::solve_with_local_cancellable(
+            shape,
+            dx,
+            sources,
+            permittivity,
+            screening,
+            boundary,
+            iterations,
+            sites,
+            || false,
+        )
+    }
+
+    /// The reference solve with cooperative cancellation at iteration boundaries.
+    /// Cancellation never publishes a partially solved field.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "solver coefficients, boundary policy and cancellation are independent inputs"
+    )]
+    pub fn solve_with_local_cancellable(
+        shape: GridShape,
+        dx: f64,
+        sources: &[f64],
+        permittivity: f64,
+        screening: f64,
+        boundary: PotentialBoundary,
+        iterations: usize,
+        sites: &[LocalBoundarySite],
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<Self, BaseError> {
         if !dx.is_finite()
             || dx <= 0.0
             || !permittivity.is_finite()
@@ -138,6 +168,12 @@ impl PotentialField {
         let mut old = vec![0.0; shape.len()];
         let mut next = old.clone();
         for _ in 0..iterations {
+            if should_cancel() {
+                return Err(BaseError::new(
+                    ErrorCode::InvalidState,
+                    "potential_solve_cancelled",
+                ));
+            }
             for z in 0..shape.nz() {
                 for y in 0..shape.ny() {
                     for x in 0..shape.nx() {

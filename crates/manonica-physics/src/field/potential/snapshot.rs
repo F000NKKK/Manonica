@@ -61,4 +61,25 @@ mod tests {
         assert_eq!(p.scaled(0.5).unwrap().sources(), &[1.0, 0.0]);
         assert_eq!(p.iterations(), 20);
     }
+    #[test]
+    fn cancelled_solve_stops_before_completing_all_iterations() {
+        let shape = crate::GridShape::new(4, 3, 2).unwrap();
+        let calls = std::cell::Cell::new(0);
+        let result = PotentialField::solve_with_local_cancellable(
+            shape,
+            1.0,
+            &vec![1.0; shape.len()],
+            1.0,
+            1.0,
+            PotentialBoundary::Insulated,
+            100,
+            &[],
+            || {
+                calls.set(calls.get() + 1);
+                calls.get() >= 3
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(calls.get(), 3);
+    }
 }
