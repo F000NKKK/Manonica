@@ -1,180 +1,125 @@
-# Manonica compute architecture and GPU acceleration
+# Compute backends
 
-The physical model is deliberately independent of a graphics API.
-Rendering never determines the numerical outcome of physical experiments.
+Manonica has two physical backends: the f64 CPU reference and the resident
+Meridian/WGPU solver. `auto` tries GPU first and allows CPU fallback;
+`--backend gpu` requires the complete GPU solver and never silently falls back.
+Rendering and experiment configuration do not define physical laws.
 
-## Crates and ownership
+## Ownership and reuse
 
-| Component | Responsibilities |
+| Component | Responsibility |
 | --- | --- |
-| `manonica-physics` | Scalar typed physical quantities, conservation, diffusion, advection, potential, material kinetics and reference numerical laws |
-| `manonica-simulation` | Coupled state, f64 CPU reference, field control and energy ledger; independent of experiments and rendering |
-| `manonica-compute-gpu` | Optional Meridian/WGPU compute adapter, validated field readback, GPU/CPU parity checks; no window |
-| `manonica-lab` | Assemble TOML experiments, own the simulation loop and F3 display; no physical laws encoded into the renderer |
-| Fabric mod (future) | Use the same physical core and choose a CPU or GPU backend at runtime; no dependency on the Lab UI |
+| `manonica-physics` | Typed fields, reference diffusion/advection and screened potential laws |
+| `manonica-materials` | Traps, finite capacity, channels, thermal storage and material laws |
+| `manonica-simulation` | Coupled state, step parameters, CPU operator split and energy ledger |
+| `manonica-compute-gpu` | Resident state, compute kernels, device reductions, readback validation and rollback |
+| `manonica-simulator` | Numerical experiments and comparisons without a window |
+| `manonica-lab` | Rasterize mathematical constructions, configure the shared solver and display snapshots |
 
-The core exports `FreeManaDiffusionBackend`. The GPU crate implements
-this neutral contract without exposing `wgpu` types in core.
-A future server-side/headless Minecraft implementation can use CPU-only
-physics without a GPU, or install an accelerator when suitable.
+The simulation and GPU APIs do not depend on Lab, TOML, Minecraft or windowing.
+A game adapter can supply the same `CoupledState` and `StepParameters`.
+`lib.rs` in the GPU crate is a barrel. Physical operators have matching Rust
+and WGSL modules; device ownership and wire validation have separate modules.
 
-There are exactly **two physical compute backends**: CPU and GPU.
-`auto` selects between them; `FALLBACK` is telemetry, not an
-additional backend. Forcing `--backend gpu` prevents fallback.
+## Resident operator split
 
-## Current computational coverage
+`GpuCoupled` runs every enabled operator of the coupled Lab solver:
 
-GPU-accelerated operators include 3D free-manon
-diffusion, `J=-D grad(n)`, with an explicit finite-volume six-face
-stencil and zero flux through domain boundaries, and conservative upwind
-advection by a uniform medium. A standalone GPU screened-potential solver
-supports local Dirichlet, Neumann and Robin constraints; Lab still uses the
-CPU potential and energy cycle.
+| Operation | Execution |
+| --- | --- |
+| Screened potential and local Dirichlet/Neumann/Robin conditions | GPU Jacobi at setup |
+| Diffusion | One invocation per cell |
+| Uniform or vortex medium advection | One invocation per cell, conservative upwind faces |
+| Potential-driven drift | Parallel outgoing-flux bounds and device-side CFL subdivision; parallel cell updates |
+| Trap capture/release, saturation and binding heat | One invocation per material cell |
+| Material channels | Independent edges run concurrently; shared endpoints preserve reference order |
+| Heat conduction | Sparse dependency-preserving edge layers |
+| Cooling | Parallel cells, explicit exported-heat contributions |
+| Energy, inventory, peak and capacity audits | Hierarchical workgroup reductions |
+| Source shutdown and work/heat budgets | Constant-size scalar decisions after reductions |
 
-Material capture/release, heat flow, potential solve, potential drift,
-conduction channels and energy auditing **remain on CPU**. The
-simulation continues to enforce material and manon conservation and
-transactional updates; GPU numerical results are checked, mass-adjusted
-for f32 roundoff and committed to a validated physics-core field.
+No invocation scans the entire grid to integrate drift, heat or energy.
+Thermal/channel layers are constructed once from immutable geometry. Within
+one layer no two exchanges write the same cell. Layer dependencies preserve
+the sequential reference's bounded, conservative exchange semantics.
 
-`GpuDiffusion::evolve_resident_batch` executes diffusion-only intervals.
-`GpuDiffusion::evolve_uniform_flow_batch` executes diffusion followed by
-uniform advection at every step. Both paths use persistent ping-pong buffers,
-one initial upload, one command submission, and one final readback. Numerical
-validation and inventory correction happen before committing the final field.
-Lab coalesces overdue steps for these scenarios only when materials, traps,
-channels and potential interactions are absent. Vortex flow and coupled
-multi-physics scenarios still require individual transactional steps.
+At setup, Lab prepares geometry and validates the CPU reference problem; the
+GPU adapter solves the initial potential on its compute device. Buffers,
+pipelines, dependency schedules and bind groups are allocated during setup,
+not rebuilt for each physics step. Free density, bound storage, heat, potential
+and the ledger remain on the device across batches. Initialization may transfer
+potential data; stepping has no intermediate operator readbacks.
 
-Run a headless, checked 100-step transport comparison in the simulator:
+Lab submits bounded intervals at its observation cadence (50 ms). It reads a
+single packed snapshot after the interval, rather than after each physical law
+or timestep. Catch-up is capped so an overdue simulation cannot submit an
+unbounded GPU queue that starves rendering. Pause keeps resident state; reset
+and experiment replacement reconstruct it.
 
-```bash
-cargo run -p manonica-simulator --features gpu --bin gpu-transport
-```
+The public `GpuDiffusion` adapter also remains available for independent
+single-law diffusion/uniform-flow experiments. Lab's GPU mode uses
+`GpuCoupled`, including materials and energy, rather than that partial adapter.
 
-The command requires a compute adapter, compares every cell against the
-independent f64 CPU laws and exits unsuccessfully if accuracy or conservation
-checks fail. Software Vulkan can validate shader execution, but its timing
-does not measure performance on a physical GPU. The default simulator and
-core tests do not build the optional graphics dependencies.
+## Correctness and failure
 
-## Selecting the backend
+CPU arithmetic is f64; WGSL storage and arithmetic are f32. Parity is numerical,
+not bitwise. Device audits reject nonfinite output, unstable transport, negative
+storage, excess capacity, inadequate external power and conservation failures.
+Readback undergoes an independent host check before replacing the snapshot.
+Representation-level capacity overshoot is corrected conservatively when
+constructing the typed host snapshot.
 
-Backend selection is **automatic by default**: Manonica attempts GPU first,
-then uses the CPU reference when the GPU adapter cannot initialize or the
-GPU diffusion operator fails. A forced selection never silently switches
-devices.
+Each batch retains a device backup. A rejected batch restores device storage
+and leaves the host snapshot and simulation time unchanged. Automatic fallback
+replays every timestep of that interval on the CPU reference. Forced GPU mode
+terminates on initialization or execution failure. CPU mode initializes no
+compute device.
 
-Automatic selection:
-
-```bash
-cargo run --release --manifest-path apps/manonica-lab/Cargo.toml -- \
-  apps/manonica-lab/experiments/potential_concentrator.toml
-```
-
-Force GPU or fail with a nonzero exit code:
-
-```bash
-cargo run --release --manifest-path apps/manonica-lab/Cargo.toml -- \
-  apps/manonica-lab/experiments/potential_concentrator.toml --backend gpu
-```
-
-Force CPU, even if a GPU is available:
+## Running and measuring
 
 ```bash
 cargo run --release --manifest-path apps/manonica-lab/Cargo.toml -- \
-  apps/manonica-lab/experiments/potential_concentrator.toml --backend cpu
+  apps/manonica-lab/experiments/local_boundary_conductor.toml --backend gpu
+
+cargo run --release -p manonica-simulator --features gpu --bin gpu-coupled -- \
+  --grid 32 24 32 --steps 120 --batch 3
 ```
 
-Supported command line modes: `--backend auto|gpu|cpu`,
-`--backend=gpu` and environment variable `MANONICA_SIM_BACKEND`.
-An explicit CLI flag overrides the environment. Invalid values abort
-before creating the application window.
+The headless command executes one warm-up step before timing, compares every
+cell and material store against the independent CPU reference, checks the
+ledger and reports batch p50/p95 and mean time per physical step. Validation
+failure produces a nonzero exit status. Smaller diffusion/transport comparisons
+are available through `--bin gpu-transport`.
 
-The default command below also uses auto-selection (GPU-first):
+Use release builds and identical grids, timesteps and enabled laws when
+comparing performance. Software Vulkan validates real shader execution but
+its timings do not predict performance on an RTX/AMD/Intel GPU. Changing the
+frame rate or skipping physical operators is not a valid solver speedup.
 
+F3 reports:
 
-```bash
-cargo run --release --manifest-path apps/manonica-lab/Cargo.toml -- \
-  apps/manonica-lab/experiments/potential_concentrator.toml
-```
+- `SIM STEP`: wall time per simulated step, including synchronization.
+- `GPU BATCH`: complete batch wall time and its actual timestep count.
+- `RENDER WALL`: rendering wall time, including driver/presentation waits.
+- `FIELD CPU`: background volume-atlas sampling time.
 
-Force GPU diffusion through the environment:
+The graphics surface uses FIFO VSync. No extra software timer runs by default;
+`MANONICA_RENDER_FPS` explicitly enables an optional submission limit.
 
-```bash
-MANONICA_SIM_BACKEND=gpu cargo run --release -- \
-  --manifest-path apps/manonica-lab/Cargo.toml -- \
-  apps/manonica-lab/experiments/potential_concentrator.toml
-```
-
-In `auto` mode, failure to initialize the GPU or to advance
-diffusion switches to the CPU reference, retrying the same transactional
-physics step. In forced `gpu` mode, either failure terminates the entire
-process with a nonzero exit code. In forced `cpu` mode, no GPU compute
-adapter is initialized.
-
-### F3 telemetry
-
-- `PHYSICS CPU`: CPU physical solver (GPU not requested).
-- `PHYSICS GPU`: selected GPU computation (currently only the diffusion operator runs on GPU; the complete solver remains hybrid).
-- `PHYSICS CPU (FALLBACK)`: the automatic policy selected the CPU after GPU unavailability/failure. This is a status, **not a third backend**.
-- `DIFF WALL`: total wall-clock duration of the GPU diffusion
-  operation, **including** upload, submission, readback and validation.
-  It is **not** GPU-only execution time.
-- `SIM STEP`: full simulation wall time for one step (the previous
-  `SIM CPU` label was misleading when GPU compute blocks on readback).
-- `RENDER CPU` and `FIELD CPU`: graphic-side work, **not** the
-  time spent computing physics on the GPU.
-
-Do not estimate speedup from FPS. Verify CPU and GPU with equal
-initial conditions, grid size and timestep using `SIM STEP`
-and the dedicated benchmark.
-
-## Verification and benchmarking
+## Validation
 
 ```bash
-cargo test --manifest-path crates/manonica-compute-gpu/Cargo.toml
-cargo test --manifest-path apps/manonica-lab/Cargo.toml
 cargo test --workspace
+MANONICA_GPU_TEST=1 cargo test --manifest-path crates/manonica-compute-gpu/Cargo.toml
+cargo test --manifest-path apps/manonica-lab/Cargo.toml
+cargo test --manifest-path apps/manonica-lab/Cargo.toml gpu_tests -- --ignored --nocapture
+cargo craftcheck check
+cargo craftcheck deps
 ```
 
-A hardware-dependent parity test compares GPU results cell by cell to
-the independent f64 CPU solver, checking total count and output shape.
-GitHub-hosted CI intentionally skips device parity unless
-`MANONICA_GPU_TEST=1`; a green CI result alone is **not proof** of
-correctness on a specific NVIDIA/AMD/Intel device.
-
-On a physical GPU, explicitly run the parity test:
-
-```bash
-MANONICA_GPU_TEST=1 cargo test \
-  --manifest-path crates/manonica-compute-gpu/Cargo.toml \
-  gpu_diffusion_matches_cpu_when_an_adapter_exists -- --nocapture
-```
-
-To profile a local adapter, run the ignored 32³ x 100-step benchmark:
-
-```bash
-cargo test --manifest-path crates/manonica-compute-gpu/Cargo.toml \
-  --release benchmark_gpu_vs_cpu_including_transfer_overhead -- --ignored --nocapture
-```
-
-Record measured CPU time, GPU end-to-end time and maximum cell error.
-Prefer CPU at sizes where transfer overhead dominates.
-
-## Roadmap, in order
-
-1. Persistent device-side free field, fused diffusion/gradient/advection
-   kernels with physical invariants and CPU/GPU parity tests.
-2. Material/trap state on device with bounded conservative transfers,
-   heat, energy and saturation tests.
-3. Device-side source deposition and numerical potential solver with
-   independently checked residuals and boundary conditions.
-4. Coalesced multi-step execution and snapshots only when needed by
-   simulation observability / rendering. This is required to eliminate
-   routine GPU→CPU roundtrips.
-5. Adaptive load balancing, CPU fallback and reproducibility
-   requirements appropriate for a Minecraft dedicated server.
-
-No new physical law may be added without a reference simulation test
-and conservation/energy audit.
+GPU integration covers coupled CPU/GPU parity, thermal and binding storage,
+shared channels, local boundaries, saturation/shutdown, multiple drift substeps,
+partial workgroups, multi-level reductions and failed-batch rollback. Explicit
+Lab integration checks the physical construction example and worker reset.
+CI installs software Vulkan and runs these checks; target hardware performance
+still requires measurement on that device.

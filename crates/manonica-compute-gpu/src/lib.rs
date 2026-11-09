@@ -2,12 +2,12 @@
 //!
 //! This crate is independent of the Manonica Lab application and renderer.
 //!
-//! Lab remains a hybrid solver: diffusion and uniform transport run on a
-//! headless Meridian/wgpu compute device; binding, temperature, energy audits
-//! and the Lab potential cycle still execute on CPU. `GpuPotential` exposes
-//! the independent GPU potential solver for headless validation.
-//! GPU f32 results are mass-renormalized to the previous f64 inventory
-//! after readback. CPU remains the reference implementation.
+//! `GpuCoupled` keeps the complete coupled solver on the device: transport,
+//! potential drift, binding, channels, heat and energy. Cell operators and
+//! hierarchical reductions are parallel; dependent edge exchanges preserve
+//! the reference order. Readback is validated before committing a snapshot.
+//! `GpuDiffusion` also exposes the independent diffusion/flow adapter.
+//! CPU f64 laws remain the numerical reference for the f32 GPU backend.
 
 mod advection;
 mod backend;

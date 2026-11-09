@@ -9,6 +9,7 @@ on:
       - 'crates/manonica-core/**'
       - 'crates/manonica-physics/**'
       - 'crates/manonica-materials/**'
+      - 'crates/manonica-simulation/**'
       - 'crates/manonica-compute-gpu/**'
       - 'crates/manonica-error/**'
       - '.github/workflows/lab.yml'
@@ -46,6 +47,10 @@ jobs:
         env:
           MANONICA_GPU_TEST: '1'
         run: cargo test --manifest-path crates/manonica-compute-gpu/Cargo.toml
+      - name: Resident Lab integration and device reset
+        run: cargo test --manifest-path apps/manonica-lab/Cargo.toml gpu_tests -- --ignored --nocapture
+      - name: Headless coupled physics validation
+        run: cargo run -p manonica-simulator --features gpu --bin gpu-coupled
       - name: Headless resident transport experiment
         run: cargo run -p manonica-simulator --features gpu --bin gpu-transport
       - name: Check compute crate formatting
