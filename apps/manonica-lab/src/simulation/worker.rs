@@ -2,7 +2,8 @@
 //! A bounded, lossy snapshot queue keeps memory constant if rendering stalls.
 
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -10,7 +11,26 @@ use manonica_physics::FreeManaField;
 
 use super::{BackendPreference, Simulation};
 use crate::experiment::Experiment;
-use manonica_compute_gpu::GpuCoupled;
+
+mod runtime;
+use runtime::{RuntimeChannels, run_simulation};
+
+pub enum ConfigurationResult {
+    Applied {
+        revision: u64,
+        snapshot: Box<SimulationSnapshot>,
+    },
+    Rejected {
+        revision: u64,
+        message: String,
+    },
+}
+fn worker_stopped() -> manonica_error::BaseError {
+    manonica_error::BaseError::new(
+        manonica_error::ErrorCode::InvalidState,
+        "simulation_worker_stopped",
+    )
+}
 
 const SNAPSHOT_PERIOD: Duration = Duration::from_millis(50);
 
@@ -49,6 +69,7 @@ impl Default for ComputeTelemetry {
 
 #[derive(Clone)]
 pub struct SimulationSnapshot {
+    pub revision: u64,
     pub field: Arc<FreeManaField>,
     pub elapsed: f64,
     pub steps: u64,
@@ -81,6 +102,7 @@ impl SimulationSnapshot {
         compute: ComputeTelemetry,
     ) -> Self {
         Self {
+            revision: sim.revision,
             field: Arc::new(sim.field().clone()),
             elapsed: sim.elapsed(),
             steps: sim.steps(),
@@ -114,7 +136,10 @@ impl SimulationSnapshot {
 enum Command {
     Pause(bool),
     Reset,
-    Replace(Box<Experiment>),
+    Replace {
+        revision: u64,
+        experiment: Box<Experiment>,
+    },
 }
 
 /// Owned by the app; only the worker owns `Simulation`.
@@ -123,6 +148,9 @@ pub struct SimulationWorker {
     commands: Option<Sender<Command>>,
     snapshots: Receiver<SimulationSnapshot>,
     thread: Option<JoinHandle<()>>,
+    stop: Arc<AtomicBool>,
+    next_revision: AtomicU64,
+    configuration_results: Receiver<ConfigurationResult>,
 }
 
 impl SimulationWorker {
@@ -141,15 +169,32 @@ impl SimulationWorker {
             SimulationSnapshot::capture(&simulation, 0.0, false, None, ComputeTelemetry::default());
         let (commands_tx, commands_rx) = mpsc::channel();
         let (snapshots_tx, snapshots_rx) = mpsc::sync_channel(1);
+        let (result_tx, result_rx) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
         let handle = thread::Builder::new()
             .name("manonica-physics".into())
-            .spawn(move || run_simulation(simulation, commands_rx, snapshots_tx, backend))
+            .spawn(move || {
+                run_simulation(
+                    simulation,
+                    backend,
+                    RuntimeChannels {
+                        commands: commands_rx,
+                        updates: snapshots_tx,
+                        results: result_tx,
+                        stop: worker_stop,
+                    },
+                )
+            })
             .expect("failed to start physics worker");
         (
             Self {
                 commands: Some(commands_tx),
                 snapshots: snapshots_rx,
                 thread: Some(handle),
+                stop,
+                next_revision: AtomicU64::new(1),
+                configuration_results: result_rx,
             },
             initial,
         )
@@ -167,10 +212,30 @@ impl SimulationWorker {
         }
     }
 
-    pub fn replace_experiment(&self, experiment: Experiment) {
-        if let Some(tx) = &self.commands {
-            let _ = tx.send(Command::Replace(Box::new(experiment)));
-        }
+    pub fn replace_experiment(
+        &self,
+        experiment: Experiment,
+    ) -> Result<u64, manonica_error::BaseError> {
+        let revision = self.next_revision.fetch_add(1, Ordering::Relaxed);
+        self.commands
+            .as_ref()
+            .ok_or_else(worker_stopped)?
+            .send(Command::Replace {
+                revision,
+                experiment: Box::new(experiment),
+            })
+            .map_err(|_| worker_stopped())?;
+        Ok(revision)
+    }
+    pub fn poll_configuration(&self) -> Option<ConfigurationResult> {
+        self.configuration_results.try_recv().ok()
+    }
+    pub fn request_shutdown(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.commands.take();
+    }
+    pub fn is_finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
     pub fn poll_latest(&self) -> Option<SimulationSnapshot> {
@@ -186,276 +251,12 @@ impl Drop for SimulationWorker {
     fn drop(&mut self) {
         // Closing the control channel wakes recv_timeout/recv, and the join
         // ensures the physics thread cannot outlive its owning application.
-        self.commands.take();
+        self.request_shutdown();
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
         }
     }
 }
 
-fn publish(
-    tx: &SyncSender<SimulationSnapshot>,
-    sim: &Simulation,
-    cpu_ms: f64,
-    paused: bool,
-    error: &Option<String>,
-    compute: ComputeTelemetry,
-) {
-    // A delayed renderer may keep the previous snapshot. Never block physics
-    // on the graphics thread or queue unlimited full-grid copies.
-    let snapshot = SimulationSnapshot::capture(sim, cpu_ms, paused, error.clone(), compute);
-    let _ = tx.try_send(snapshot);
-}
-
-fn run_simulation(
-    mut sim: Simulation,
-    commands: Receiver<Command>,
-    updates: SyncSender<SimulationSnapshot>,
-    backend: BackendPreference,
-) {
-    let mut period = Duration::from_secs_f64(sim.experiment.physics.dt);
-    let mut max_catch_up = sim.experiment.physics.steps_per_frame;
-    let mut paused = false;
-    let mut error: Option<String> = None;
-    let mut cpu_ms = 0.0;
-    let create_gpu = |sim: &Simulation| -> Option<GpuCoupled> {
-        if !backend.attempts_gpu() {
-            return None;
-        }
-        match GpuCoupled::new(sim.coupled_state(), &sim.step_parameters()) {
-            Ok(device) => {
-                eprintln!(
-                    "Manonica: resident GPU physics selected: {}",
-                    device.adapter_name()
-                );
-                Some(device)
-            }
-            Err(error) if backend.allows_cpu_fallback() => {
-                eprintln!(
-                    "Manonica: GPU initialization unavailable ({error}); falling back to CPU"
-                );
-                None
-            }
-            Err(error) => {
-                eprintln!("Manonica: --backend gpu requires a working GPU: {error}");
-                std::process::exit(2);
-            }
-        }
-    };
-    let mut gpu = create_gpu(&sim);
-    let mut next_tick = Instant::now() + period;
-    let mut next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
-    let mut compute = ComputeTelemetry {
-        backend: if gpu.is_some() {
-            ComputeBackend::Gpu
-        } else {
-            ComputeBackend::Cpu
-        },
-        cpu_fallback: gpu.is_none() && backend.attempts_gpu(),
-        batch_wall_ms: 0.0,
-        batch_steps: 0,
-    };
-
-    loop {
-        let now = Instant::now();
-        let deadline = if paused || gpu.is_some() {
-            next_snapshot
-        } else {
-            next_tick.min(next_snapshot)
-        };
-        let wait = deadline.saturating_duration_since(now);
-        match commands.recv_timeout(wait) {
-            Ok(Command::Pause(next)) => {
-                paused = next;
-                next_tick = Instant::now() + period;
-                publish(&updates, &sim, cpu_ms, paused, &error, compute);
-            }
-            Ok(Command::Reset) => {
-                match sim.reset() {
-                    Ok(()) => {
-                        gpu = create_gpu(&sim);
-                        compute.backend = if gpu.is_some() {
-                            ComputeBackend::Gpu
-                        } else {
-                            ComputeBackend::Cpu
-                        };
-                        compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
-                        compute.batch_wall_ms = 0.0;
-                        compute.batch_steps = 0;
-                        error = None;
-                        cpu_ms = 0.0;
-                        next_tick = Instant::now() + period;
-                    }
-                    Err(err) => {
-                        error = Some(err.to_string());
-                        paused = true;
-                    }
-                }
-                publish(&updates, &sim, cpu_ms, paused, &error, compute);
-            }
-            Ok(Command::Replace(experiment)) => match Simulation::new(*experiment) {
-                Ok(next) => {
-                    sim = next;
-                    gpu = create_gpu(&sim);
-                    compute.backend = if gpu.is_some() {
-                        ComputeBackend::Gpu
-                    } else {
-                        ComputeBackend::Cpu
-                    };
-                    compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
-                    compute.batch_wall_ms = 0.0;
-                    compute.batch_steps = 0;
-                    period = Duration::from_secs_f64(sim.experiment.physics.dt);
-                    max_catch_up = sim.experiment.physics.steps_per_frame;
-                    error = None;
-                    paused = false;
-                    cpu_ms = 0.0;
-                    next_tick = Instant::now() + period;
-                    next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
-                    publish(&updates, &sim, cpu_ms, paused, &error, compute);
-                }
-                Err(err) => {
-                    error = Some(err.to_string());
-                    paused = true;
-                    publish(&updates, &sim, cpu_ms, paused, &error, compute);
-                }
-            },
-            Err(RecvTimeoutError::Disconnected) => break,
-            Err(RecvTimeoutError::Timeout) => {}
-        }
-
-        let now = Instant::now();
-        if !paused {
-            let mut ran = 0;
-            // Bound submission length so overdue physics cannot monopolize
-            // the rendering device with an ever-growing catch-up batch.
-            let catch_up_limit = if gpu.is_some() {
-                ((SNAPSHOT_PERIOD.as_secs_f64() / period.as_secs_f64()).ceil() as usize)
-                    .max(max_catch_up)
-                    .clamp(1, 64)
-            } else {
-                max_catch_up
-            };
-            while now >= next_tick && ran < catch_up_limit {
-                let started = Instant::now();
-                // GPU runs the complete coupled interval, with one readback
-                // at the observation cadence rather than each physics step.
-                let overdue = (now.duration_since(next_tick).as_secs_f64() / period.as_secs_f64())
-                    .floor() as usize
-                    + 1;
-                let steps = if gpu.is_some() {
-                    overdue.min(catch_up_limit - ran)
-                } else {
-                    1
-                };
-                let result = if let Some(device) = gpu.as_mut() {
-                    sim.step_coupled_gpu(device, steps as u32)
-                } else {
-                    sim.step()
-                };
-                if let Some(device) = gpu.as_ref() {
-                    compute.batch_wall_ms = device.last_wall_ms();
-                    compute.batch_steps = steps as u32;
-                }
-                if let Err(err) = result {
-                    if gpu.is_some() && backend.allows_cpu_fallback() {
-                        eprintln!("Manonica: GPU step failed ({err}); retrying batch on CPU");
-                        gpu = None;
-                        compute.backend = ComputeBackend::Cpu;
-                        compute.cpu_fallback = true;
-                        compute.batch_wall_ms = 0.0;
-                        compute.batch_steps = 0;
-                        // GPU candidate is transactional. On fallback replay
-                        // *every* step, not only the first.
-                        for _ in 0..steps {
-                            if let Err(cpu_error) = sim.step() {
-                                error = Some(cpu_error.to_string());
-                                paused = true;
-                                break;
-                            }
-                        }
-                        if paused {
-                            break;
-                        }
-                    } else if gpu.is_some() && backend == BackendPreference::Gpu {
-                        eprintln!("Manonica: forced GPU backend failed: {err}");
-                        std::process::exit(3);
-                    } else {
-                        error = Some(err.to_string());
-                        paused = true;
-                        break;
-                    }
-                }
-                // Per-simulated-step wall time, including GPU synchronization.
-                cpu_ms = started.elapsed().as_secs_f64() * 1000.0 / steps as f64;
-                ran += steps;
-                next_tick += period * steps as u32;
-            }
-            if now >= next_tick {
-                // Drop accumulated debt rather than turning every slow
-                // simulation frame into an unbounded burst of solver work.
-                next_tick = Instant::now() + period;
-            }
-        }
-        if now >= next_snapshot || paused {
-            publish(&updates, &sim, cpu_ms, paused, &error, compute);
-            next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::experiment::ExperimentBuilder;
-
-    #[test]
-    fn backend_labels_are_explicit_and_unambiguous() {
-        assert_eq!(ComputeBackend::Cpu.label(), "CPU");
-        assert_eq!(ComputeBackend::Gpu.label(), "GPU");
-        assert!(!ComputeTelemetry::default().cpu_fallback);
-        assert_eq!(ComputeTelemetry::default().batch_wall_ms, 0.0);
-    }
-
-    #[test]
-    fn physics_advances_independently_of_renderer_then_pauses() {
-        let exp = ExperimentBuilder::new("worker")
-            .grid([8, 8, 8], 0.5)
-            .diffusion(0.15, 0.01, 2)
-            .gaussian([0.0; 3], 200.0, 0.6)
-            .build()
-            .unwrap();
-        let (worker, initial) = SimulationWorker::spawn_with_backend(
-            Simulation::new(exp).unwrap(),
-            BackendPreference::Cpu,
-        );
-        assert_eq!(initial.steps, 0);
-        thread::sleep(Duration::from_millis(110));
-        let snapshot = worker.poll_latest().expect("worker publishes snapshots");
-        assert!(snapshot.steps > 0);
-        assert!((snapshot.total - initial.total).abs() < 1e-6);
-        worker.pause(true);
-        thread::sleep(Duration::from_millis(80));
-        let stopped = worker.poll_latest().unwrap();
-        assert!(stopped.paused);
-        let step = stopped.steps;
-        thread::sleep(Duration::from_millis(90));
-        assert_eq!(worker.poll_latest().unwrap().steps, step);
-        worker.reset();
-        thread::sleep(Duration::from_millis(70));
-        assert_eq!(worker.poll_latest().unwrap().steps, 0);
-    }
-
-    #[test]
-    fn dropping_worker_terminates_without_waiting_for_render() {
-        let exp = ExperimentBuilder::new("drop")
-            .grid([5, 5, 5], 1.0)
-            .build()
-            .unwrap();
-        let (worker, _) = SimulationWorker::spawn_with_backend(
-            Simulation::new(exp).unwrap(),
-            BackendPreference::Cpu,
-        );
-        drop(worker);
-    }
-}
+mod tests;

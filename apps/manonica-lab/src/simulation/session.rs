@@ -22,15 +22,30 @@ pub struct Simulation {
     equilibrium: EquilibriumMonitor,
     time_seconds: f64,
     steps: u64,
+    pub(crate) revision: u64,
 }
 
 impl Simulation {
     pub fn new(experiment: Experiment) -> Result<Self, ExperimentError> {
+        Self::new_cancellable(experiment, &|| false)
+    }
+    pub(crate) fn new_cancellable(
+        experiment: Experiment,
+        should_cancel: &impl Fn() -> bool,
+    ) -> Result<Self, ExperimentError> {
+        if should_cancel() {
+            return Err(manonica_error::BaseError::new(
+                manonica_error::ErrorCode::InvalidState,
+                "experiment_cancelled",
+            )
+            .into());
+        }
         experiment.validate()?;
         let field = seeded_field(&experiment)?;
         let advection = FreeAdvection::new(experiment.physics.flow.clone());
         let materials = build_materials(&experiment, &field)?;
-        let (potential, field_ledger) = build_potential(&experiment, &field)?;
+        let (potential, field_ledger) =
+            build_potential_cancellable(&experiment, &field, should_cancel)?;
         // Fail fast if the velocity is incompatible with the spatial or
         // temporal discretization. This validation must not advance the session.
         let mut probe = field.clone();
@@ -47,6 +62,7 @@ impl Simulation {
             equilibrium: EquilibriumMonitor::default(),
             time_seconds: 0.0,
             steps: 0,
+            revision: 0,
         })
     }
 
@@ -295,6 +311,14 @@ fn build_potential(
     experiment: &Experiment,
     field: &FreeManaField,
 ) -> Result<(Option<PotentialField>, Option<FieldLedger>), ExperimentError> {
+    build_potential_cancellable(experiment, field, &|| false)
+}
+
+fn build_potential_cancellable(
+    experiment: &Experiment,
+    field: &FreeManaField,
+    should_cancel: &impl Fn() -> bool,
+) -> Result<(Option<PotentialField>, Option<FieldLedger>), ExperimentError> {
     let Some(settings) = &experiment.physics.potential else {
         return Ok((None, None));
     };
@@ -340,7 +364,7 @@ fn build_potential(
             });
         }
     }
-    let potential = PotentialField::solve_with_local(
+    let potential = PotentialField::solve_with_local_cancellable(
         shape,
         dx,
         &sources,
@@ -349,6 +373,7 @@ fn build_potential(
         settings.boundary.physics(),
         settings.iterations,
         &boundary_sites,
+        should_cancel,
     )?;
     let setup_energy = potential.field_energy_joules();
     if !setup_energy.is_finite() || setup_energy > settings.initial_work_joules + 1e-9 {
