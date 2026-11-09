@@ -25,6 +25,7 @@ pub struct FormulaEditor {
     pub message: String,
     /// Preview verifies not just syntax but physical grid occupancy.
     pub preview_error: Option<String>,
+    preview_signature: Option<(usize, [String; 3])>,
 }
 impl Default for FormulaEditor {
     fn default() -> Self {
@@ -38,6 +39,7 @@ impl Default for FormulaEditor {
             center: [0.0; 3],
             message: "TAB: next field   ENTER: apply   ESC: close".into(),
             preview_error: None,
+            preview_signature: None,
         }
     }
 }
@@ -50,6 +52,9 @@ impl FormulaEditor {
             .filter(|ch| ch.is_ascii() && !ch.is_control())
             .take(MAX_EXPRESSION)
             .collect();
+        if filtered.is_empty() {
+            return;
+        }
         let field = &mut self.expressions[self.selected];
         if self.selection_all {
             field.clear();
@@ -85,6 +90,7 @@ impl FormulaEditor {
     pub fn load(&mut self, formulas: &[Formula]) {
         self.selection_all = false;
         self.preview_error = None;
+        self.preview_signature = None;
         self.circuits = formulas.len().max(1);
         self.circuit = self.circuit.min(self.circuits - 1);
         if let Some(formula) = formulas.get(self.circuit) {
@@ -119,6 +125,16 @@ impl FormulaEditor {
     /// may still collide with another formula trap or installed material.
     /// Unlike Simulation::new this doesn't rebuild the whole physics state.
     pub fn validate_physical_preview(&mut self, experiment: &Experiment) {
+        if self
+            .preview_signature
+            .as_ref()
+            .is_some_and(|(circuit, expressions)| {
+                *circuit == self.circuit && expressions == &self.expressions
+            })
+        {
+            return;
+        }
+        self.preview_signature = Some((self.circuit, self.expressions.clone()));
         let candidate = self.update_formula(experiment.formulas.get(self.circuit));
         let dimensions = experiment.grid.dimensions;
         let dx = experiment.grid.cell_size;
@@ -234,9 +250,15 @@ impl EditorOverlay {
             editor.preview_error
         );
         if self.texture.is_none() || self.signature != signature {
-            let next = base.render.recorder.upload(&editor.image());
-            if let Some(old) = self.texture.replace(next) {
-                base.render.recorder.release(old);
+            let image = editor.image();
+            if !self
+                .texture
+                .is_some_and(|handle| base.render.recorder.update(handle, &image))
+            {
+                let next = base.render.recorder.upload(&image);
+                if let Some(old) = self.texture.replace(next) {
+                    base.render.recorder.release(old);
+                }
             }
             self.signature = signature;
         }
@@ -562,9 +584,14 @@ impl FormulaLegend {
                 height: H as u32,
                 pixels,
             };
-            let next = base.render.recorder.upload(&image);
-            if let Some(old) = self.texture.replace(next) {
-                base.render.recorder.release(old);
+            if !self
+                .texture
+                .is_some_and(|handle| base.render.recorder.update(handle, &image))
+            {
+                let next = base.render.recorder.upload(&image);
+                if let Some(old) = self.texture.replace(next) {
+                    base.render.recorder.release(old);
+                }
             }
             self.last_upload = Some(now);
             self.last_revision = revision;
@@ -637,3 +664,6 @@ mod tests {
         assert_eq!(editor.image().pixels.len(), WIDTH * HEIGHT * 4);
     }
 }
+
+#[cfg(test)]
+mod input_tests;
