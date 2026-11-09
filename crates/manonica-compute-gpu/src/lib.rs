@@ -12,16 +12,23 @@
 mod advection;
 mod backend;
 mod channels;
+mod cooling;
 mod coupled;
 mod coupled_transport;
 mod diffusion;
+mod drift_plan;
+mod drift_prepare;
 mod energy;
+mod energy_control;
 mod error;
 mod kernel;
 mod layout;
 mod material_exchange;
 mod potential;
 mod potential_drift;
+mod potential_scale;
+mod reduction;
+mod schedule;
 mod thermal;
 
 pub use backend::GpuDiffusion;

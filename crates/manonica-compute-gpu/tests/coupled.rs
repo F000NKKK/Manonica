@@ -189,3 +189,45 @@ fn rejected_batch_preserves_snapshot_and_device_state() {
     assert_eq!(gpu.snapshot().field.densities(), before);
     assert!(gpu.advance(0).is_err());
 }
+
+#[test]
+fn parallel_drift_subdivision_matches_reference() {
+    let (mut cpu, mut params) = scene(true);
+    params.field.as_mut().unwrap().mobility = 20.0;
+    params.field.as_mut().unwrap().shutdown_at_bound_fraction = 0.0;
+    let mut gpu = GpuCoupled::new(&cpu, &params).unwrap();
+    for _ in 0..20 {
+        cpu.step(&params).unwrap();
+    }
+    gpu.advance(20).unwrap();
+    compare(&cpu, gpu.snapshot());
+}
+
+#[test]
+fn hierarchical_reductions_cover_partial_workgroups() {
+    let shape = GridShape::new(13, 7, 5).unwrap();
+    let mut field =
+        FreeManaField::uniform(shape, 0.5, Quantity::nonnegative(0.0).unwrap()).unwrap();
+    for i in 0..shape.len() {
+        field
+            .set_flat(
+                i,
+                Quantity::nonnegative((i % 17 + 1) as f64 * 0.13).unwrap(),
+            )
+            .unwrap();
+    }
+    let (_, params) = scene(false);
+    let mut cpu = CoupledState {
+        field,
+        materials: MaterialLattice::new(shape),
+        potential: None,
+        field_ledger: None,
+        shutdown: false,
+    };
+    let mut gpu = GpuCoupled::new(&cpu, &params).unwrap();
+    for _ in 0..20 {
+        cpu.step(&params).unwrap();
+    }
+    gpu.advance(20).unwrap();
+    compare(&cpu, gpu.snapshot());
+}

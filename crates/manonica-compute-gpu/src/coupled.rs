@@ -2,14 +2,17 @@
 mod packing;
 mod readback;
 use crate::{
-    GpuPotential, channels, coupled_transport, energy,
+    GpuPotential, channels, cooling, coupled_transport, energy, energy_control,
     error::invalid,
-    kernel::Kernel,
+    kernel::{Kernel, copy, dispatch},
     layout::{LEDGER_WORDS, STATE_WORDS},
-    material_exchange, potential_drift, thermal,
+    material_exchange, potential_drift, potential_scale,
+    reduction::Reduction,
+    schedule::OrderedPass,
+    thermal,
 };
 use manonica_error::BaseError;
-use manonica_simulation::{CoupledState, StepParameters};
+use manonica_simulation::{CoupledState, MediumFlow, StepParameters};
 use meridian_gpu_wgpu::{Buffer, BufferUsage, CommandBuffer};
 use meridian_sdk::GpuComputeDevice;
 use packing::Upload;
@@ -27,14 +30,20 @@ pub struct GpuCoupled {
     backup_cells: Buffer,
     backup_ledger: Buffer,
     readback: Buffer,
+    gather: Kernel,
+    reduction: Reduction,
+    scale_potential: Kernel,
+    has_flow: bool,
+    has_diffusion: bool,
     initialize: Kernel,
     begin: Kernel,
     diffuse: Kernel,
     advect: Kernel,
-    drift: Kernel,
+    drift: Option<potential_drift::Drift>,
     exchange: Kernel,
-    channels: Kernel,
-    thermal: Kernel,
+    channels: Option<OrderedPass>,
+    thermal: Option<OrderedPass>,
+    cooling: Kernel,
     finish: Kernel,
     snapshot: CoupledState,
     scale: f64,
@@ -82,7 +91,7 @@ impl GpuCoupled {
         ]
         .iter()
         .any(|data| data.len() as u64 > limits.max_storage_buffer_binding_size)
-            || limits.max_storage_buffers_per_shader_stage < 6
+            || limits.max_storage_buffers_per_shader_stage < 8
             || upload.cells.len() as u64 + LEDGER_WORDS as u64 * 4 + 4 > limits.max_buffer_size
             || (state.field.shape().len() as u64).div_ceil(64)
                 > u64::from(limits.max_compute_workgroups_per_dimension)
@@ -97,7 +106,7 @@ impl GpuCoupled {
         let cells = make(&upload.cells);
         let scratch = raw.create_buffer(upload.cells.len(), BufferUsage::Storage);
         let materials = make(&upload.materials);
-        let links = make(&upload.channels);
+        let metrics = raw.create_buffer(state.field.shape().len() * 8, BufferUsage::Storage);
         let params = make(&upload.parameters);
         let local = make(&upload.local);
         let ledger = make(&upload.ledger);
@@ -108,21 +117,47 @@ impl GpuCoupled {
             upload.cells.len() + LEDGER_WORDS * 4 + 4,
             BufferUsage::Storage,
         );
-        let energy_buffers = [&cells, &materials, &params, &local, &ledger, &status];
-        let initialize = energy::kernel(raw, "initialize", &energy_buffers);
-        let begin = energy::kernel(raw, "begin", &energy_buffers);
-        let finish = energy::kernel(raw, "finish", &energy_buffers);
+        let groups = (state.field.shape().len() as u32).div_ceil(64);
+        let reduction = Reduction::new(raw, groups);
+        let gather = energy::kernel(
+            raw,
+            "gather",
+            &[
+                &cells,
+                &materials,
+                &params,
+                &local,
+                &ledger,
+                &metrics,
+                reduction.first(),
+                &status,
+            ],
+        );
+        let energy_buffers = [reduction.last(), &params, &ledger, &status];
+        let initialize = energy_control::kernel(raw, "initialize", &energy_buffers);
+        let begin = energy_control::kernel(raw, "begin", &energy_buffers);
+        let finish = energy_control::kernel(raw, "finish", &energy_buffers);
+        let scale_potential = potential_scale::kernel(raw, &[&cells, &ledger, &status]);
         let transport_buffers = [&cells, &scratch, &params, &status];
         let diffuse = coupled_transport::kernel(raw, "diffuse", &transport_buffers);
         let advect = coupled_transport::kernel(raw, "advect", &transport_buffers);
-        let drift = potential_drift::kernel(
+        let drift = potential_drift::Drift::new(
             raw,
-            "drift",
-            &[&cells, &scratch, &params, &local, &ledger, &status],
+            [
+                &cells, &scratch, &params, &local, &ledger, &metrics, &status,
+            ],
+            &state,
+            parameters,
         );
         let exchange = material_exchange::kernel(raw, &[&cells, &materials, &params, &status]);
-        let channels = channels::kernel(raw, &[&cells, &links, &params, &status]);
-        let thermal = thermal::kernel(raw, &[&cells, &materials, &params, &ledger, &status]);
+        let channels = channels::kernel(raw, &cells, &params, &status, &state, &upload.channels);
+        let thermal = thermal::kernel(
+            raw,
+            [&cells, &materials, &params, &status],
+            &state,
+            parameters.thermal_conductance,
+        );
+        let cooling = cooling::kernel(raw, &[&cells, &materials, &params, &metrics, &status]);
         let mut result = Self {
             runtime,
             device,
@@ -133,6 +168,12 @@ impl GpuCoupled {
             backup_cells,
             backup_ledger,
             readback,
+            gather,
+            reduction,
+            scale_potential,
+            has_flow: !matches!(parameters.flow, MediumFlow::Still),
+            has_diffusion: parameters.diffusivity > 0.0,
+            cooling,
             initialize,
             begin,
             diffuse,
@@ -147,6 +188,7 @@ impl GpuCoupled {
             last_wall_ms: 0.0,
         };
         let mut commands = result.device.gpu_driver_device().create_command_buffer();
+        result.reduce(&mut commands);
         dispatch(&mut commands, &result.initialize, 1);
         result.copy_readback(&mut commands);
         commands.submit();
@@ -175,15 +217,31 @@ impl GpuCoupled {
         copy(&mut commands, &self.ledger, &self.backup_ledger, 0);
         let groups = (self.snapshot.field.shape().len() as u32).div_ceil(64);
         for _ in 0..steps {
+            self.reduce(&mut commands);
             dispatch(&mut commands, &self.begin, 1);
-            dispatch(&mut commands, &self.diffuse, groups);
-            copy(&mut commands, &self.scratch, &self.cells, 0);
-            dispatch(&mut commands, &self.advect, groups);
-            copy(&mut commands, &self.scratch, &self.cells, 0);
-            dispatch(&mut commands, &self.drift, 1);
+            if self.snapshot.potential.is_some() {
+                dispatch(&mut commands, &self.scale_potential, groups);
+            }
+            if self.has_diffusion {
+                dispatch(&mut commands, &self.diffuse, groups);
+                copy(&mut commands, &self.scratch, &self.cells, 0);
+            }
+            if self.has_flow {
+                dispatch(&mut commands, &self.advect, groups);
+                copy(&mut commands, &self.scratch, &self.cells, 0);
+            }
+            if let Some(drift) = &self.drift {
+                drift.record(&mut commands, &self.scratch, &self.cells);
+            }
             dispatch(&mut commands, &self.exchange, groups);
-            dispatch(&mut commands, &self.channels, 1);
-            dispatch(&mut commands, &self.thermal, 1);
+            if let Some(channels) = &self.channels {
+                channels.record(&mut commands);
+            }
+            if let Some(thermal) = &self.thermal {
+                thermal.record(&mut commands);
+            }
+            dispatch(&mut commands, &self.cooling, groups);
+            self.reduce(&mut commands);
             dispatch(&mut commands, &self.finish, 1);
         }
         self.copy_readback(&mut commands);
@@ -199,6 +257,11 @@ impl GpuCoupled {
         }
         self.last_wall_ms = started.elapsed().as_secs_f64() * 1000.0;
         Ok(&self.snapshot)
+    }
+    fn reduce(&self, commands: &mut CommandBuffer<'_>) {
+        let groups = (self.snapshot.field.shape().len() as u32).div_ceil(64);
+        dispatch(commands, &self.gather, groups);
+        self.reduction.record(commands);
     }
     fn copy_readback(&self, commands: &mut CommandBuffer<'_>) {
         let bytes = self.snapshot.field.shape().len() * STATE_WORDS * 4;
@@ -220,16 +283,4 @@ impl GpuCoupled {
         self.scale = scale;
         Ok(())
     }
-}
-fn dispatch(commands: &mut CommandBuffer<'_>, kernel: &Kernel, groups: u32) {
-    commands.dispatch_compute_with_bind_group(&kernel.pipeline, &kernel.bind, groups);
-}
-fn copy(commands: &mut CommandBuffer<'_>, source: &Buffer, target: &Buffer, offset: u64) {
-    commands.encoder_mut().copy_buffer_to_buffer(
-        source.wgpu_buffer(),
-        0,
-        target.wgpu_buffer(),
-        offset,
-        source.byte_len as u64,
-    );
 }
