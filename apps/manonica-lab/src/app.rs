@@ -415,7 +415,7 @@ fn render_loop(
     let mut camera = FlyCamera::new(Vec3::new(0.0, 3.0, 18.0));
     let mut last_frame = Instant::now();
     let mut deadline = last_frame;
-    let mut last_draw_cpu_ms = 0.0;
+    let mut last_draw_wall_ms = 0.0;
     let mut initial_manons = lock_bridge(&bridge).snapshot.total;
     let mut current_size = size;
     if let Some(fps) = frame_cap {
@@ -469,7 +469,7 @@ fn render_loop(
             frame_ms: dt * 1000.0,
             sim_cpu_ms: render_input.snapshot.sim_cpu_ms,
             compute: render_input.snapshot.compute,
-            draw_cpu_ms: last_draw_cpu_ms,
+            draw_wall_ms: last_draw_wall_ms,
             field_cpu_ms: graphics.sampling_cpu_ms(),
             sim_time: render_input.snapshot.elapsed,
             steps: render_input.snapshot.steps,
@@ -534,7 +534,7 @@ fn render_loop(
             [0.003, 0.003, 0.012, 1.0],
             &window,
         );
-        last_draw_cpu_ms = draw_start.elapsed().as_secs_f64() * 1000.0 + graphics_update_cpu_ms;
+        last_draw_wall_ms = draw_start.elapsed().as_secs_f64() * 1000.0 + graphics_update_cpu_ms;
     }
 }
 

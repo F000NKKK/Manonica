@@ -20,7 +20,7 @@ pub struct FrameMetrics {
     pub frame_ms: f64,
     pub sim_cpu_ms: f64,
     pub compute: crate::simulation::ComputeTelemetry,
-    pub draw_cpu_ms: f64,
+    pub draw_wall_ms: f64,
     pub field_cpu_ms: f64,
     pub sim_time: f64,
     pub steps: u64,
@@ -174,8 +174,8 @@ impl DebugHud {
             12,
             55,
             &format!(
-                "SIM STEP {:>6.2} ms    RENDER CPU {:>6.2} ms",
-                m.sim_cpu_ms, m.draw_cpu_ms
+                "SIM STEP {:>6.2} ms    RENDER WALL {:>6.2} ms",
+                m.sim_cpu_ms, m.draw_wall_ms
             ),
             1,
             [170, 214, 245, 255],
@@ -300,14 +300,15 @@ impl DebugHud {
             12,
             465,
             &format!(
-                "PHYSICS {}{}   GPU BATCH {:>6.2} ms",
+                "PHYSICS {}{}   GPU BATCH {:>6.2} ms / {} steps",
                 m.compute.backend.label(),
                 if m.compute.cpu_fallback {
                     " (FALLBACK)"
                 } else {
                     ""
                 },
-                m.compute.batch_wall_ms
+                m.compute.batch_wall_ms,
+                m.compute.batch_steps
             ),
             1,
             [118, 147, 177, 255],
@@ -455,7 +456,7 @@ mod tests {
                 frame_ms: 16.0,
                 sim_cpu_ms: 2.0,
                 compute: crate::simulation::ComputeTelemetry::default(),
-                draw_cpu_ms: 3.0,
+                draw_wall_ms: 3.0,
                 field_cpu_ms: 1.0,
                 sim_time: 0.0,
                 steps: 0,

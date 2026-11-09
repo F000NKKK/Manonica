@@ -14,11 +14,22 @@ fn coupled_formula_geometry_matches_cpu_reference() {
     let mut cpu = Simulation::new(experiment.clone()).unwrap();
     let mut actual = Simulation::new(experiment).unwrap();
     let mut gpu = GpuCoupled::new(actual.coupled_state(), &actual.step_parameters()).unwrap();
+    // Exclude first-use driver compilation from the steady-state sample.
+    cpu.step().unwrap();
+    actual.step_coupled_gpu(&mut gpu, 1).unwrap();
     for _ in 0..3 {
         cpu.step().unwrap();
     }
+    let gpu_start = Instant::now();
     actual.step_coupled_gpu(&mut gpu, 3).unwrap();
-    assert_eq!(actual.steps(), 3);
+    println!(
+        "Lab conductor: {} cells, 3 steps, {:.3} ms total, {:.3} ms/step on {}",
+        actual.field().shape().len(),
+        gpu_start.elapsed().as_secs_f64() * 1000.0,
+        gpu.last_wall_ms() / 3.0,
+        gpu.adapter_name()
+    );
+    assert_eq!(actual.steps(), 4);
     assert!((actual.elapsed() - cpu.elapsed()).abs() < 1e-12);
     for (a, b) in cpu
         .field()

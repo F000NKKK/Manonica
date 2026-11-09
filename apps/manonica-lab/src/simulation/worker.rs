@@ -34,6 +34,7 @@ pub struct ComputeTelemetry {
     pub cpu_fallback: bool,
     /// End-to-end GPU operator wall time, including upload and readback.
     pub batch_wall_ms: f64,
+    pub batch_steps: u32,
 }
 impl Default for ComputeTelemetry {
     fn default() -> Self {
@@ -41,6 +42,7 @@ impl Default for ComputeTelemetry {
             backend: ComputeBackend::Cpu,
             cpu_fallback: false,
             batch_wall_ms: 0.0,
+            batch_steps: 0,
         }
     }
 }
@@ -251,6 +253,7 @@ fn run_simulation(
         },
         cpu_fallback: gpu.is_none() && backend.attempts_gpu(),
         batch_wall_ms: 0.0,
+        batch_steps: 0,
     };
 
     loop {
@@ -278,6 +281,7 @@ fn run_simulation(
                         };
                         compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
                         compute.batch_wall_ms = 0.0;
+                        compute.batch_steps = 0;
                         error = None;
                         cpu_ms = 0.0;
                         next_tick = Instant::now() + period;
@@ -300,6 +304,7 @@ fn run_simulation(
                     };
                     compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
                     compute.batch_wall_ms = 0.0;
+                    compute.batch_steps = 0;
                     period = Duration::from_secs_f64(sim.experiment.physics.dt);
                     max_catch_up = sim.experiment.physics.steps_per_frame;
                     error = None;
@@ -350,6 +355,7 @@ fn run_simulation(
                 };
                 if let Some(device) = gpu.as_ref() {
                     compute.batch_wall_ms = device.last_wall_ms();
+                    compute.batch_steps = steps as u32;
                 }
                 if let Err(err) = result {
                     if gpu.is_some() && backend.allows_cpu_fallback() {
@@ -358,6 +364,7 @@ fn run_simulation(
                         compute.backend = ComputeBackend::Cpu;
                         compute.cpu_fallback = true;
                         compute.batch_wall_ms = 0.0;
+                        compute.batch_steps = 0;
                         // GPU candidate is transactional. On fallback replay
                         // *every* step, not only the first.
                         for _ in 0..steps {
