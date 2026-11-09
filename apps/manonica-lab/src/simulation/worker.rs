@@ -322,7 +322,15 @@ fn run_simulation(
         let now = Instant::now();
         if !paused {
             let mut ran = 0;
-            let catch_up_limit = if gpu.is_some() { 4096 } else { max_catch_up };
+            // Bound submission length so overdue physics cannot monopolize
+            // the rendering device with an ever-growing catch-up batch.
+            let catch_up_limit = if gpu.is_some() {
+                ((SNAPSHOT_PERIOD.as_secs_f64() / period.as_secs_f64()).ceil() as usize)
+                    .max(max_catch_up)
+                    .clamp(1, 64)
+            } else {
+                max_catch_up
+            };
             while now >= next_tick && ran < catch_up_limit {
                 let started = Instant::now();
                 // GPU runs the complete coupled interval, with one readback

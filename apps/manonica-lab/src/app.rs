@@ -367,28 +367,12 @@ impl AppHandler for App {
     }
 }
 
-fn target_render_rate(window: &Window) -> (f64, &'static str) {
-    if let Some(fps) = std::env::var("MANONICA_RENDER_FPS")
+/// FIFO already paces presentation. A software limit is opt-in only.
+fn configured_render_rate() -> Option<f64> {
+    std::env::var("MANONICA_RENDER_FPS")
         .ok()
-        .and_then(|s| s.parse::<f64>().ok())
+        .and_then(|value| value.parse::<f64>().ok())
         .filter(|fps| fps.is_finite() && (30.0..=360.0).contains(fps))
-    {
-        return (fps, "configured");
-    }
-    let refresh = window
-        .surface_target()
-        .current_monitor()
-        .and_then(|monitor| monitor.refresh_rate_millihertz())
-        .filter(|&mhz| (30_000..=500_000).contains(&mhz))
-        .map(|mhz| f64::from(mhz) / 1000.0);
-    (
-        refresh.unwrap_or(60.0),
-        if refresh.is_some() {
-            "monitor"
-        } else {
-            "fallback"
-        },
-    )
 }
 
 /// Paces frame submission, retaining FIFO presentation as a separate guarantee.
@@ -410,8 +394,8 @@ fn render_loop(
     running: Arc<AtomicBool>,
 ) {
     let runtime = tokio::runtime::Runtime::new().expect("Tokio runtime");
-    let (frame_cap, rate_source) = target_render_rate(&window);
-    let interval = Duration::from_secs_f64(1.0 / frame_cap);
+    let frame_cap = configured_render_rate();
+    let interval = frame_cap.map(|fps| Duration::from_secs_f64(1.0 / fps));
     let size = [window.width().max(1), window.height().max(1)];
     let target = window.surface_target();
     let (device, mut surface) = runtime
@@ -434,13 +418,16 @@ fn render_loop(
     let mut last_draw_cpu_ms = 0.0;
     let mut initial_manons = lock_bridge(&bridge).snapshot.total;
     let mut current_size = size;
-    eprintln!(
-        "Manonica: FIFO VSync + paced render target {:.3} FPS ({rate_source})",
-        frame_cap
-    );
+    if let Some(fps) = frame_cap {
+        eprintln!("Manonica: FIFO VSync with configured limit {fps:.3} FPS");
+    } else {
+        eprintln!("Manonica: FIFO VSync; no additional software frame limiter");
+    }
 
     while running.load(Ordering::Acquire) {
-        pace_frame(&mut deadline, interval);
+        if let Some(interval) = interval {
+            pace_frame(&mut deadline, interval);
+        }
         let frame_begin = Instant::now();
         let dt = frame_begin.duration_since(last_frame).as_secs_f64();
         last_frame = frame_begin;
@@ -455,6 +442,8 @@ fn render_loop(
             revision = render_input.revision;
         }
         if render_input.size[0] == 0 || render_input.size[1] == 0 {
+            thread::sleep(Duration::from_millis(50));
+            last_frame = Instant::now();
             continue;
         }
         if render_input.size != current_size {
