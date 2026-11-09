@@ -82,6 +82,7 @@ struct AtlasRequest {
     threshold: f64,
     optical_density: f64,
     view: SliceView,
+    generation: u64,
 }
 
 struct AtlasResult {
@@ -92,6 +93,7 @@ struct AtlasResult {
     view: SliceView,
     peak: f64,
     cpu_ms: f64,
+    generation: u64,
 }
 
 /// Bounded one-slot queues: if rendering is behind, work is dropped instead
@@ -134,6 +136,7 @@ impl AtlasWorker {
                         view: request.view,
                         peak,
                         cpu_ms: now.elapsed().as_secs_f64() * 1000.0,
+                        generation: request.generation,
                     };
                     if result_tx.try_send(result).is_err() {
                         // Renderer has not yet consumed the previous texture.
@@ -176,6 +179,8 @@ impl Drop for AtlasWorker {
 pub struct ManaVolume {
     meshes: [Vec<MeshHandle>; 3],
     material: Option<MaterialHandle>,
+    material_gain: Option<f32>,
+    generation: u64,
     texture: Option<TextureHandle>,
     worker: AtlasWorker,
     last_requested: Option<(usize, u64, f64, f64, SliceView)>,
@@ -208,6 +213,8 @@ impl ManaVolume {
         Ok(Self {
             meshes,
             material: None,
+            material_gain: None,
+            generation: 0,
             texture: None,
             worker: AtlasWorker::spawn(),
             last_requested: None,
@@ -220,6 +227,7 @@ impl ManaVolume {
 
     /// Discard cached atlas metadata after a live experiment reconfiguration.
     pub fn invalidate(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         self.last_requested = None;
         self.last_submitted = None;
         self.count = 0;
@@ -258,7 +266,8 @@ impl ManaVolume {
         if let Some(result) = self.worker.latest() {
             // A moving camera may make a completed job obsolete. Never
             // display an X slice after the camera has switched to Y slices.
-            if result.axis == axis
+            if result.generation == self.generation
+                && result.axis == axis
                 && result.threshold == threshold
                 && result.optical_density == optical_density
                 && result.view.sign == view.sign
@@ -294,6 +303,7 @@ impl ManaVolume {
             threshold,
             optical_density,
             view,
+            generation: self.generation,
         });
         if sent {
             self.last_requested = Some(requested);
@@ -309,23 +319,35 @@ impl ManaVolume {
         result: AtlasResult,
         experiment: &Experiment,
     ) {
-        let texture = base.render.recorder.upload(&result.image);
-        // Keep the high-concentration core icy blue instead of driving all
-        // three HDR channels far above 1.0 (which washed out the volume).
+        let reused = self
+            .texture
+            .is_some_and(|handle| base.render.recorder.update(handle, &result.image));
+        let texture = if reused {
+            self.texture.expect("updated live volume texture")
+        } else {
+            let next = base.render.recorder.upload(&result.image);
+            if let Some(old) = self.texture.replace(next) {
+                base.render.recorder.release(old);
+            }
+            next
+        };
+        // The atlas keeps its identity across snapshots, so the material and
+        // renderer bind groups can remain resident as well.
         let gain = (experiment.visualization.exposure / 3.0).sqrt().min(2.0);
-        let material = base.render.materials.register(Material {
-            albedo: Some(texture),
-            base_color_factor: [0.70 * gain, 0.90 * gain, 1.05 * gain, 1.0],
-            blend: BlendMode::AlphaBlend,
-            unlit: true,
-            ..Default::default()
-        });
-        if let Some(old) = self.material.replace(material) {
-            base.render.materials.unregister(old);
+        if !reused || self.material_gain != Some(gain) || self.material.is_none() {
+            let next = base.render.materials.register(Material {
+                albedo: Some(texture),
+                base_color_factor: [0.70 * gain, 0.90 * gain, 1.05 * gain, 1.0],
+                blend: BlendMode::AlphaBlend,
+                unlit: true,
+                ..Default::default()
+            });
+            if let Some(old) = self.material.replace(next) {
+                base.render.materials.unregister(old);
+            }
+            self.material_gain = Some(gain);
         }
-        if let Some(old) = self.texture.replace(texture) {
-            base.render.recorder.release(old);
-        }
+        let material = self.material.expect("live volume material");
 
         scene.renderables.truncate(static_count);
         let axis = result.axis;
