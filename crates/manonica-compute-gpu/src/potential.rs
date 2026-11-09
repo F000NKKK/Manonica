@@ -1,14 +1,11 @@
 //! GPU screened potential solve with local geometric constraints.
 //! The GPU solves the finite-volume equations; CPU remains reference.
 //! No rendering or experiment-specific shapes are encoded here.
-use manonica_error::{BaseError, ErrorCode};
+use crate::error::invalid;
+use manonica_error::BaseError;
 use manonica_physics::{GridShape, LocalBoundarySite, LocalPotentialBoundary, PotentialBoundary};
 use meridian_gpu_wgpu::{BindGroup, Buffer, BufferUsage, ComputePipeline};
 use meridian_sdk::GpuComputeDevice;
-
-fn invalid(name: &'static str) -> BaseError {
-    BaseError::new(ErrorCode::InvalidRange, name)
-}
 
 pub struct GpuPotential {
     runtime: tokio::runtime::Runtime,
@@ -37,7 +34,7 @@ impl GpuPotential {
         let raw = device.gpu_driver_device();
         let shader = raw.create_shader(
             "manonica-screened-potential",
-            include_str!("gpu_potential.wgsl"),
+            include_str!("potential.wgsl"),
         );
         let pipeline = raw.create_compute_pipeline(&shader, "potential_jacobi");
         let previous = raw.create_buffer(shape.len() * 4, BufferUsage::Storage);

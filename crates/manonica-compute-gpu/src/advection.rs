@@ -1,9 +1,32 @@
-//! Device-resident diffusion and uniform transport operator splitting.
-use super::{GpuDiffusion, invalid};
+//! Uniform upwind transport and its matching WGSL pipeline.
+use crate::{backend::GpuDiffusion, diffusion::DiffusionKernel, error::invalid};
 use manonica_core::{Quantity, units::ManonDensity};
 use manonica_error::BaseError;
 use manonica_physics::FreeManaField;
+use meridian_gpu_wgpu::{BindGroup, Buffer, BufferUsage, ComputePipeline, Device};
 use std::time::Instant;
+
+pub(super) struct AdvectionKernel {
+    pub(super) pipeline: ComputePipeline,
+    pub(super) parameters: Buffer,
+    pub(super) bind: BindGroup,
+}
+impl AdvectionKernel {
+    pub(super) fn new(raw: &Device, diffusion: &DiffusionKernel) -> Self {
+        let shader =
+            raw.create_shader("manonica-uniform-advection", include_str!("advection.wgsl"));
+        let pipeline = raw.create_compute_pipeline(&shader, "advect_uniform");
+        let parameters = raw.create_buffer(24, BufferUsage::Storage);
+        let layout = pipeline.wgpu_pipeline().get_bind_group_layout(0);
+        let bind =
+            raw.create_bind_group(&layout, &[&diffusion.output, &diffusion.input, &parameters]);
+        Self {
+            pipeline,
+            parameters,
+            bind,
+        }
+    }
+}
 
 impl GpuDiffusion {
     /// Fuses finite-volume diffusion with conservative upwind uniform
@@ -62,13 +85,13 @@ impl GpuDiffusion {
         for number in source {
             bytes.extend_from_slice(&number.to_le_bytes());
         }
-        raw.write_buffer(&self.input, &bytes);
+        raw.write_buffer(&self.diffusion.input, &bytes);
         let mut diffusion_params = Vec::with_capacity(16);
         for n in self.dimensions {
             diffusion_params.extend_from_slice(&(n as u32).to_le_bytes());
         }
         diffusion_params.extend_from_slice(&(alpha as f32).to_bits().to_le_bytes());
-        raw.write_buffer(&self.parameters, &diffusion_params);
+        raw.write_buffer(&self.diffusion.parameters, &diffusion_params);
         let mut advection_params = Vec::with_capacity(24);
         for n in self.dimensions {
             advection_params.extend_from_slice(&(n as u32).to_le_bytes());
@@ -79,19 +102,25 @@ impl GpuDiffusion {
             }
             advection_params.extend_from_slice(&(fraction as f32).to_bits().to_le_bytes());
         }
-        raw.write_buffer(&self.advection_parameters, &advection_params);
+        raw.write_buffer(&self.advection.parameters, &advection_params);
         let mut commands = raw.create_command_buffer();
         let workgroups = (shape.len() as u32).div_ceil(64);
         for _ in 0..steps {
-            commands.dispatch_compute_with_bind_group(&self.pipeline, &self.bind, workgroups);
             commands.dispatch_compute_with_bind_group(
-                &self.advection_pipeline,
-                &self.advection_bind,
+                &self.diffusion.pipeline,
+                &self.diffusion.forward,
+                workgroups,
+            );
+            commands.dispatch_compute_with_bind_group(
+                &self.advection.pipeline,
+                &self.advection.bind,
                 workgroups,
             );
         }
         commands.submit();
-        let result = self.runtime.block_on(self.device.read_buffer(&self.input));
+        let result = self
+            .runtime
+            .block_on(self.device.read_buffer(&self.diffusion.input));
         if result.len() != shape.len() * 4 {
             return Err(invalid("gpu_uniform_flow_readback"));
         }

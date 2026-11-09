@@ -1,6 +1,9 @@
-use super::*;
+use crate::GpuDiffusion;
 use manonica_core::{Evolution, TimeStep, units::Diffusivity};
+use manonica_core::{Quantity, units::ManonDensity};
+use manonica_physics::FreeManaField;
 use manonica_physics::{FreeDiffusion, GridShape};
+use std::time::Instant;
 
 /// Stage-GPU-001: compare a complete 3D GPU diffusion step against
 /// independent f64 CPU finite-volume reference; no display required.
