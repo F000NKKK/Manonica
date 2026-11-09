@@ -300,14 +300,14 @@ impl DebugHud {
             12,
             465,
             &format!(
-                "PHYSICS {}{}   DIFF WALL {:>6.2} ms",
+                "PHYSICS {}{}   GPU BATCH {:>6.2} ms",
                 m.compute.backend.label(),
                 if m.compute.cpu_fallback {
                     " (FALLBACK)"
                 } else {
                     ""
                 },
-                m.compute.diffusion_wall_ms
+                m.compute.batch_wall_ms
             ),
             1,
             [118, 147, 177, 255],
@@ -315,7 +315,7 @@ impl DebugHud {
         canvas.text(
             12,
             484,
-            "GPU DIFF WALL includes transfers; not GPU kernel time",
+            "GPU BATCH includes transfers; not GPU kernel time",
             1,
             [118, 147, 177, 255],
         );

@@ -10,7 +10,7 @@ use manonica_physics::FreeManaField;
 
 use super::{BackendPreference, Simulation};
 use crate::experiment::Experiment;
-use manonica_compute_gpu::GpuDiffusion;
+use manonica_compute_gpu::GpuCoupled;
 
 const SNAPSHOT_PERIOD: Duration = Duration::from_millis(50);
 
@@ -33,14 +33,14 @@ pub struct ComputeTelemetry {
     /// True if auto selection tried GPU and switched to CPU.
     pub cpu_fallback: bool,
     /// End-to-end GPU operator wall time, including upload and readback.
-    pub diffusion_wall_ms: f64,
+    pub batch_wall_ms: f64,
 }
 impl Default for ComputeTelemetry {
     fn default() -> Self {
         Self {
             backend: ComputeBackend::Cpu,
             cpu_fallback: false,
-            diffusion_wall_ms: 0.0,
+            batch_wall_ms: 0.0,
         }
     }
 }
@@ -213,18 +213,19 @@ fn run_simulation(
 ) {
     let mut period = Duration::from_secs_f64(sim.experiment.physics.dt);
     let mut max_catch_up = sim.experiment.physics.steps_per_frame;
-    let mut next_tick = Instant::now() + period;
-    let mut next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
     let mut paused = false;
     let mut error: Option<String> = None;
     let mut cpu_ms = 0.0;
-    let create_gpu = |sim: &Simulation| -> Option<GpuDiffusion> {
+    let create_gpu = |sim: &Simulation| -> Option<GpuCoupled> {
         if !backend.attempts_gpu() {
             return None;
         }
-        match GpuDiffusion::new(sim.field()) {
+        match GpuCoupled::new(sim.coupled_state(), &sim.step_parameters()) {
             Ok(device) => {
-                eprintln!("Manonica: GPU compute selected (hybrid physics)");
+                eprintln!(
+                    "Manonica: resident GPU physics selected: {}",
+                    device.adapter_name()
+                );
                 Some(device)
             }
             Err(error) if backend.allows_cpu_fallback() => {
@@ -240,6 +241,8 @@ fn run_simulation(
         }
     };
     let mut gpu = create_gpu(&sim);
+    let mut next_tick = Instant::now() + period;
+    let mut next_snapshot = Instant::now() + SNAPSHOT_PERIOD;
     let mut compute = ComputeTelemetry {
         backend: if gpu.is_some() {
             ComputeBackend::Gpu
@@ -247,12 +250,12 @@ fn run_simulation(
             ComputeBackend::Cpu
         },
         cpu_fallback: gpu.is_none() && backend.attempts_gpu(),
-        diffusion_wall_ms: 0.0,
+        batch_wall_ms: 0.0,
     };
 
     loop {
         let now = Instant::now();
-        let deadline = if paused {
+        let deadline = if paused || gpu.is_some() {
             next_snapshot
         } else {
             next_tick.min(next_snapshot)
@@ -267,6 +270,14 @@ fn run_simulation(
             Ok(Command::Reset) => {
                 match sim.reset() {
                     Ok(()) => {
+                        gpu = create_gpu(&sim);
+                        compute.backend = if gpu.is_some() {
+                            ComputeBackend::Gpu
+                        } else {
+                            ComputeBackend::Cpu
+                        };
+                        compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
+                        compute.batch_wall_ms = 0.0;
                         error = None;
                         cpu_ms = 0.0;
                         next_tick = Instant::now() + period;
@@ -288,7 +299,7 @@ fn run_simulation(
                         ComputeBackend::Cpu
                     };
                     compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
-                    compute.diffusion_wall_ms = 0.0;
+                    compute.batch_wall_ms = 0.0;
                     period = Duration::from_secs_f64(sim.experiment.physics.dt);
                     max_catch_up = sim.experiment.physics.steps_per_frame;
                     error = None;
@@ -311,29 +322,26 @@ fn run_simulation(
         let now = Instant::now();
         if !paused {
             let mut ran = 0;
-            while now >= next_tick && ran < max_catch_up {
+            let catch_up_limit = if gpu.is_some() { 4096 } else { max_catch_up };
+            while now >= next_tick && ran < catch_up_limit {
                 let started = Instant::now();
-                // Coalesce only overdue steps, and only if no material,
-                // vortex or potential law requires intermediate states.
+                // GPU runs the complete coupled interval, with one readback
+                // at the observation cadence rather than each physics step.
                 let overdue = (now.duration_since(next_tick).as_secs_f64() / period.as_secs_f64())
                     .floor() as usize
                     + 1;
-                let steps = if gpu.is_some() && sim.supports_resident_transport() {
-                    overdue.min(max_catch_up - ran).min(u32::MAX as usize)
+                let steps = if gpu.is_some() {
+                    overdue.min(catch_up_limit - ran)
                 } else {
                     1
                 };
                 let result = if let Some(device) = gpu.as_mut() {
-                    if steps > 1 {
-                        sim.step_transport_batch(device, steps as u32)
-                    } else {
-                        sim.step_with_backend(device)
-                    }
+                    sim.step_coupled_gpu(device, steps as u32)
                 } else {
                     sim.step()
                 };
                 if let Some(device) = gpu.as_ref() {
-                    compute.diffusion_wall_ms = device.last_wall_ms();
+                    compute.batch_wall_ms = device.last_wall_ms();
                 }
                 if let Err(err) = result {
                     if gpu.is_some() && backend.allows_cpu_fallback() {
@@ -341,7 +349,7 @@ fn run_simulation(
                         gpu = None;
                         compute.backend = ComputeBackend::Cpu;
                         compute.cpu_fallback = true;
-                        compute.diffusion_wall_ms = 0.0;
+                        compute.batch_wall_ms = 0.0;
                         // GPU candidate is transactional. On fallback replay
                         // *every* step, not only the first.
                         for _ in 0..steps {
@@ -391,7 +399,7 @@ mod tests {
         assert_eq!(ComputeBackend::Cpu.label(), "CPU");
         assert_eq!(ComputeBackend::Gpu.label(), "GPU");
         assert!(!ComputeTelemetry::default().cpu_fallback);
-        assert_eq!(ComputeTelemetry::default().diffusion_wall_ms, 0.0);
+        assert_eq!(ComputeTelemetry::default().batch_wall_ms, 0.0);
     }
 
     #[test]

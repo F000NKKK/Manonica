@@ -140,6 +140,39 @@ impl Simulation {
         let after = report.after;
         self.time_seconds += dt.seconds();
         self.steps += 1;
+        self.observe(dt.seconds(), after.value());
+        Ok(report)
+    }
+
+    pub(crate) fn coupled_state(&self) -> &CoupledState {
+        &self.state
+    }
+
+    /// Import one validated GPU snapshot after a complete resident interval.
+    pub(crate) fn step_coupled_gpu(
+        &mut self,
+        gpu: &mut manonica_compute_gpu::GpuCoupled,
+        steps: u32,
+    ) -> Result<ConservationReport, ExperimentError> {
+        let before = self.total()?;
+        let state = gpu.advance(steps)?.clone();
+        let after =
+            Quantity::<ManonCount>::nonnegative(state.materials.balance(&state.field)?.manons())?;
+        self.state = state;
+        let elapsed = self.experiment.physics.dt * f64::from(steps);
+        self.time_seconds += elapsed;
+        self.steps += u64::from(steps);
+        self.observe(elapsed, after.value());
+        Ok(ConservationReport {
+            before,
+            after,
+            absolute_error: Quantity::<ManonCount>::nonnegative(
+                (after.value() - before.value()).abs(),
+            )?,
+        })
+    }
+
+    fn observe(&mut self, dt: f64, total: f64) {
         // A stationary density snapshot is not thermodynamic equilibrium if
         // the surrounding medium still drives a nonzero advective flux.
         let medium_driven = match &self.experiment.physics.flow {
@@ -161,15 +194,14 @@ impl Simulation {
         self.equilibrium.observe(
             &self.state.field,
             EquilibriumObservation {
-                total_manons: after.value(),
+                total_manons: total,
                 bound_manons: self.state.materials.total_bound(),
                 peak_potential: potential_peak,
                 temperature_excess_kelvin: self.state.materials.peak_temperature_excess_kelvin(),
                 powered_source: source_active,
-                dt: dt.seconds(),
+                dt,
             },
         );
-        Ok(report)
     }
 
     pub(crate) fn step_parameters(&self) -> StepParameters {
