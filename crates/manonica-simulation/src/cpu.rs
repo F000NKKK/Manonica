@@ -23,7 +23,7 @@ impl CoupledState {
     ) -> Result<ConservationReport, PhysicsError> {
         parameters.validate()?;
         if self.potential.is_some() != parameters.field.is_some()
-            || self.potential.is_some() != self.field_ledger.is_some()
+            || (self.potential.is_some() && self.field_ledger.is_none())
         {
             return Err(BaseError::new(
                 manonica_error::ErrorCode::InvalidState,
@@ -61,7 +61,7 @@ impl CoupledState {
         if !fused {
             FreeAdvection::new(parameters.flow.clone()).evolve(&mut candidate, dt)?;
         }
-        let mut ledger = self.field_ledger;
+        let mut ledger = Some(self.field_ledger.unwrap_or_default());
         let mut next_potential = self.potential.clone();
         let mut shutdown = self.shutdown;
         // Automatic power-down starts only when actual physical traps
@@ -98,6 +98,9 @@ impl CoupledState {
         next_materials.conduct_heat(dt.seconds(), parameters.thermal_conductance)?;
         let exported =
             next_materials.cool_into_bath(dt.seconds(), parameters.ambient_cooling_rate)?;
+        if let Some(state) = ledger.as_mut() {
+            state.exported_heat_joules += exported;
+        }
         if let (Some(potential), Some(state), Some(settings)) =
             (&next_potential, ledger.as_mut(), parameters.field.as_ref())
         {
@@ -132,7 +135,6 @@ impl CoupledState {
             state.field_energy_joules = stored_field;
             state.peak_potential = potential.peak_absolute();
             state.shutdown = shutdown;
-            state.exported_heat_joules += exported;
             // Field heat may leave to the environment, but does not vanish
             // from the global closed-system energy audit.
             let heat_loss = state.dissipated_heat_joules
