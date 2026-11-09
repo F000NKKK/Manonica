@@ -15,9 +15,9 @@ manonica-error = { path = "../../crates/manonica-error" }
 manonica-physics = { path = "../../crates/manonica-physics" }
 manonica-materials = { path = "../../crates/manonica-materials" }
 manonica-simulation = { path = "../../crates/manonica-simulation" }
-# Temporary Git pin until an SDK patch release includes Surface::enable_vsync.
+# Git pin for FIFO presentation, graceful shutdown and persistent texture updates.
 # The package remains meridian-sdk 0.8.0; only its presentation API differs.
-meridian-sdk = { git = "https://github.com/F000NKKK/Meridian-Engine", rev = "a50643f8b167ca57b6e48245f2fd0013e8711eaa" }
+meridian-sdk = { git = "https://github.com/F000NKKK/Meridian-Engine", rev = "49c68a1c8570e2d4ca6255169209508ccea686e4" }
 # Reusable, optional-in-production GPU acceleration crate.
 manonica-compute-gpu = { path = "../../crates/manonica-compute-gpu" }
 serde = { version = "1", features = ["derive"] }
