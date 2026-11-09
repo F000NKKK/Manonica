@@ -104,7 +104,8 @@ F3 reports:
 - `FIELD CPU`: background volume-atlas sampling time.
 
 The graphics surface uses FIFO VSync. No extra software timer runs by default;
-`MANONICA_RENDER_FPS` explicitly enables an optional submission limit.
+`MANONICA_RENDER_FPS` enables an optional submission limit only when it is
+below the detected monitor refresh limit. Redundant timers are omitted.
 
 ## Validation
 
@@ -123,3 +124,15 @@ partial workgroups, multi-level reductions and failed-batch rollback. Explicit
 Lab integration checks the physical construction example and worker reset.
 CI installs software Vulkan and runs these checks; target hardware performance
 still requires measurement on that device.
+
+Native input/shutdown smoke validation uses a real X11 window:
+
+```bash
+cargo build --manifest-path apps/manonica-lab/Cargo.toml
+xvfb-run -a python3 scripts/smoke_lab_x11.py apps/manonica-lab/target/debug/manonica-lab apps/manonica-lab/experiments/local_boundary_conductor.toml
+```
+
+When using `CARGO_TARGET_DIR`, pass that directory's `debug/manonica-lab` instead.
+The smoke test checks main/keypad Enter, rejected edits and closing during
+configuration setup. CI installs Xvfb, xauth and xdotool for it. Raw frame traces
+are enabled through `MANONICA_FRAME_TRACE`; see the Lab README for profiling.
