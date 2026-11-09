@@ -13,6 +13,7 @@ on:
       - 'crates/manonica-compute-gpu/**'
       - 'crates/manonica-error/**'
       - '.github/workflows/lab.yml'
+      - 'scripts/smoke_lab_x11.py'
   workflow_dispatch:
 
 permissions:
@@ -30,7 +31,7 @@ jobs:
       - name: Linux dependencies for Meridian audio/window backend
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev pkg-config libx11-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers
+          sudo apt-get install -y libasound2-dev libudev-dev pkg-config libx11-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers xvfb xdotool xauth
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache compilation
@@ -53,5 +54,9 @@ jobs:
         run: cargo run -p manonica-simulator --features gpu --bin gpu-coupled
       - name: Headless resident transport experiment
         run: cargo run -p manonica-simulator --features gpu --bin gpu-transport
+      - name: Build native Lab smoke target
+        run: cargo build --manifest-path apps/manonica-lab/Cargo.toml
+      - name: Native editor and graceful shutdown smoke
+        run: xvfb-run -a python3 scripts/smoke_lab_x11.py "$CARGO_TARGET_DIR/debug/manonica-lab" apps/manonica-lab/experiments/local_boundary_conductor.toml
       - name: Check compute crate formatting
         run: cargo fmt --manifest-path crates/manonica-compute-gpu/Cargo.toml --all -- --check
