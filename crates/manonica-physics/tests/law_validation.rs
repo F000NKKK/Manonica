@@ -469,3 +469,133 @@ fn law_advection_converges_to_translated_continuum_profile() {
         );
     }
 }
+
+/// Run the same insulated cosine mode with a prescribed reference decay rate.
+fn diffusion_mode_error(cells: usize, steps: usize, time: f64, reference_rate: f64) -> f64 {
+    let pi = std::f64::consts::PI;
+    let dx = 1.0 / cells as f64;
+    // Cell averages of the continuum cosine, rather than point samples.
+    let average_factor = (pi * dx / 2.0).sin() / (pi * dx / 2.0);
+    let mode = |x: usize| (pi * (x as f64 + 0.5) * dx).cos();
+    let shape = GridShape::new(cells, 1, 1).unwrap();
+    let mut field = FreeManaField::uniform(shape, dx, density(0.0)).unwrap();
+    for x in 0..cells {
+        field
+            .set(x, 0, 0, density(6.0 + 2.0 * average_factor * mode(x)))
+            .unwrap();
+    }
+    let inventory = field.total_manons().unwrap().value();
+    let law = FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(0.1).unwrap()).unwrap();
+    let dt = TimeStep::from_seconds(time / steps as f64).unwrap();
+    for _ in 0..steps {
+        law.evolve(&mut field, dt).unwrap();
+    }
+    close(
+        "refined diffusion inventory",
+        field.total_manons().unwrap().value(),
+        inventory,
+        1e-11,
+    );
+    assert!(field.densities().iter().all(|n| n.value() >= 0.0));
+    (0..cells)
+        .map(|x| {
+            let exact = 6.0 + 2.0 * average_factor * (-reference_rate * time).exp() * mode(x);
+            (field.at(x, 0, 0).unwrap().value() - exact).abs()
+        })
+        .fold(0.0, f64::max)
+}
+
+/// LAW-DIFF-002: fix dx and compare with the exact semidiscrete solution
+/// exp(D*lambda_h*t), so spatial truncation cannot mask temporal convergence.
+#[test]
+fn law_diffusion_first_order_time_convergence_at_fixed_grid() {
+    let cells = 12;
+    let dx: f64 = 1.0 / cells as f64;
+    let rate = 0.1 * 4.0 * (std::f64::consts::PI / (2.0 * cells as f64)).sin().powi(2) / dx.powi(2);
+    let errors: Vec<_> = [10, 20, 40, 80]
+        .into_iter()
+        .map(|steps| diffusion_mode_error(cells, steps, 0.1, rate))
+        .collect();
+    for pair in errors.windows(2) {
+        assert!(
+            (1.9..2.1).contains(&(pair[0] / pair[1])),
+            "temporal errors: {errors:?}"
+        );
+    }
+    assert!(errors[3] < 0.0002, "temporal absolute error: {errors:?}");
+}
+
+/// LAW-DIFF-003: refine dx with dt fixed at 1e-5 s and compare against
+/// the continuum mode exp(-D*pi²*t). The time error is bounded separately.
+#[test]
+fn law_diffusion_second_order_space_convergence_at_fixed_timestep() {
+    let rate = 0.1 * std::f64::consts::PI.powi(2);
+    let mut errors = Vec::new();
+    for cells in [8, 16, 32] {
+        errors.push(diffusion_mode_error(cells, 10_000, 0.1, rate));
+        let dx = 1.0 / cells as f64;
+        let discrete_rate =
+            0.1 * 4.0 * (std::f64::consts::PI / (2.0 * cells as f64)).sin().powi(2) / (dx * dx);
+        let temporal_error = diffusion_mode_error(cells, 10_000, 0.1, discrete_rate);
+        assert!(
+            temporal_error < 1e-6,
+            "time error must be below spatial error: {temporal_error}"
+        );
+        assert!(temporal_error < errors.last().unwrap() * 0.01);
+    }
+    for pair in errors.windows(2) {
+        assert!(
+            (3.8..4.2).contains(&(pair[0] / pair[1])),
+            "spatial errors: {errors:?}"
+        );
+    }
+    assert!(errors[2] < 0.0002, "spatial absolute error: {errors:?}");
+}
+
+/// LAW-POT-002: manufacture phi=3+cos(pi*x) on [0,1] with insulated ends.
+/// rho=6+(2+0.1*pi²)*cos(pi*x). Cell-average exact references separate
+/// finite-volume truncation from the iterative solver's stopping error.
+#[test]
+fn law_screened_potential_second_order_manufactured_solution() {
+    let pi = std::f64::consts::PI;
+    let mut errors = Vec::new();
+    for cells in [8, 16, 32] {
+        let dx = 1.0 / cells as f64;
+        let factor = (pi * dx / 2.0).sin() / (pi * dx / 2.0);
+        let mode = |x: usize| factor * (pi * (x as f64 + 0.5) * dx).cos();
+        let sources: Vec<_> = (0..cells)
+            .map(|x| 6.0 + (2.0 + 0.1 * pi * pi) * mode(x))
+            .collect();
+        let potential = PotentialField::solve(
+            GridShape::new(cells, 1, 1).unwrap(),
+            dx,
+            &sources,
+            0.1,
+            2.0,
+            PotentialBoundary::Insulated,
+            4096,
+        )
+        .unwrap();
+        let eigenvalue = 4.0 * (pi / (2.0 * cells as f64)).sin().powi(2) / (dx * dx);
+        let discrete_amplitude = (2.0 + 0.1 * pi * pi) / (2.0 + 0.1 * eigenvalue);
+        let mut error: f64 = 0.0;
+        for x in 0..cells {
+            let observed = potential.at(x, 0, 0).unwrap();
+            close(
+                "converged discrete Poisson solution",
+                observed,
+                3.0 + discrete_amplitude * mode(x),
+                1e-9,
+            );
+            error = error.max((observed - (3.0 + mode(x))).abs());
+        }
+        errors.push(error);
+    }
+    for pair in errors.windows(2) {
+        assert!(
+            (3.8..4.2).contains(&(pair[0] / pair[1])),
+            "Poisson spatial errors: {errors:?}"
+        );
+    }
+    assert!(errors[2] < 0.0003, "Poisson absolute error: {errors:?}");
+}
