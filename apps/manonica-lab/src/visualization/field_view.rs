@@ -16,6 +16,54 @@ pub struct FieldView {
     static_count: usize,
 }
 
+fn append_mechanical_markers(
+    base: &mut GraphicsSession,
+    renderables: &mut Vec<Renderable3d>,
+    experiment: &Experiment,
+) -> Result<(), String> {
+    if let Some(mechanics) = &experiment.mechanics {
+        for (i, body) in mechanics.bodies.iter().enumerate() {
+            let color = if body.charge >= 0.0 {
+                [0.2, 0.8, 1.0]
+            } else {
+                [1.0, 0.4, 0.2]
+            };
+            let formula = crate::experiment::Formula {
+                name: format!("body {}", i + 1),
+                x: "0.15*cos(t)".into(),
+                y: "0".into(),
+                z: "0.15*sin(t)".into(),
+                segments: 32,
+                thickness: 0.018,
+                color,
+                trap: None,
+            };
+            let mesh = base
+                .render
+                .meshes
+                .register(formula_mesh(&formula)?)
+                .map_err(|e| e.to_string())?;
+            let material = base.render.materials.register(Material {
+                base_color_factor: [color[0], color[1], color[2], 1.0],
+                emissive: color,
+                unlit: true,
+                ..Default::default()
+            });
+            let x = body.position.map(|v| v as f32);
+            renderables.push(Renderable3d {
+                mesh,
+                material,
+                frame: Motor3::translation(Vec3::new(x[0], x[1], x[2])),
+                scale: Scale3::UNIT,
+                billboard: false,
+                casts_shadow: false,
+                palette: None,
+                morph_weights: Vec::new(),
+            });
+        }
+    }
+    Ok(())
+}
 impl FieldView {
     pub fn new(mut base: GraphicsSession, experiment: &Experiment) -> Result<Self, String> {
         let mut renderables = Vec::new();
@@ -45,6 +93,7 @@ impl FieldView {
             });
         }
 
+        append_mechanical_markers(&mut base, &mut renderables, experiment)?;
         let static_count = renderables.len();
         let volume = ManaVolume::new(&mut base, experiment)?;
         let scene = Scene3d {
@@ -98,6 +147,7 @@ impl FieldView {
                 morph_weights: Vec::new(),
             });
         }
+        append_mechanical_markers(&mut self.base, &mut next, experiment)?;
         for old in self.scene.renderables.drain(..self.static_count) {
             self.base.render.meshes.unregister(old.mesh);
             self.base.render.materials.unregister(old.material);
@@ -110,13 +160,31 @@ impl FieldView {
     }
 
     pub fn update(&mut self, snapshot: &SimulationSnapshot, experiment: &Experiment) {
-        self.volume.update(
-            &mut self.base,
-            &mut self.scene,
-            self.static_count,
-            snapshot,
-            experiment,
-        );
+        if let (Some(observation), Some(config)) = (&snapshot.mechanics, &experiment.mechanics) {
+            for (i, x) in observation.positions.iter().enumerate() {
+                if let Some(marker) = self
+                    .scene
+                    .renderables
+                    .get_mut(experiment.formulas.len() + i)
+                {
+                    let x: [f32; 3] = std::array::from_fn(|axis| {
+                        ((x[axis] + config.period[axis] / 2.0).rem_euclid(config.period[axis])
+                            - config.period[axis] / 2.0) as f32
+                    });
+                    marker.frame = Motor3::translation(Vec3::new(x[0], x[1], x[2]));
+                }
+            }
+        }
+
+        if experiment.mechanics.is_none() {
+            self.volume.update(
+                &mut self.base,
+                &mut self.scene,
+                self.static_count,
+                snapshot,
+                experiment,
+            );
+        }
     }
 
     pub fn sampling_cpu_ms(&self) -> f64 {

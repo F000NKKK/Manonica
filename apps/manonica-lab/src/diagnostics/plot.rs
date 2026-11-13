@@ -28,14 +28,17 @@ fn record(history: &mut VecDeque<f64>, sample: f64) {
 
 impl Plot {
     pub(super) fn record(&mut self, metrics: FrameMetrics) {
-        let fps = if metrics.frame_ms > 0.000_01 {
-            1000.0 / metrics.frame_ms
+        let fps = if metrics.timing.frame_ms > 0.000_01 {
+            1000.0 / metrics.timing.frame_ms
         } else {
             0.0
         };
         record(&mut self.fps_samples, fps.clamp(0.0, 1000.0));
-        record(&mut self.frame_samples, metrics.frame_ms.clamp(0.0, 1000.0));
-        record(&mut self.peak_samples, metrics.peak_density);
+        record(
+            &mut self.frame_samples,
+            metrics.timing.frame_ms.clamp(0.0, 1000.0),
+        );
+        record(&mut self.peak_samples, metrics.volume.peak_density);
         self.latest = Some(metrics);
     }
 
@@ -67,14 +70,18 @@ impl Plot {
             [220, 243, 255, 255],
         );
 
-        let state = if m.paused { "PAUSED" } else { "RUNNING" };
+        let state = if m.simulation.paused {
+            "PAUSED"
+        } else {
+            "RUNNING"
+        };
         canvas.text(
             12,
             39,
             &format!(
                 "FPS {:>6.1}    FRAME {:>6.2} ms    {state}",
                 self.fps(),
-                m.frame_ms
+                m.timing.frame_ms
             ),
             1,
             [233, 245, 255, 255],
@@ -84,7 +91,7 @@ impl Plot {
             55,
             &format!(
                 "SIM STEP {:>6.2} ms    RENDER WALL {:>6.2} ms",
-                m.sim_cpu_ms, m.draw_wall_ms
+                m.timing.sim_cpu_ms, m.timing.draw_wall_ms
             ),
             1,
             [170, 214, 245, 255],
@@ -94,7 +101,7 @@ impl Plot {
             71,
             &format!(
                 "FIELD CPU {:>6.2} ms   SIM TIME {:>8.2} s  STEP {}",
-                m.field_cpu_ms, m.sim_time, m.steps
+                m.timing.field_cpu_ms, m.simulation.time_seconds, m.simulation.steps
             ),
             1,
             [170, 214, 245, 255],
@@ -104,16 +111,20 @@ impl Plot {
             87,
             &format!(
                 "DENSITY MAX {:>11.3} /m3    LAYERS {:>2}   GRID {}",
-                m.peak_density, m.shown_slices, m.grid_cells
+                m.volume.peak_density, m.volume.shown_slices, m.volume.grid_cells
             ),
             1,
             [185, 232, 255, 255],
         );
-        let delta = m.total - m.initial_total;
+        let delta = m.mana.total - m.mana.initial_total;
         canvas.text(
             12,
             103,
-            &format!("FREE {:>11.3}  BOUND {:>11.3}", m.total - m.bound, m.bound),
+            &format!(
+                "FREE {:>11.3}  BOUND {:>11.3}",
+                m.mana.total - m.materials.bound,
+                m.materials.bound
+            ),
             1,
             [190, 236, 236, 255],
         );
@@ -123,7 +134,7 @@ impl Plot {
             115,
             &format!(
                 "TOTAL {:.3}  DELTA {:+.4}  ENERGY {:.3} J",
-                m.total, delta, m.material_energy
+                m.mana.total, delta, m.materials.energy_joules
             ),
             1,
             [190, 236, 236, 255],
@@ -140,19 +151,41 @@ impl Plot {
             341,
             &format!(
                 "FIELD |phi| {:.3}   J {:.3} manons/step",
-                m.potential_peak, m.potential_transport
+                m.field.peak, m.field.transported_manons
             ),
             1,
             [160, 223, 255, 255],
         );
-        for i in 0..m.formula_count.min(3) {
+        if let Some(mechanics) = m.mechanics {
+            for i in 0..mechanics.bodies.min(2) {
+                let x = mechanics.positions[i];
+                canvas.text(
+                    12,
+                    357 + i as i32 * 13,
+                    &format!(
+                        "BODY {}  X [{:.3}, {:.3}, {:.3}] m",
+                        i + 1,
+                        x[0],
+                        x[1],
+                        x[2]
+                    ),
+                    1,
+                    [116, 238, 169, 255],
+                );
+            }
+        }
+        for i in 0..if m.mechanics.is_some() {
+            0
+        } else {
+            m.materials.formula_count.min(3)
+        } {
             canvas.text(
                 12,
                 357 + i as i32 * 13,
                 &format!(
                     "FORMULA {} / BOUND {:>14.3} manons",
                     i + 1,
-                    m.formula_bound[i]
+                    m.materials.formula_bound[i]
                 ),
                 1,
                 [116, 238, 169, 255],
@@ -161,47 +194,73 @@ impl Plot {
         canvas.text(
             12,
             397,
-            &format!(
-                "FIELD E {:.2} J  HEAT {:.2}  WORK {:.2}",
-                m.field_energy_joules, m.field_heat_joules, m.field_work_joules
-            ),
+            &if let Some(mechanics) = m.mechanics {
+                format!(
+                    "MECH E {:.6} J  dE {:.2e} J",
+                    mechanics.energy, mechanics.energy_error
+                )
+            } else {
+                format!(
+                    "FIELD E {:.2} J  HEAT {:.2}  WORK {:.2}",
+                    m.field.energy_joules, m.field.heat_joules, m.field.work_joules
+                )
+            },
             1,
             [160, 223, 255, 255],
         );
         canvas.text(
             12,
             412,
-            &format!(
-                "TRAP T {:.1} K   EXPORTED {:.2} J   {}",
-                m.trap_temperature_kelvin,
-                m.exported_heat_joules,
-                if m.field_shutdown {
-                    "SOURCE DECAYING"
-                } else {
-                    "SOURCE ACTIVE"
-                }
-            ),
+            &if let Some(mechanics) = m.mechanics {
+                let p = mechanics.momentum;
+                format!(
+                    "P [{:.4}, {:.4}, {:.4}]  dP {:.1e}",
+                    p[0], p[1], p[2], mechanics.momentum_error
+                )
+            } else {
+                format!(
+                    "TRAP T {:.1} K   EXPORTED {:.2} J   {}",
+                    m.materials.temperature_kelvin,
+                    m.field.exported_heat_joules,
+                    if m.field.shutdown {
+                        "SOURCE DECAYING"
+                    } else {
+                        "SOURCE ACTIVE"
+                    }
+                )
+            },
             1,
             [160, 223, 255, 255],
         );
         canvas.text(
             12,
             433,
-            &format!(
-                "PHASE {}  DENSITY RATE {:.2e}",
-                m.equilibrium.phase.label(),
-                m.equilibrium.density_rate
-            ),
+            &if let Some(mechanics) = m.mechanics {
+                format!(
+                    "PERIODIC MECHANICS / {} bodies / {} modes",
+                    mechanics.bodies, mechanics.modes
+                )
+            } else {
+                format!(
+                    "PHASE {}  DENSITY RATE {:.2e}",
+                    m.simulation.equilibrium.phase.label(),
+                    m.simulation.equilibrium.density_rate
+                )
+            },
             1,
             [144, 229, 255, 255],
         );
         canvas.text(
             12,
             449,
-            &format!(
-                "BOUND RATE {:.2e}/s  STABLE {} steps",
-                m.equilibrium.bound_rate, m.equilibrium.stable_steps
-            ),
+            &if m.mechanics.is_some() {
+                "E/P INCLUDE BODIES AND DYNAMIC FIELD".to_owned()
+            } else {
+                format!(
+                    "BOUND RATE {:.2e}/s  STABLE {} steps",
+                    m.simulation.equilibrium.bound_rate, m.simulation.equilibrium.stable_steps
+                )
+            },
             1,
             [144, 229, 255, 255],
         );
@@ -210,14 +269,14 @@ impl Plot {
             465,
             &format!(
                 "PHYSICS {}{}   GPU BATCH {:>6.2} ms / {} steps",
-                m.compute.backend.label(),
-                if m.compute.cpu_fallback {
+                m.simulation.compute.backend.label(),
+                if m.simulation.compute.cpu_fallback {
                     " (FALLBACK)"
                 } else {
                     ""
                 },
-                m.compute.batch_wall_ms,
-                m.compute.batch_steps
+                m.simulation.compute.batch_wall_ms,
+                m.simulation.compute.batch_steps
             ),
             1,
             [118, 147, 177, 255],

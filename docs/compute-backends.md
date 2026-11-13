@@ -136,3 +136,29 @@ When using `CARGO_TARGET_DIR`, pass that directory's `debug/manonica-lab` instea
 The smoke test checks main/keypad Enter, rejected edits and closing during
 configuration setup. CI installs Xvfb, xauth and xdotool for it. Raw frame traces
 are enabled through `MANONICA_FRAME_TRACE`; see the Lab README for profiling.
+
+## Dynamic spectral mechanics
+
+The separate Lab `dynamic_mechanics.toml` scenario uses `GpuSpectral` or
+`SpectralMechanics`, with the same `gpu`/`auto`/`cpu` selection policy.
+`GpuSpectral` keeps body positions/momenta and field amplitudes/canonical
+momenta resident. Each kick has independent body and mode invocations;
+drift kernels update bodies and modes. All six dispatches execute for each
+accepted timestep. A batch performs no intermediate operator readbacks.
+
+CPU prepares validated initial spectral geometry/equilibrium and uploads once.
+Packed snapshots are read for observation, not to execute the next physical
+operator. Snapshot validation checks finite values, immutable metadata,
+and total momentum/energy against the initial closed-system baseline.
+The f32 audit budgets are `1e-4*(1+abs(P_initial_component))` and
+`1e-3*(1+abs(E_initial))`; they include numerical integration error and
+are rejection budgets, not corrections or parity guarantees. Dedicated
+CPU/GPU tests enforce 1e-4 body and 1e-5 modal agreement over 100 steps.
+
+Every batch backs up both buffers. Rejection restores device buffers and
+retains the host snapshot/time. Auto fallback replays all rejected steps
+on CPU; forced GPU terminates. Tests verify actual byte-identical device
+rollback after nonfinite shader output, alongside parity and Lab device
+reset/replacement. Software Vulkan executes these shaders in CI; it does
+not establish RTX performance. The current GPU scenario is an autonomous
+closed body/field system, without a configured external load.

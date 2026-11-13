@@ -125,3 +125,115 @@ fn explicit_shutdown_wakes_a_paused_worker_without_blocking_the_caller() {
     assert!(worker.is_finished());
     assert!(worker.replace_experiment(small_experiment(250.0)).is_err());
 }
+
+#[test]
+fn mechanical_worker_pause_reset_replace_and_shutdown_preserve_lifecycle() {
+    let experiment =
+        Experiment::parse(include_str!("../../../experiments/dynamic_mechanics.toml")).unwrap();
+    let (mut worker, initial) = SimulationWorker::spawn_with_backend(
+        Simulation::new(experiment.clone()).unwrap(),
+        BackendPreference::Cpu,
+    );
+    worker.pause(true);
+    let wait_snapshot = |predicate: &dyn Fn(&SimulationSnapshot) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(snapshot) = worker.poll_latest()
+                && predicate(&snapshot)
+            {
+                break snapshot;
+            }
+            assert!(Instant::now() < deadline, "mechanics snapshot timeout");
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let paused = wait_snapshot(&|s| s.paused);
+    thread::sleep(Duration::from_millis(60));
+    let stable = wait_snapshot(&|s| s.paused);
+    assert_eq!(stable.steps, paused.steps);
+    worker.reset();
+    let reset = wait_snapshot(&|s| s.paused && s.steps == 0);
+    assert_eq!(
+        reset.mechanics.unwrap().positions,
+        initial.mechanics.unwrap().positions
+    );
+    let mut replacement = experiment;
+    replacement.mechanics.as_mut().unwrap().bodies[0].position[0] = -1.2;
+    let revision = worker.replace_experiment(replacement).unwrap();
+    match wait_configuration(&worker) {
+        ConfigurationResult::Applied {
+            revision: accepted,
+            snapshot,
+        } => {
+            assert_eq!(accepted, revision);
+            assert_eq!(snapshot.mechanics.as_ref().unwrap().positions[0][0], -1.2);
+            assert_eq!(snapshot.steps, 0);
+        }
+        ConfigurationResult::Rejected { message, .. } => {
+            panic!("mechanics replacement rejected: {message}")
+        }
+    }
+    worker.request_shutdown();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !worker.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(worker.is_finished());
+}
+
+#[test]
+#[ignore = "requires a Vulkan compute adapter"]
+fn mechanical_gpu_worker_reset_and_replace_recreate_the_device_state() {
+    let experiment =
+        Experiment::parse(include_str!("../../../experiments/dynamic_mechanics.toml")).unwrap();
+    let (mut worker, initial) = SimulationWorker::spawn_with_backend(
+        Simulation::new(experiment.clone()).unwrap(),
+        BackendPreference::Gpu,
+    );
+    worker.pause(true);
+    let wait_snapshot = |predicate: &dyn Fn(&SimulationSnapshot) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(snapshot) = worker.poll_latest()
+                && predicate(&snapshot)
+            {
+                break snapshot;
+            }
+            assert!(Instant::now() < deadline, "GPU mechanics snapshot timeout");
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let paused = wait_snapshot(&|s| s.paused && s.compute.backend == ComputeBackend::Gpu);
+    assert!(!paused.compute.cpu_fallback);
+    assert!(paused.error.is_none());
+    worker.reset();
+    let reset = wait_snapshot(&|s| s.paused && s.steps == 0);
+    assert_eq!(reset.compute.backend, ComputeBackend::Gpu);
+    assert_eq!(
+        reset.mechanics.unwrap().positions,
+        initial.mechanics.unwrap().positions
+    );
+    let mut next = experiment;
+    next.mechanics.as_mut().unwrap().bodies[0].position[0] = -1.2;
+    let revision = worker.replace_experiment(next).unwrap();
+    match wait_configuration(&worker) {
+        ConfigurationResult::Applied {
+            revision: accepted,
+            snapshot,
+        } => {
+            assert_eq!(accepted, revision);
+            assert_eq!(snapshot.compute.backend, ComputeBackend::Gpu);
+            assert_eq!(snapshot.mechanics.as_ref().unwrap().positions[0][0], -1.2);
+            assert_eq!(snapshot.steps, 0);
+        }
+        ConfigurationResult::Rejected { message, .. } => {
+            panic!("GPU mechanics replacement rejected: {message}")
+        }
+    }
+    worker.request_shutdown();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !worker.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(worker.is_finished());
+}

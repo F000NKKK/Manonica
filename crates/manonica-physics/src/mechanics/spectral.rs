@@ -207,6 +207,35 @@ impl SpectralMechanics {
         *self = next;
         Ok(())
     }
+    /// Modal inertia used by the fixed-normalization Hamiltonian.
+    pub fn modal_inertia(&self) -> f64 {
+        self.inertia
+    }
+    /// Import a backend snapshot atomically. Source masses/charges/widths and
+    /// mode geometry are immutable. The backend must audit global balances.
+    pub fn replace_snapshot(
+        &mut self,
+        bodies: &[MechanicalBody],
+        storage: &[[f64; 4]],
+    ) -> Result<(), BaseError> {
+        if bodies.len() != self.sources.len()
+            || storage.len() != self.modes.len()
+            || bodies
+                .iter()
+                .zip(&self.sources)
+                .any(|(a, b)| a.mass() != b.body.mass())
+        {
+            return Err(invalid("spectral_snapshot_shape"));
+        }
+        let mut next = self.clone();
+        for (source, body) in next.sources.iter_mut().zip(bodies) {
+            source.body = *body;
+        }
+        next.replace_mode_storage(storage)?;
+        next.validate_state()?;
+        *self = next;
+        Ok(())
+    }
     pub fn sources(&self) -> &[GaussianBody] {
         &self.sources
     }

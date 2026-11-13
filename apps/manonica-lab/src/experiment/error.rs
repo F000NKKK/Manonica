@@ -3,6 +3,7 @@ use manonica_error::{BaseError, ClassifiedError, ErrorCode};
 #[derive(Debug)]
 pub enum ExperimentError {
     Base(BaseError),
+    Backend(String),
     Parse(toml::de::Error),
     Io(std::io::Error),
     Physics(manonica_physics::PhysicsError),
@@ -33,6 +34,7 @@ impl ClassifiedError for ExperimentError {
     fn code(&self) -> ErrorCode {
         match self {
             Self::Base(error) => error.code,
+            Self::Backend(_) => ErrorCode::InvalidState,
             Self::Parse(_) | Self::Io(_) => ErrorCode::InvalidState,
             Self::Physics(error) => error.code(),
         }
@@ -43,6 +45,7 @@ impl std::fmt::Display for ExperimentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Base(error) => write!(f, "{error}"),
+            Self::Backend(error) => write!(f, "compute backend: {error}"),
             Self::Parse(error) => write!(f, "invalid experiment TOML: {error}"),
             Self::Io(error) => write!(f, "experiment I/O: {error}"),
             Self::Physics(error) => write!(f, "simulation: {error}"),
@@ -54,6 +57,7 @@ impl std::error::Error for ExperimentError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Base(error) => Some(error),
+            Self::Backend(_) => None,
             Self::Parse(error) => Some(error),
             Self::Io(error) => Some(error),
             Self::Physics(error) => Some(error),

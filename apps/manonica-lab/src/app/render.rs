@@ -135,39 +135,64 @@ pub(super) fn render_loop(
         let graphics_update_ms = cpu_start.elapsed().as_secs_f64() * 1000.0;
         let field = &render_input.snapshot.field;
         let metrics = FrameMetrics {
-            frame_ms: dt * 1000.0,
-            sim_cpu_ms: render_input.snapshot.sim_cpu_ms,
-            compute: render_input.snapshot.compute,
-            draw_wall_ms: last_draw_wall_ms,
-            field_cpu_ms: graphics.sampling_cpu_ms(),
-            sim_time: render_input.snapshot.elapsed,
-            steps: render_input.snapshot.steps,
-            total: render_input.snapshot.total,
-            bound: render_input.snapshot.bound,
-            formula_bound: std::array::from_fn(|i| {
-                render_input
-                    .snapshot
-                    .formula_bound
-                    .get(i)
-                    .copied()
-                    .unwrap_or(0.0)
+            mechanics: render_input.snapshot.mechanics.as_ref().map(|m| {
+                crate::diagnostics::MechanicsMetrics {
+                    energy: m.energy,
+                    energy_error: m.energy_error,
+                    momentum: m.momentum,
+                    momentum_error: m.momentum_error,
+                    bodies: m.positions.len(),
+                    modes: m.mode_count,
+                    positions: std::array::from_fn(|i| {
+                        m.positions.get(i).copied().unwrap_or([0.0; 3])
+                    }),
+                }
             }),
-            formula_count: render_input.snapshot.formula_bound.len(),
-            material_energy: render_input.snapshot.material_energy,
-            potential_peak: render_input.snapshot.potential_peak,
-            field_energy_joules: render_input.snapshot.field_energy_joules,
-            field_heat_joules: render_input.snapshot.field_heat_joules,
-            field_work_joules: render_input.snapshot.field_work_joules,
-            potential_transport: render_input.snapshot.potential_transport,
-            trap_temperature_kelvin: render_input.snapshot.trap_temperature_kelvin,
-            exported_heat_joules: render_input.snapshot.exported_heat_joules,
-            field_shutdown: render_input.snapshot.field_shutdown,
-            equilibrium: render_input.snapshot.equilibrium,
-            initial_total: initial_manons,
-            peak_density: graphics.peak_density(),
-            shown_slices: graphics.visible_slices(),
-            grid_cells: field.shape().len(),
-            paused: render_input.paused || render_input.snapshot.paused,
+            timing: crate::diagnostics::FrameTimingMetrics {
+                frame_ms: dt * 1000.0,
+                sim_cpu_ms: render_input.snapshot.sim_cpu_ms,
+                draw_wall_ms: last_draw_wall_ms,
+                field_cpu_ms: graphics.sampling_cpu_ms(),
+            },
+            simulation: crate::diagnostics::SimulationMetrics {
+                time_seconds: render_input.snapshot.elapsed,
+                steps: render_input.snapshot.steps,
+                compute: render_input.snapshot.compute,
+                paused: render_input.paused || render_input.snapshot.paused,
+                equilibrium: render_input.snapshot.equilibrium,
+            },
+            mana: crate::diagnostics::ManaMetrics {
+                total: render_input.snapshot.total,
+                initial_total: initial_manons,
+            },
+            materials: crate::diagnostics::MaterialMetrics {
+                bound: render_input.snapshot.bound,
+                formula_bound: std::array::from_fn(|i| {
+                    render_input
+                        .snapshot
+                        .formula_bound
+                        .get(i)
+                        .copied()
+                        .unwrap_or(0.0)
+                }),
+                formula_count: render_input.snapshot.formula_bound.len(),
+                energy_joules: render_input.snapshot.material_energy,
+                temperature_kelvin: render_input.snapshot.trap_temperature_kelvin,
+            },
+            field: crate::diagnostics::FieldMetrics {
+                peak: render_input.snapshot.potential_peak,
+                energy_joules: render_input.snapshot.field_energy_joules,
+                heat_joules: render_input.snapshot.field_heat_joules,
+                work_joules: render_input.snapshot.field_work_joules,
+                transported_manons: render_input.snapshot.potential_transport,
+                exported_heat_joules: render_input.snapshot.exported_heat_joules,
+                shutdown: render_input.snapshot.field_shutdown,
+            },
+            volume: crate::diagnostics::VolumeMetrics {
+                peak_density: graphics.peak_density(),
+                shown_slices: graphics.visible_slices(),
+                grid_cells: field.shape().len(),
+            },
         };
         debug.record(metrics);
         if let Some(error) = &render_input.snapshot.error {

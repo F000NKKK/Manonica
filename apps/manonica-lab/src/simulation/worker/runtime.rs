@@ -3,7 +3,35 @@ use super::{
     BackendPreference, Command, ComputeBackend, ComputeTelemetry, ConfigurationResult,
     SNAPSHOT_PERIOD, Simulation, SimulationSnapshot,
 };
-use manonica_compute_gpu::GpuCoupled;
+use manonica_compute_gpu::{GpuCoupled, GpuSpectral};
+enum RuntimeGpu {
+    Coupled(Box<GpuCoupled>),
+    Spectral(Box<GpuSpectral>),
+}
+impl RuntimeGpu {
+    fn last_wall_ms(&self) -> f64 {
+        match self {
+            Self::Coupled(g) => g.last_wall_ms(),
+            Self::Spectral(g) => g.last_wall_ms(),
+        }
+    }
+    fn adapter_name(&self) -> &str {
+        match self {
+            Self::Coupled(g) => g.adapter_name(),
+            Self::Spectral(g) => g.adapter_name(),
+        }
+    }
+    fn advance(
+        &mut self,
+        sim: &mut Simulation,
+        steps: u32,
+    ) -> Result<manonica_physics::ConservationReport, crate::experiment::ExperimentError> {
+        match self {
+            Self::Coupled(g) => sim.step_coupled_gpu(g, steps),
+            Self::Spectral(g) => sim.step_mechanics_gpu(g, steps),
+        }
+    }
+}
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -48,17 +76,20 @@ pub(super) fn run_simulation(
     let mut paused = false;
     let mut error: Option<String> = None;
     let mut cpu_ms = 0.0;
-    let create_gpu = |sim: &Simulation| -> Result<Option<GpuCoupled>, String> {
-        if sim.has_mechanics() {
-            if backend == BackendPreference::Gpu {
-                return Err("dynamic mechanics requires --backend cpu or auto".into());
-            }
-            return Ok(None);
-        }
+    let create_gpu = |sim: &Simulation| -> Result<Option<RuntimeGpu>, String> {
         if !backend.attempts_gpu() {
             return Ok(None);
         }
-        match GpuCoupled::new(sim.coupled_state(), &sim.step_parameters()) {
+        let candidate = if let Some(state) = sim.mechanics_state() {
+            manonica_core::TimeStep::from_seconds(sim.experiment.physics.dt)
+                .map_err(|e| e.to_string())
+                .and_then(|dt| GpuSpectral::new(state, dt))
+                .map(|g| RuntimeGpu::Spectral(Box::new(g)))
+        } else {
+            GpuCoupled::new(sim.coupled_state(), &sim.step_parameters())
+                .map(|g| RuntimeGpu::Coupled(Box::new(g)))
+        };
+        match candidate {
             Ok(device) => {
                 eprintln!(
                     "Manonica: resident GPU physics selected: {}",
@@ -90,7 +121,7 @@ pub(super) fn run_simulation(
         } else {
             ComputeBackend::Cpu
         },
-        cpu_fallback: gpu.is_none() && backend.attempts_gpu() && !sim.has_mechanics(),
+        cpu_fallback: gpu.is_none() && backend.attempts_gpu(),
         batch_wall_ms: 0.0,
         batch_steps: 0,
     };
@@ -133,8 +164,7 @@ pub(super) fn run_simulation(
                                 } else {
                                     ComputeBackend::Cpu
                                 };
-                                compute.cpu_fallback =
-                                    gpu.is_none() && backend.attempts_gpu() && !sim.has_mechanics();
+                                compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
                                 compute.batch_wall_ms = 0.0;
                                 compute.batch_steps = 0;
                                 next_tick = Instant::now() + period;
@@ -178,8 +208,7 @@ pub(super) fn run_simulation(
                         } else {
                             ComputeBackend::Cpu
                         };
-                        compute.cpu_fallback =
-                            gpu.is_none() && backend.attempts_gpu() && !sim.has_mechanics();
+                        compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
                         compute.batch_wall_ms = 0.0;
                         compute.batch_steps = 0;
                         period = Duration::from_secs_f64(sim.experiment.physics.dt);
@@ -230,7 +259,7 @@ pub(super) fn run_simulation(
                     1
                 };
                 let result = if let Some(device) = gpu.as_mut() {
-                    sim.step_coupled_gpu(device, steps as u32)
+                    device.advance(&mut sim, steps as u32)
                 } else {
                     sim.step()
                 };

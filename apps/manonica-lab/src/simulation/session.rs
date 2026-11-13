@@ -80,6 +80,31 @@ impl Simulation {
         })
     }
 
+    pub(crate) fn mechanics_state(&self) -> Option<&manonica_physics::SpectralMechanics> {
+        self.mechanics.as_ref().map(|m| m.state())
+    }
+    pub(crate) fn step_mechanics_gpu(
+        &mut self,
+        gpu: &mut manonica_compute_gpu::GpuSpectral,
+        steps: u32,
+    ) -> Result<ConservationReport, ExperimentError> {
+        let mechanics = self.mechanics.as_mut().ok_or_else(|| {
+            manonica_error::BaseError::new(
+                manonica_error::ErrorCode::InvalidState,
+                "missing_mechanics",
+            )
+        })?;
+        let state = gpu.advance(steps).map_err(ExperimentError::Backend)?;
+        mechanics.import(state);
+        self.steps += u64::from(steps);
+        self.time_seconds += self.experiment.physics.dt * f64::from(steps);
+        let total = self.state.field.total_manons()?;
+        Ok(ConservationReport {
+            before: total,
+            after: total,
+            absolute_error: Quantity::nonnegative(0.0)?,
+        })
+    }
     pub fn has_mechanics(&self) -> bool {
         self.mechanics.is_some()
     }
@@ -134,6 +159,9 @@ impl Simulation {
         self.state.field_ledger
     }
     pub fn tracked_energy(&self) -> Result<f64, ExperimentError> {
+        if let Some(mechanics) = &self.mechanics {
+            return Ok(mechanics.observation().energy);
+        }
         let material = self.material_balance()?.energy();
         Ok(material
             + self
@@ -177,7 +205,7 @@ impl Simulation {
             if backend.is_some() {
                 return Err(manonica_error::BaseError::new(
                     manonica_error::ErrorCode::InvalidState,
-                    "mechanics_cpu_only",
+                    "mechanics_requires_spectral_backend",
                 )
                 .into());
             }
@@ -211,7 +239,7 @@ impl Simulation {
         if self.has_mechanics() {
             return Err(manonica_error::BaseError::new(
                 manonica_error::ErrorCode::InvalidState,
-                "mechanics_cpu_only",
+                "mechanics_requires_spectral_backend",
             )
             .into());
         }

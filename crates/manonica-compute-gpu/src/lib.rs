@@ -37,3 +37,6 @@ pub use potential::GpuPotential;
 
 #[cfg(test)]
 mod tests;
+
+mod spectral;
+pub use spectral::GpuSpectral;

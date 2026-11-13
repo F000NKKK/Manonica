@@ -14,33 +14,68 @@ const HEIGHT: usize = 500;
 const HISTORY: usize = 180;
 const UPDATE_PERIOD: Duration = Duration::from_millis(200);
 #[derive(Debug, Clone, Copy, Default)]
+pub struct MechanicsMetrics {
+    pub energy: f64,
+    pub energy_error: f64,
+    pub momentum: [f64; 3],
+    pub momentum_error: f64,
+    pub bodies: usize,
+    pub modes: usize,
+    pub positions: [[f64; 3]; 2],
+}
+#[derive(Debug, Clone, Copy, Default)]
 pub struct FrameMetrics {
+    pub timing: FrameTimingMetrics,
+    pub simulation: SimulationMetrics,
+    pub mana: ManaMetrics,
+    pub materials: MaterialMetrics,
+    pub field: FieldMetrics,
+    pub volume: VolumeMetrics,
+    pub mechanics: Option<MechanicsMetrics>,
+}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameTimingMetrics {
     pub frame_ms: f64,
     pub sim_cpu_ms: f64,
-    pub compute: crate::simulation::ComputeTelemetry,
     pub draw_wall_ms: f64,
     pub field_cpu_ms: f64,
-    pub sim_time: f64,
+}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SimulationMetrics {
+    pub time_seconds: f64,
     pub steps: u64,
+    pub compute: crate::simulation::ComputeTelemetry,
+    pub paused: bool,
+    pub equilibrium: crate::simulation::EquilibriumState,
+}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ManaMetrics {
     pub total: f64,
+    pub initial_total: f64,
+}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MaterialMetrics {
     pub bound: f64,
     pub formula_bound: [f64; 3],
     pub formula_count: usize,
-    pub material_energy: f64,
-    pub potential_peak: f64,
-    pub field_energy_joules: f64,
-    pub field_heat_joules: f64,
-    pub field_work_joules: f64,
-    pub potential_transport: f64,
-    pub trap_temperature_kelvin: f64,
+    pub energy_joules: f64,
+    pub temperature_kelvin: f64,
+}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FieldMetrics {
+    pub peak: f64,
+    pub energy_joules: f64,
+    pub heat_joules: f64,
+    pub work_joules: f64,
+    pub transported_manons: f64,
     pub exported_heat_joules: f64,
-    pub field_shutdown: bool,
-    pub equilibrium: crate::simulation::EquilibriumState,
-    pub initial_total: f64,
+    pub shutdown: bool,
+}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VolumeMetrics {
     pub peak_density: f64,
     pub shown_slices: usize,
     pub grid_cells: usize,
-    pub paused: bool,
 }
 
 pub struct DebugHud {
@@ -124,32 +159,45 @@ mod tests {
         let mut hud = DebugHud::default();
         for _ in 0..400 {
             hud.record(FrameMetrics {
-                frame_ms: 16.0,
-                sim_cpu_ms: 2.0,
-                compute: crate::simulation::ComputeTelemetry::default(),
-                draw_wall_ms: 3.0,
-                field_cpu_ms: 1.0,
-                sim_time: 0.0,
-                steps: 0,
-                total: 10.0,
-                bound: 2.0,
-                formula_bound: [2.0, 0.0, 0.0],
-                formula_count: 1,
-                material_energy: 4.0,
-                potential_peak: 0.0,
-                field_energy_joules: 0.0,
-                field_heat_joules: 0.0,
-                field_work_joules: 0.0,
-                potential_transport: 0.0,
-                trap_temperature_kelvin: 300.0,
-                exported_heat_joules: 0.0,
-                field_shutdown: false,
-                equilibrium: crate::simulation::EquilibriumState::default(),
-                initial_total: 10.0,
-                peak_density: 3.0,
-                shown_slices: 20,
-                grid_cells: 1000,
-                paused: false,
+                mechanics: None,
+                timing: crate::diagnostics::FrameTimingMetrics {
+                    frame_ms: 16.0,
+                    sim_cpu_ms: 2.0,
+                    draw_wall_ms: 3.0,
+                    field_cpu_ms: 1.0,
+                },
+                simulation: crate::diagnostics::SimulationMetrics {
+                    time_seconds: 0.0,
+                    steps: 0,
+                    compute: crate::simulation::ComputeTelemetry::default(),
+                    paused: false,
+                    equilibrium: crate::simulation::EquilibriumState::default(),
+                },
+                mana: crate::diagnostics::ManaMetrics {
+                    total: 10.0,
+                    initial_total: 10.0,
+                },
+                materials: crate::diagnostics::MaterialMetrics {
+                    bound: 2.0,
+                    formula_bound: [2.0, 0.0, 0.0],
+                    formula_count: 1,
+                    energy_joules: 4.0,
+                    temperature_kelvin: 300.0,
+                },
+                field: crate::diagnostics::FieldMetrics {
+                    peak: 0.0,
+                    energy_joules: 0.0,
+                    heat_joules: 0.0,
+                    work_joules: 0.0,
+                    transported_manons: 0.0,
+                    exported_heat_joules: 0.0,
+                    shutdown: false,
+                },
+                volume: crate::diagnostics::VolumeMetrics {
+                    peak_density: 3.0,
+                    shown_slices: 20,
+                    grid_cells: 1000,
+                },
             });
         }
         assert_eq!(hud.plot.fps_samples.len(), HISTORY);
@@ -162,8 +210,14 @@ mod tests {
         let worker = HudWorker::new();
         let mut plot = Plot::default();
         plot.record(FrameMetrics {
-            frame_ms: 6.0,
-            peak_density: 1.0,
+            timing: crate::diagnostics::FrameTimingMetrics {
+                frame_ms: 6.0,
+                ..Default::default()
+            },
+            volume: crate::diagnostics::VolumeMetrics {
+                peak_density: 1.0,
+                ..Default::default()
+            },
             ..Default::default()
         });
         assert!(worker.offer(&plot));

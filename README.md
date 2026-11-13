@@ -127,8 +127,8 @@ gradle build
 и [документацию Lab](apps/manonica-lab/README.md).
 
 Экспериментальная динамическая механика доступна отдельным CPU API
-`manonica_physics::SpectralMechanics`; она пока не подключена к Lab
-и GPU. Стенд и контракт: [механический импульс](docs/mechanical-momentum.md).
+`manonica_physics::SpectralMechanics` и GPU backend `GpuSpectral`.
+В Lab доступен отдельный опыт `dynamic_mechanics.toml`. Стенд и контракт: [механический импульс](docs/mechanical-momentum.md).
 
 ```bash
 cargo run --release -p manonica-simulator --bin spectral_field

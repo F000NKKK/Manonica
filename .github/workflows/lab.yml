@@ -50,6 +50,8 @@ jobs:
         run: cargo test --manifest-path crates/manonica-compute-gpu/Cargo.toml
       - name: Resident Lab integration and device reset
         run: cargo test --manifest-path apps/manonica-lab/Cargo.toml gpu_tests -- --ignored --nocapture
+      - name: Dynamic mechanics GPU parity, reset and replacement
+        run: cargo test --manifest-path apps/manonica-lab/Cargo.toml mechanical_gpu -- --ignored --nocapture
       - name: Headless coupled physics validation
         run: cargo run -p manonica-simulator --features gpu --bin gpu-coupled
       - name: Headless resident transport experiment
