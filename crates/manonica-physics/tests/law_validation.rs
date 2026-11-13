@@ -333,3 +333,139 @@ fn overlapping_or_nonphysical_local_constraints_are_rejected() {
         .is_err()
     );
 }
+
+struct UniformVelocity([f64; 3]);
+
+impl manonica_physics::VelocityField for UniformVelocity {
+    fn at(
+        &self,
+        _: manonica_core::Vec3<manonica_core::units::Metres>,
+    ) -> Result<
+        manonica_core::Vec3<manonica_core::units::MetresPerSecond>,
+        manonica_physics::PhysicsError,
+    > {
+        Ok(manonica_core::Vec3::try_values(
+            self.0[0], self.0[1], self.0[2],
+        )?)
+    }
+}
+
+/// LAW-ADV-001: after m upwind steps an impulse has binomial weights
+/// choose(m,k) C^k (1-C)^(m-k). At the impermeable downstream wall,
+/// all weights reaching or passing the last cell accumulate there.
+#[test]
+fn law_advection_binomial_profile_and_wall_accumulation_on_all_axes() {
+    const N: usize = 8;
+    const STEPS: usize = 12;
+    let c: f64 = 0.4;
+    let dx: f64 = 0.5;
+    for axis in 0..3 {
+        for sign in [-1.0, 1.0] {
+            let mut dimensions = [1; 3];
+            dimensions[axis] = N;
+            let shape = GridShape::new(dimensions[0], dimensions[1], dimensions[2]).unwrap();
+            let mut field = FreeManaField::uniform(shape, dx, density(0.0)).unwrap();
+            let mut start = [0; 3];
+            if sign < 0.0 {
+                start[axis] = N - 1;
+            }
+            field
+                .set(start[0], start[1], start[2], density(10.0))
+                .unwrap();
+            let mut velocity = [0.0; 3];
+            velocity[axis] = sign;
+            let law = manonica_physics::FreeAdvection::new(UniformVelocity(velocity));
+            for _ in 0..STEPS {
+                law.evolve(&mut field, TimeStep::from_seconds(c * dx).unwrap())
+                    .unwrap();
+            }
+            let mut expected = [0.0; N];
+            let mut probability = (1.0 - c).powi(STEPS as i32);
+            for k in 0..=STEPS {
+                expected[k.min(N - 1)] += 10.0 * probability;
+                probability *= (STEPS - k) as f64 / (k + 1) as f64 * c / (1.0 - c);
+            }
+            for (k, expected) in expected.into_iter().enumerate() {
+                let mut position = [0; 3];
+                position[axis] = if sign > 0.0 { k } else { N - 1 - k };
+                let actual = field
+                    .at(position[0], position[1], position[2])
+                    .unwrap()
+                    .value();
+                assert!(actual >= 0.0);
+                close("binomial transport profile", actual, expected, 1e-11);
+            }
+            close(
+                "closed inventory",
+                field.total_manons().unwrap().value(),
+                10.0 * dx.powi(3),
+                1e-11,
+            );
+            let before = field.densities().to_vec();
+            assert!(
+                law.evolve(&mut field, TimeStep::from_seconds(1.01 * dx).unwrap())
+                    .is_err()
+            );
+            assert_eq!(field.densities(), before, "CFL rejection must be atomic");
+        }
+    }
+}
+
+/// LAW-ADV-002: n(x,t)=f(x-vt). Integrate the compact sin^4 pulse
+/// over each cell independently; it stays away from both walls.
+/// Fixed CFL refinement halves dx and dt together (first-order upwind).
+#[test]
+fn law_advection_converges_to_translated_continuum_profile() {
+    fn primitive(x: f64) -> f64 {
+        let u = (x - 0.5).clamp(0.0, 1.0);
+        let pi = std::f64::consts::PI;
+        3.0 * u / 8.0 - (2.0 * pi * u).sin() / (4.0 * pi) + (4.0 * pi * u).sin() / (32.0 * pi)
+    }
+    let mut errors = Vec::new();
+    for n in [40, 80, 160] {
+        let dx = 4.0 / n as f64;
+        let dt = 0.4 * dx;
+        let steps = n / 8;
+        let time = steps as f64 * dt;
+        let shape = GridShape::new(n, 1, 1).unwrap();
+        let mut field = FreeManaField::uniform(shape, dx, density(0.0)).unwrap();
+        for x in 0..n {
+            let left = x as f64 * dx;
+            field
+                .set(
+                    x,
+                    0,
+                    0,
+                    density((primitive(left + dx) - primitive(left)) / dx),
+                )
+                .unwrap();
+        }
+        let before = field.total_manons().unwrap().value();
+        let law = manonica_physics::FreeAdvection::new(UniformVelocity([1.0, 0.0, 0.0]));
+        for _ in 0..steps {
+            law.evolve(&mut field, TimeStep::from_seconds(dt).unwrap())
+                .unwrap();
+        }
+        let error = (0..n)
+            .map(|x| {
+                let left = x as f64 * dx - time;
+                let exact = (primitive(left + dx) - primitive(left)) / dx;
+                (field.at(x, 0, 0).unwrap().value() - exact).abs() * dx
+            })
+            .sum::<f64>();
+        errors.push(error);
+        close(
+            "continuum profile inventory",
+            field.total_manons().unwrap().value(),
+            before,
+            1e-12,
+        );
+    }
+    for pair in errors.windows(2) {
+        let ratio = pair[0] / pair[1];
+        assert!(
+            (1.5..2.5).contains(&ratio),
+            "expected first-order convergence, errors={errors:?}"
+        );
+    }
+}
