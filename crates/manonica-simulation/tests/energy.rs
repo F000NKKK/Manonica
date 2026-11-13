@@ -225,3 +225,90 @@ fn decaying_field_converts_linear_and_quadratic_energy_to_heat_and_export() {
         assert!(ledger.shutdown && state.shutdown);
     }
 }
+
+/// LAW-FIELD-BOUND-001: bound and free manons retain the same phi energy.
+/// With total N=3 and phi=+/-2*d, U=+/-6*d and E_field=2*d².
+/// Decaying a negative potential requires work rather than producing heat.
+#[test]
+fn bound_inventory_retains_potential_energy_during_positive_and_negative_decay() {
+    use manonica_physics::{PotentialBoundary, PotentialField};
+    use manonica_simulation::{FieldControl, FieldLedger};
+    let shape = GridShape::new(1, 1, 1).unwrap();
+    for sign in [-1.0, 1.0] {
+        let field =
+            FreeManaField::uniform(shape, 1.0, Quantity::nonnegative(1.0).unwrap()).unwrap();
+        let mut materials = MaterialLattice::new(shape);
+        materials
+            .install(
+                [0, 0, 0],
+                TrapMaterial {
+                    capacity: 2.0,
+                    capture_rate: 0.0,
+                    release_rate: 0.0,
+                    binding_energy: 2.0,
+                    heat_capacity: 3.0,
+                    reference_temperature: 300.0,
+                    activation_temperature: 0.0,
+                    max_flux: 0.0,
+                    conductivity: 0.0,
+                },
+            )
+            .unwrap();
+        materials.try_replace_storage(&[[2.0, 4.0]]).unwrap();
+        let potential = PotentialField::solve(
+            shape,
+            1.0,
+            &[sign * 2.0],
+            1.0,
+            1.0,
+            PotentialBoundary::Insulated,
+            10,
+        )
+        .unwrap();
+        let mut state = CoupledState {
+            field,
+            materials,
+            potential: Some(potential),
+            field_ledger: Some(FieldLedger {
+                field_energy_joules: 2.0,
+                manon_potential_joules: sign * 6.0,
+                peak_potential: 2.0,
+                shutdown: true,
+                ..Default::default()
+            }),
+            shutdown: true,
+        };
+        let parameters = StepParameters {
+            diffusivity: 0.0,
+            dt: 0.1,
+            flow: MediumFlow::Still,
+            thermal_conductance: 0.0,
+            ambient_cooling_rate: 0.0,
+            field: Some(FieldControl {
+                mobility: 0.0,
+                max_power_joules_per_second: 100.0,
+                shutdown_at_bound_fraction: 0.0,
+                shutdown_decay_rate: 0.7,
+            }),
+        };
+        for step in 1..=40 {
+            state.step(&parameters).unwrap();
+            let d = (-0.7 * step as f64 * 0.1).exp();
+            let ledger = state.field_ledger.unwrap();
+            close(ledger.manon_potential_joules, sign * 6.0 * d);
+            close(ledger.field_energy_joules, 2.0 * d * d);
+            let change = sign * 6.0 * (d - 1.0) + 2.0 * (d * d - 1.0);
+            close(ledger.operating_work_joules, change.max(0.0));
+            close(ledger.dissipated_heat_joules, (-change).max(0.0));
+            close(
+                ledger.tracked_energy(),
+                2.0 + sign * 6.0 + ledger.operating_work_joules,
+            );
+            let balance = state.materials.balance(&state.field).unwrap();
+            close(balance.free, 1.0);
+            close(balance.bound, 2.0);
+            close(balance.thermal_joules, 4.0);
+            close(balance.energy(), 0.0);
+        }
+    }
+}

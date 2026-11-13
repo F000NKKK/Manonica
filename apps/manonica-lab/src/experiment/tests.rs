@@ -567,3 +567,48 @@ fn resident_batch_rejects_multiphysics_without_mutating_state() {
     assert_eq!(simulation.steps(), 0);
     assert!((simulation.total().unwrap().value() - before).abs() < 1e-10);
 }
+
+/// LAW-FIELD-SETUP-001: a one-cell insulated ring source of integrated strength
+/// S=2V and screening=1 gives phi=2, E_field=2V, U_manons=6.
+/// The setup budget covers field energy; manon energy is initial state.
+#[test]
+fn initial_field_budget_matches_analytic_one_cell_source_and_volume() {
+    for dx in [0.5_f64, 1.0] {
+        let volume = dx.powi(3);
+        let expected_field_energy = 2.0 * volume;
+        let mut experiment = Experiment::parse(include_str!(
+            "../../experiments/local_boundary_conductor.toml"
+        ))
+        .unwrap();
+        experiment.grid.dimensions = [1, 1, 1];
+        experiment.grid.cell_size = dx;
+        experiment.physics.diffusivity = 0.0;
+        experiment.physics.flow = AmbientFlow::Still;
+        experiment.local_boundaries.clear();
+        experiment.formulas[0].x = "0.1*cos(t)".into();
+        experiment.formulas[0].y = "0*t".into();
+        experiment.formulas[0].z = "0.1*sin(t)".into();
+        experiment.formulas[0].trap = None;
+        experiment.seeds[0].total_manons = 3.0;
+        experiment.field_sources[0].strength = 2.0 * volume;
+        let settings = experiment.physics.potential.as_mut().unwrap();
+        settings.boundary = super::PotentialBoundaryKind::Insulated;
+        settings.screening = 1.0;
+        settings.initial_work_joules = expected_field_energy;
+        let mut simulation = Simulation::new(experiment.clone()).unwrap();
+        let ledger = simulation.field_ledger().unwrap();
+        assert!((ledger.field_energy_joules - expected_field_energy).abs() < 1e-10);
+        assert!((ledger.manon_potential_joules - 6.0).abs() < 1e-10);
+        assert_eq!(ledger.operating_work_joules, 0.0);
+        assert!((simulation.tracked_energy().unwrap() - expected_field_energy - 6.0).abs() < 1e-10);
+        simulation.reset().unwrap();
+        assert!((simulation.tracked_energy().unwrap() - expected_field_energy - 6.0).abs() < 1e-10);
+        experiment
+            .physics
+            .potential
+            .as_mut()
+            .unwrap()
+            .initial_work_joules = expected_field_energy - 0.001;
+        assert!(Simulation::new(experiment).is_err());
+    }
+}
