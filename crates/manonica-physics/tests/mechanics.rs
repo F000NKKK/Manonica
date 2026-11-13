@@ -130,3 +130,26 @@ fn ledger_overflow_rolls_back_even_when_candidate_body_is_valid() {
     assert_eq!(ledger, before);
     assert_eq!(body, initial);
 }
+
+#[test]
+fn free_drift_preserves_momentum_and_rolls_back_position_overflow() {
+    let mut body = MechanicalBody::new(
+        Quantity::new(2.0).unwrap(),
+        Vec3::try_values(1.0, 2.0, 3.0).unwrap(),
+        Vec3::try_values(4.0, -2.0, 1.0).unwrap(),
+    )
+    .unwrap();
+    let momentum = body.momentum();
+    body.advance_free(TimeStep::from_seconds(2.0).unwrap())
+        .unwrap();
+    close(body.position().x.value(), 5.0);
+    close(body.position().y.value(), 0.0);
+    close(body.position().z.value(), 4.0);
+    assert_eq!(body.momentum(), momentum);
+    let before = body;
+    assert!(
+        body.advance_free(TimeStep::from_seconds(f64::MAX).unwrap())
+            .is_err()
+    );
+    assert_eq!(body, before);
+}

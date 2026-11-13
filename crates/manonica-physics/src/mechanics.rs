@@ -53,6 +53,16 @@ impl MechanicalBody {
                 .sum(),
         )
     }
+    /// Exact free drift at fixed momentum; failure leaves the body unchanged.
+    pub fn advance_free(&mut self, dt: TimeStep) -> Result<(), BaseError> {
+        let position = values(self.position);
+        let p = values(self.momentum);
+        let candidate = vector(std::array::from_fn(|i| {
+            position[i] + dt.seconds() * p[i] / self.mass.value()
+        }))?;
+        self.position = candidate;
+        Ok(())
+    }
     /// Exact momentum kick at fixed position. Return signed kinetic work.
     /// Internal interactions must book the opposite impulse in their partner.
     pub fn apply_impulse(
