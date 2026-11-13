@@ -27,24 +27,14 @@ fn cubic_in_domain(sources: Vec<Source>, cutoff: i32, length: f64) -> Result<Sys
     if !(1..=24).contains(&cutoff) || !length.is_finite() || length <= 0.0 {
         return Err("invalid cubic domain".into());
     }
-    let mut waves = Vec::new();
-    for x in -cutoff..=cutoff {
-        for y in -cutoff..=cutoff {
-            for z in -cutoff..=cutoff {
-                // One cosine/sine pair for each +/- wave-vector pair; no zero mode.
-                if x > 0 || (x == 0 && y > 0) || (x == 0 && y == 0 && z > 0) {
-                    waves.push([
-                        x as f64 * TAU / length,
-                        y as f64 * TAU / length,
-                        z as f64 * TAU / length,
-                    ]);
-                }
-            }
-        }
-    }
-    // Fixed a=epsilon=screening=1/pi; mu=a*V/2 scales with volume.
-    System::static_modes(sources, waves, length.powi(3) / TAU)
+    PeriodicSpectralDomain::new(
+        Vec3::try_values(length, length, length).map_err(|e| e.to_string())?,
+        [cutoff as usize; 3],
+    )
+    .and_then(|domain| domain.static_equilibrium(sources))
+    .map_err(|e| e.to_string())
 }
+
 fn experiment_3d(cutoff: i32, steps: usize) -> Result<(System, f64, f64), String> {
     let mut system = cubic(cubic_sources(), cutoff)?;
     let e0 = system.energy()?;
@@ -78,7 +68,7 @@ pub(super) fn validate_3d() -> Result<(), String> {
         previous = Some(energy);
         println!(
             "3D modes={}, steps={steps}, energy error={energy:.6e} J, max component momentum error={momentum:.6e} kg m/s",
-            system.modes.len()
+            system.modes().len()
         );
     }
     Ok(())
@@ -100,17 +90,17 @@ mod tests {
             .unwrap();
             let system = cubic(sources, cutoff).unwrap();
             assert_eq!(
-                system.modes.len(),
+                system.modes().len(),
                 (((2 * cutoff + 1).pow(3) - 1) / 2) as usize
             );
-            for force in system.force_vector(&system.sources[0]) {
+            for force in system.force_vector(&system.sources()[0]) {
                 assert!(force.abs() < 1e-14);
             }
             for p in system.momentum_vector() {
                 assert!(p.abs() < 1e-14);
             }
-            for (i, a) in system.modes.iter().enumerate() {
-                for b in &system.modes[i + 1..] {
+            for (i, a) in system.modes().iter().enumerate() {
+                for b in &system.modes()[i + 1..] {
                     assert_ne!(a.wave, b.wave);
                     assert_ne!(a.wave, b.wave.map(|v| -v));
                 }
@@ -128,12 +118,13 @@ mod tests {
         )
         .unwrap();
         let wave = [1.0, 2.0, -1.0];
-        let mut system = System::static_modes(sources, vec![wave], 4.0 * PI * PI).unwrap();
-        system.modes[0].a = 0.0;
-        system.modes[0].b = 2.0;
+        let mut system = System::static_equilibrium(sources, vec![wave], 4.0 * PI * PI).unwrap();
+        system
+            .replace_mode_storage(&[[0.0, 2.0, 0.0, 0.0]])
+            .unwrap();
         let g = (-0.5 * 6.0 * 0.6_f64.powi(2)).exp();
         system.kick(0.25).unwrap();
-        let p = system.sources[0].body.momentum();
+        let p = system.sources()[0].body.momentum();
         for (actual, k) in [p.x.value(), p.y.value(), p.z.value()]
             .into_iter()
             .zip(wave)
@@ -147,8 +138,8 @@ mod tests {
     #[test]
     fn law_spectral_3d_002_pair_recoil_translation_and_axis_permutation() {
         let system = cubic(cubic_sources(), 4).unwrap();
-        let a = system.force_vector(&system.sources[0]);
-        let b = system.force_vector(&system.sources[1]);
+        let a = system.force_vector(&system.sources()[0]);
+        let b = system.force_vector(&system.sources()[1]);
         assert!(a.iter().all(|f| f.abs() > 1e-5));
         for axis in 0..3 {
             assert!((a[axis] + b[axis]).abs() < 1e-14);
@@ -165,7 +156,10 @@ mod tests {
             .unwrap();
         }
         let shifted = cubic(shifted, 4).unwrap();
-        for (a, b) in a.into_iter().zip(shifted.force_vector(&shifted.sources[0])) {
+        for (a, b) in a
+            .into_iter()
+            .zip(shifted.force_vector(&shifted.sources()[0]))
+        {
             assert!((a - b).abs() < 1e-14);
         }
         assert!((system.energy().unwrap() - shifted.energy().unwrap()).abs() < 1e-14);
@@ -181,7 +175,7 @@ mod tests {
             .unwrap();
         }
         let rotated = cubic(permuted, 4).unwrap();
-        let force = rotated.force_vector(&rotated.sources[0]);
+        let force = rotated.force_vector(&rotated.sources()[0]);
         for (a, b) in [a[2], a[0], a[1]].into_iter().zip(force) {
             assert!((a - b).abs() < 1e-14);
         }
@@ -189,7 +183,7 @@ mod tests {
     #[test]
     fn law_spectral_3d_003_force_is_negative_gradient_of_static_energy() {
         let system = cubic(cubic_sources(), 4).unwrap();
-        let force = system.force_vector(&system.sources[0]);
+        let force = system.force_vector(&system.sources()[0]);
         let h = 1e-5;
         for (axis, expected) in force.into_iter().enumerate() {
             let energy = |delta: f64| {
@@ -216,11 +210,11 @@ mod tests {
     fn law_spectral_3d_004_dynamics_and_cutoff_converge() {
         validate_3d().unwrap();
         let reference = cubic(cubic_sources(), 10).unwrap();
-        let expected = reference.force_vector(&reference.sources[0]);
+        let expected = reference.force_vector(&reference.sources()[0]);
         let mut errors = Vec::new();
         for cutoff in [2, 4, 6, 8] {
             let system = cubic(cubic_sources(), cutoff).unwrap();
-            let actual = system.force_vector(&system.sources[0]);
+            let actual = system.force_vector(&system.sources()[0]);
             let error = actual
                 .into_iter()
                 .zip(expected)
@@ -301,9 +295,9 @@ pub(super) fn validate_coordinates() -> Result<(), String> {
                 s.width = sigma;
             }
             let system = cubic_in_domain(sources.clone(), cutoff, length)?;
-            let force = system.force_vector(&system.sources[0]);
+            let force = system.force_vector(&system.sources()[0]);
             let refined = cubic_in_domain(sources, cutoff + 2, length)?;
-            if maximum_difference(force, refined.force_vector(&refined.sources[0])) > 1e-9 {
+            if maximum_difference(force, refined.force_vector(&refined.sources()[0])) > 1e-9 {
                 return Err("3D spectral truncation has not converged".into());
             }
             let coordinate = image_force(length, sigma, 3, 4096);

@@ -4,27 +4,10 @@ use manonica_core::{Quantity, TimeStep, Vec3};
 use manonica_physics::MechanicalBody;
 use std::f64::consts::{PI, TAU};
 
-#[derive(Clone, Debug, PartialEq)]
-struct Source {
-    body: MechanicalBody,
-    charge: f64,
-    width: f64,
-}
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Mode {
-    k: f64,
-    wave: [f64; 3],
-    a: f64,
-    b: f64,
-    pa: f64,
-    pb: f64,
-}
-#[derive(Clone, Debug, PartialEq)]
-struct System {
-    inertia: f64,
-    sources: Vec<Source>,
-    modes: Vec<Mode>,
-}
+use manonica_physics::{
+    GaussianBody as Source, PeriodicSpectralDomain, SpectralMechanics as System,
+};
+
 fn source(x: f64, p: f64, charge: f64, width: f64) -> Source {
     Source {
         body: MechanicalBody::new(
@@ -37,9 +20,7 @@ fn source(x: f64, p: f64, charge: f64, width: f64) -> Source {
         width,
     }
 }
-fn factor(s: &Source, k: f64) -> f64 {
-    (-0.5 * (k * s.width).powi(2)).exp()
-}
+#[cfg(test)]
 fn coordinates(body: MechanicalBody) -> [f64; 3] {
     let v = body.position();
     [v.x.value(), v.y.value(), v.z.value()]
@@ -47,178 +28,62 @@ fn coordinates(body: MechanicalBody) -> [f64; 3] {
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     (0..3).map(|i| a[i] * b[i]).sum()
 }
-impl System {
-    fn static_field(sources: Vec<Source>, count: usize) -> Self {
-        Self::static_field_in_domain(sources, count, TAU).expect("valid fixed spectral model")
-    }
-    fn static_field_in_domain(
-        sources: Vec<Source>,
-        count: usize,
-        length: f64,
-    ) -> Result<Self, String> {
-        if !length.is_finite()
-            || length <= 0.0
-            || !(1..=4096).contains(&count)
-            || sources
-                .iter()
-                .any(|s| !s.charge.is_finite() || !s.width.is_finite() || s.width <= 0.0)
-        {
-            return Err("invalid spectral domain or source".into());
-        }
-        // a=epsilon=screening=1/pi fixed in physical units, mu=a*L/2.
-        let inertia = length / TAU;
-        if !inertia.is_finite() || inertia <= 0.0 {
-            return Err("invalid modal inertia".into());
-        }
-        let waves = (1..=count)
-            .map(|j| [j as f64 * TAU / length, 0.0, 0.0])
-            .collect();
-        Self::static_modes(sources, waves, inertia)
-    }
-    fn static_modes(
-        sources: Vec<Source>,
-        waves: Vec<[f64; 3]>,
-        inertia: f64,
-    ) -> Result<Self, String> {
-        if !inertia.is_finite()
-            || inertia <= 0.0
-            || waves.is_empty()
-            || sources
-                .iter()
-                .any(|s| !s.charge.is_finite() || !s.width.is_finite() || s.width <= 0.0)
-        {
-            return Err("invalid spectral mode parameters".into());
-        }
-        let mut modes = Vec::with_capacity(waves.len());
-        for wave in waves {
-            let k = dot(wave, wave).sqrt();
-            if !k.is_finite() || k <= 0.0 {
-                return Err("invalid wave vector".into());
-            }
-            let mut a = 0.0;
-            let mut b = 0.0;
-            for s in &sources {
-                let (sin, cos) = dot(wave, coordinates(s.body)).sin_cos();
-                a -= s.charge * factor(s, k) * cos / (inertia * (k * k + 1.0));
-                b -= s.charge * factor(s, k) * sin / (inertia * (k * k + 1.0));
-            }
-            modes.push(Mode {
-                k,
-                wave,
-                a,
-                b,
-                pa: 0.0,
-                pb: 0.0,
-            });
-        }
-        let system = Self {
-            inertia,
-            sources,
-            modes,
-        };
-        system.energy()?;
-        if system.momentum_vector().iter().any(|p| !p.is_finite()) {
-            return Err("invalid spectral momentum".into());
-        }
-        Ok(system)
-    }
-    fn force_vector(&self, s: &Source) -> [f64; 3] {
-        let mut force = [0.0; 3];
-        for m in &self.modes {
-            let (sin, cos) = dot(m.wave, coordinates(s.body)).sin_cos();
-            let scalar = s.charge * factor(s, m.k) * (m.a * sin - m.b * cos);
-            for (axis, value) in force.iter_mut().enumerate() {
-                *value += m.wave[axis] * scalar;
-            }
-        }
-        force
-    }
-    fn force(&self, s: &Source) -> f64 {
-        self.force_vector(s)[0]
-    }
-    fn momentum_vector(&self) -> [f64; 3] {
-        let mut result = [0.0; 3];
-        for s in &self.sources {
-            let p = s.body.momentum();
-            for (a, b) in result
-                .iter_mut()
-                .zip([p.x.value(), p.y.value(), p.z.value()])
-            {
-                *a += b;
-            }
-        }
-        for m in &self.modes {
-            for (axis, value) in result.iter_mut().enumerate() {
-                *value += m.wave[axis] * (m.a * m.pb - m.b * m.pa);
-            }
-        }
-        result
-    }
+// CLI adapters only; all physical stepping/forces are owned by manonica-physics.
+fn equilibrium_default(sources: Vec<Source>, count: usize) -> System {
+    equilibrium_line(sources, count, TAU).expect("valid fixed spectral model")
+}
+fn equilibrium_line(sources: Vec<Source>, count: usize, length: f64) -> Result<System, String> {
+    PeriodicSpectralDomain::new(
+        Vec3::try_values(length, 1.0, 1.0).map_err(|e| e.to_string())?,
+        [count, 0, 0],
+    )
+    .and_then(|domain| domain.static_equilibrium(sources))
+    .map_err(|e| e.to_string())
+}
+trait StandObservables {
+    fn energy(&self) -> Result<f64, String>;
+    fn momentum_vector(&self) -> [f64; 3];
     fn momentum(&self) -> f64 {
         self.momentum_vector()[0]
     }
-    fn energy(&self) -> Result<f64, String> {
-        let mut energy = 0.0;
-        for s in &self.sources {
-            energy += s.body.kinetic_energy().map_err(|e| e.to_string())?.value();
-        }
-        for m in &self.modes {
-            energy += 0.5
-                * ((m.pa * m.pa + m.pb * m.pb) / self.inertia
-                    + self.inertia * (m.k * m.k + 1.0) * (m.a * m.a + m.b * m.b));
-            for s in &self.sources {
-                let (sin, cos) = dot(m.wave, coordinates(s.body)).sin_cos();
-                energy += s.charge * factor(s, m.k) * (m.a * cos + m.b * sin);
-            }
-        }
-        if !energy.is_finite() {
-            return Err("nonfinite spectral energy".into());
-        }
-        Ok(energy)
+    fn force_vector(&self, source: &Source) -> [f64; 3];
+    fn force(&self, source: &Source) -> f64 {
+        self.force_vector(source)[0]
     }
-    fn kick(&mut self, dt: f64) -> Result<(), String> {
-        let forces: Vec<_> = self.sources.iter().map(|s| self.force_vector(s)).collect();
-        for (s, f) in self.sources.iter_mut().zip(forces) {
-            s.body
-                .apply_impulse(
-                    Vec3::try_values(dt * f[0], dt * f[1], dt * f[2]).map_err(|e| e.to_string())?,
-                )
-                .map_err(|e| e.to_string())?;
-        }
-        for m in &mut self.modes {
-            let mut ca = 0.0;
-            let mut cb = 0.0;
-            for s in &self.sources {
-                let (sin, cos) = dot(m.wave, coordinates(s.body)).sin_cos();
-                ca += s.charge * factor(s, m.k) * cos;
-                cb += s.charge * factor(s, m.k) * sin;
-            }
-            m.pa -= dt * (self.inertia * (m.k * m.k + 1.0) * m.a + ca);
-            m.pb -= dt * (self.inertia * (m.k * m.k + 1.0) * m.b + cb);
-        }
-        Ok(())
+    fn step(&mut self, dt: TimeStep) -> Result<(), String>;
+    #[cfg(test)]
+    fn kick(&mut self, seconds: f64) -> Result<(), String>;
+}
+impl StandObservables for System {
+    fn energy(&self) -> Result<f64, String> {
+        self.total_energy()
+            .map(|e| e.value())
+            .map_err(|e| e.to_string())
+    }
+    fn momentum_vector(&self) -> [f64; 3] {
+        let p = self.total_momentum().expect("validated state");
+        [p.x.value(), p.y.value(), p.z.value()]
+    }
+    fn force_vector(&self, source: &Source) -> [f64; 3] {
+        let index = self
+            .sources()
+            .iter()
+            .position(|s| std::ptr::eq(s, source))
+            .expect("owned source");
+        let f = self.force_on(index).expect("finite force");
+        [f.x.value(), f.y.value(), f.z.value()]
     }
     fn step(&mut self, dt: TimeStep) -> Result<(), String> {
-        let mut next = self.clone();
-        next.kick(dt.seconds() / 2.0)?;
-        for s in &mut next.sources {
-            s.body.advance_free(dt).map_err(|e| e.to_string())?;
-        }
-        for m in &mut next.modes {
-            m.a += dt.seconds() * m.pa / self.inertia;
-            m.b += dt.seconds() * m.pb / self.inertia;
-        }
-        next.kick(dt.seconds() / 2.0)?;
-        next.energy()?;
-        if next.momentum_vector().iter().any(|p| !p.is_finite()) {
-            return Err("nonfinite spectral momentum".into());
-        }
-        *self = next;
-        Ok(())
+        self.advance(dt).map_err(|e| e.to_string())
+    }
+    #[cfg(test)]
+    fn kick(&mut self, seconds: f64) -> Result<(), String> {
+        self.potential_kick(TimeStep::from_seconds(seconds).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())
     }
 }
 fn setup(count: usize) -> System {
-    System::static_field(
+    equilibrium_default(
         vec![source(0.4, 0.15, 0.4, 0.35), source(2.0, -0.1, -0.4, 0.35)],
         count,
     )
@@ -296,12 +161,12 @@ fn validate_domain() -> Result<(), String> {
         let mut previous = f64::INFINITY;
         for scale in [1, 2, 4] {
             let length = scale as f64 * TAU;
-            let system = System::static_field_in_domain(
+            let system = equilibrium_line(
                 vec![source(0.4, 0.0, 0.4, width), source(2.0, 0.0, -0.4, width)],
                 64 * scale,
                 length,
             )?;
-            let force = system.force(&system.sources[0]);
+            let force = system.force(&system.sources()[0]);
             let periodic = periodic_reference(length, width);
             if (force - periodic).abs() > 1e-9 {
                 return Err(format!(
@@ -335,8 +200,8 @@ mod tests {
         for count in [1, 4, 16, 32] {
             for width in [0.2, 0.35, 0.6] {
                 for x in [0.0, 0.13, 1.7, 4.2, 6.1] {
-                    let system = System::static_field(vec![source(x, 0.0, 0.4, width)], count);
-                    assert!(system.force(&system.sources[0]).abs() < 1e-14);
+                    let system = equilibrium_default(vec![source(x, 0.0, 0.4, width)], count);
+                    assert!(system.force(&system.sources()[0]).abs() < 1e-14);
                     assert!(system.momentum().abs() < 1e-14);
                 }
             }
@@ -345,29 +210,29 @@ mod tests {
     #[test]
     fn law_spectral_002_pair_forces_have_equal_recoil_and_translation_symmetry() {
         let system = setup(16);
-        let left = system.force(&system.sources[0]);
-        let right = system.force(&system.sources[1]);
+        let left = system.force(&system.sources()[0]);
+        let right = system.force(&system.sources()[1]);
         assert!(left.abs() > 1e-4);
         assert!((left + right).abs() < 1e-14);
-        let shifted = System::static_field(
+        let shifted = equilibrium_default(
             vec![
                 source(1.13, 0.15, 0.4, 0.35),
                 source(2.73, -0.1, -0.4, 0.35),
             ],
             16,
         );
-        assert!((shifted.force(&shifted.sources[0]) - left).abs() < 1e-14);
+        assert!((shifted.force(&shifted.sources()[0]) - left).abs() < 1e-14);
         assert!((shifted.energy().unwrap() - system.energy().unwrap()).abs() < 1e-14);
     }
     #[test]
     fn law_spectral_003_static_energy_tail_is_bounded_by_gaussian_kernel() {
         let charge: f64 = 0.4;
         let width: f64 = 0.35;
-        let exact = System::static_field(vec![source(0.37, 0.0, charge, width)], 64)
+        let exact = equilibrium_default(vec![source(0.37, 0.0, charge, width)], 64)
             .energy()
             .unwrap();
         for count in [2, 4, 8, 16] {
-            let energy = System::static_field(vec![source(0.37, 0.0, charge, width)], count)
+            let energy = equilibrium_default(vec![source(0.37, 0.0, charge, width)], count)
                 .energy()
                 .unwrap();
             let first = (count + 1) as f64;
@@ -390,7 +255,7 @@ mod tests {
         let (reference, _, _) = experiment(32, 400).unwrap();
         for (count, tolerance) in [(8, 1e-5), (16, 1e-11)] {
             let (observed, _, _) = experiment(count, 400).unwrap();
-            for (a, b) in observed.sources.iter().zip(&reference.sources) {
+            for (a, b) in observed.sources().iter().zip(reference.sources()) {
                 assert!(
                     (a.body.position().x.value() - b.body.position().x.value()).abs() < tolerance
                 );
@@ -427,13 +292,13 @@ mod domain_tests {
         let mut errors = Vec::new();
         for width in [0.2, 0.1, 0.05] {
             let count = (32.0 / width) as usize;
-            let system = System::static_field_in_domain(
+            let system = equilibrium_line(
                 vec![source(0.4, 0.0, 0.4, width), source(2.0, 0.0, -0.4, width)],
                 count,
                 length,
             )
             .unwrap();
-            errors.push((system.force(&system.sources[0]) - exact).abs());
+            errors.push((system.force(&system.sources()[0]) - exact).abs());
         }
         for pair in errors.windows(2) {
             assert!(
@@ -447,7 +312,7 @@ mod domain_tests {
     fn normalized_periods_preserve_dynamic_balances_and_reject_invalid_inputs() {
         for scale in [1, 2] {
             for width in [0.2, 0.6] {
-                let mut system = System::static_field_in_domain(
+                let mut system = equilibrium_line(
                     vec![
                         source(0.4, 0.15, 0.4, width),
                         source(2.0, -0.1, -0.4, width),
@@ -468,16 +333,13 @@ mod domain_tests {
             }
         }
         for length in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            assert!(System::static_field_in_domain(vec![], 16, length).is_err());
+            assert!(equilibrium_line(vec![], 16, length).is_err());
         }
         for count in [0, 4097] {
-            assert!(System::static_field_in_domain(vec![], count, TAU).is_err());
+            assert!(equilibrium_line(vec![], count, TAU).is_err());
         }
         for width in [0.0, -1.0, f64::NAN] {
-            assert!(
-                System::static_field_in_domain(vec![source(0.0, 0.0, 0.4, width)], 16, TAU)
-                    .is_err()
-            );
+            assert!(equilibrium_line(vec![source(0.0, 0.0, 0.4, width)], 16, TAU).is_err());
         }
     }
 }

@@ -20,4 +20,7 @@ pub use field::{
 pub use manon::{Manon, ManonId, ManonState};
 pub use system::ManonSystem;
 
-pub use mechanics::{ExternalLoadLedger, MechanicalBody};
+pub use mechanics::{
+    ExternalLoadLedger, GaussianBody, MechanicalBody, PeriodicSpectralDomain, SpectralMechanics,
+    SpectralMode,
+};

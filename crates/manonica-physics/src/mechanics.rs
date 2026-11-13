@@ -148,3 +148,6 @@ impl ExternalLoadLedger {
         Ok(())
     }
 }
+
+mod spectral;
+pub use spectral::{GaussianBody, PeriodicSpectralDomain, SpectralMechanics, SpectralMode};

@@ -16,7 +16,7 @@ Minecraft: свободные и связанные маноны, распред
 | --- | --- |
 | `manonica-error` | Типизированные ошибки |
 | `manonica-core` | Единицы, количества, линейная алгебра, время |
-| `manonica-physics` | Свободные маноны, 3D-сетка, диффузия, адвекция, потенциал, дискретные граничные условия и интерфейс backend |
+| `manonica-physics` | Свободные маноны, 3D-сетка, диффузия, адвекция, потенциал, дискретные граничные условия, экспериментальная спектральная механика и интерфейс backend |
 | `manonica-materials` | Связанные маноны, `TrapMaterial`, `MaterialLattice`, теплопроводность, каналы и тензорная анизотропия |
 | `manonica-simulation` | Связанный шаг физики, состояние материалов и энергетический баланс; общий контракт CPU/GPU для Lab, симулятора и мода |
 | `manonica-control` | Типизированное управление, P/I/D, диагностика и модели ТАУ |
@@ -125,3 +125,11 @@ gradle build
 
 См. [дорожную карту](docs/ROADMAP.md), [контроль законов](docs/physical-law-validation.md)
 и [документацию Lab](apps/manonica-lab/README.md).
+
+Экспериментальная динамическая механика доступна отдельным CPU API
+`manonica_physics::SpectralMechanics`; она пока не подключена к Lab
+и GPU. Стенд и контракт: [механический импульс](docs/mechanical-momentum.md).
+
+```bash
+cargo run --release -p manonica-simulator --bin spectral_field
+```
