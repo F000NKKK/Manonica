@@ -13,6 +13,7 @@ struct Source {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Mode {
     k: f64,
+    wave: [f64; 3],
     a: f64,
     b: f64,
     pa: f64,
@@ -39,6 +40,13 @@ fn source(x: f64, p: f64, charge: f64, width: f64) -> Source {
 fn factor(s: &Source, k: f64) -> f64 {
     (-0.5 * (k * s.width).powi(2)).exp()
 }
+fn coordinates(body: MechanicalBody) -> [f64; 3] {
+    let v = body.position();
+    [v.x.value(), v.y.value(), v.z.value()]
+}
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (0..3).map(|i| a[i] * b[i]).sum()
+}
 impl System {
     fn static_field(sources: Vec<Source>, count: usize) -> Self {
         Self::static_field_in_domain(sources, count, TAU).expect("valid fixed spectral model")
@@ -62,55 +70,92 @@ impl System {
         if !inertia.is_finite() || inertia <= 0.0 {
             return Err("invalid modal inertia".into());
         }
-        let modes = (1..=count)
-            .map(|j| {
-                let k = j as f64 * TAU / length;
-                let mut a = 0.0;
-                let mut b = 0.0;
-                for s in &sources {
-                    let (sin, cos) = (k * s.body.position().x.value()).sin_cos();
-                    a -= s.charge * factor(s, k) * cos / (inertia * (k * k + 1.0));
-                    b -= s.charge * factor(s, k) * sin / (inertia * (k * k + 1.0));
-                }
-                Mode {
-                    k,
-                    a,
-                    b,
-                    pa: 0.0,
-                    pb: 0.0,
-                }
-            })
+        let waves = (1..=count)
+            .map(|j| [j as f64 * TAU / length, 0.0, 0.0])
             .collect();
+        Self::static_modes(sources, waves, inertia)
+    }
+    fn static_modes(
+        sources: Vec<Source>,
+        waves: Vec<[f64; 3]>,
+        inertia: f64,
+    ) -> Result<Self, String> {
+        if !inertia.is_finite()
+            || inertia <= 0.0
+            || waves.is_empty()
+            || sources
+                .iter()
+                .any(|s| !s.charge.is_finite() || !s.width.is_finite() || s.width <= 0.0)
+        {
+            return Err("invalid spectral mode parameters".into());
+        }
+        let mut modes = Vec::with_capacity(waves.len());
+        for wave in waves {
+            let k = dot(wave, wave).sqrt();
+            if !k.is_finite() || k <= 0.0 {
+                return Err("invalid wave vector".into());
+            }
+            let mut a = 0.0;
+            let mut b = 0.0;
+            for s in &sources {
+                let (sin, cos) = dot(wave, coordinates(s.body)).sin_cos();
+                a -= s.charge * factor(s, k) * cos / (inertia * (k * k + 1.0));
+                b -= s.charge * factor(s, k) * sin / (inertia * (k * k + 1.0));
+            }
+            modes.push(Mode {
+                k,
+                wave,
+                a,
+                b,
+                pa: 0.0,
+                pb: 0.0,
+            });
+        }
         let system = Self {
             inertia,
             sources,
             modes,
         };
         system.energy()?;
-        if !system.momentum().is_finite() {
+        if system.momentum_vector().iter().any(|p| !p.is_finite()) {
             return Err("invalid spectral momentum".into());
         }
         Ok(system)
     }
+    fn force_vector(&self, s: &Source) -> [f64; 3] {
+        let mut force = [0.0; 3];
+        for m in &self.modes {
+            let (sin, cos) = dot(m.wave, coordinates(s.body)).sin_cos();
+            let scalar = s.charge * factor(s, m.k) * (m.a * sin - m.b * cos);
+            for (axis, value) in force.iter_mut().enumerate() {
+                *value += m.wave[axis] * scalar;
+            }
+        }
+        force
+    }
     fn force(&self, s: &Source) -> f64 {
-        self.modes
-            .iter()
-            .map(|m| {
-                let (sin, cos) = (m.k * s.body.position().x.value()).sin_cos();
-                s.charge * factor(s, m.k) * m.k * (m.a * sin - m.b * cos)
-            })
-            .sum()
+        self.force_vector(s)[0]
+    }
+    fn momentum_vector(&self) -> [f64; 3] {
+        let mut result = [0.0; 3];
+        for s in &self.sources {
+            let p = s.body.momentum();
+            for (a, b) in result
+                .iter_mut()
+                .zip([p.x.value(), p.y.value(), p.z.value()])
+            {
+                *a += b;
+            }
+        }
+        for m in &self.modes {
+            for (axis, value) in result.iter_mut().enumerate() {
+                *value += m.wave[axis] * (m.a * m.pb - m.b * m.pa);
+            }
+        }
+        result
     }
     fn momentum(&self) -> f64 {
-        self.sources
-            .iter()
-            .map(|s| s.body.momentum().x.value())
-            .sum::<f64>()
-            + self
-                .modes
-                .iter()
-                .map(|m| m.k * (m.a * m.pb - m.b * m.pa))
-                .sum::<f64>()
+        self.momentum_vector()[0]
     }
     fn energy(&self) -> Result<f64, String> {
         let mut energy = 0.0;
@@ -122,7 +167,7 @@ impl System {
                 * ((m.pa * m.pa + m.pb * m.pb) / self.inertia
                     + self.inertia * (m.k * m.k + 1.0) * (m.a * m.a + m.b * m.b));
             for s in &self.sources {
-                let (sin, cos) = (m.k * s.body.position().x.value()).sin_cos();
+                let (sin, cos) = dot(m.wave, coordinates(s.body)).sin_cos();
                 energy += s.charge * factor(s, m.k) * (m.a * cos + m.b * sin);
             }
         }
@@ -132,17 +177,19 @@ impl System {
         Ok(energy)
     }
     fn kick(&mut self, dt: f64) -> Result<(), String> {
-        let forces: Vec<_> = self.sources.iter().map(|s| self.force(s)).collect();
+        let forces: Vec<_> = self.sources.iter().map(|s| self.force_vector(s)).collect();
         for (s, f) in self.sources.iter_mut().zip(forces) {
             s.body
-                .apply_impulse(Vec3::try_values(dt * f, 0.0, 0.0).map_err(|e| e.to_string())?)
+                .apply_impulse(
+                    Vec3::try_values(dt * f[0], dt * f[1], dt * f[2]).map_err(|e| e.to_string())?,
+                )
                 .map_err(|e| e.to_string())?;
         }
         for m in &mut self.modes {
             let mut ca = 0.0;
             let mut cb = 0.0;
             for s in &self.sources {
-                let (sin, cos) = (m.k * s.body.position().x.value()).sin_cos();
+                let (sin, cos) = dot(m.wave, coordinates(s.body)).sin_cos();
                 ca += s.charge * factor(s, m.k) * cos;
                 cb += s.charge * factor(s, m.k) * sin;
             }
@@ -163,7 +210,7 @@ impl System {
         }
         next.kick(dt.seconds() / 2.0)?;
         next.energy()?;
-        if !next.momentum().is_finite() {
+        if next.momentum_vector().iter().any(|p| !p.is_finite()) {
             return Err("nonfinite spectral momentum".into());
         }
         *self = next;
@@ -211,9 +258,13 @@ fn validate() -> Result<(), String> {
     }
     Ok(())
 }
+#[path = "spectral_field/three_dimensional.rs"]
+mod three_dimensional;
+
 fn main() -> Result<(), String> {
     validate()?;
-    validate_domain()
+    validate_domain()?;
+    three_dimensional::validate_3d()
 }
 
 // Independent real-space convolution with the screened Green function.
