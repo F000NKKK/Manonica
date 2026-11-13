@@ -631,3 +631,139 @@ fn law_discharge_work_matches_independent_energy_budget() {
         }
     }
 }
+
+/// LAW-CHANNEL-001: three equal-volume reservoirs in a closed chain.
+/// dn/dt = (G/V)*[-n0+n1, n0-2*n1+n2, n1-n2].
+/// For n(0)=[9,3,0], n(t)=4*[1,1,1]+4.5*exp(-a*t)*[1,0,-1]
+/// +0.5*exp(-3*a*t)*[1,-2,1], a=G/V. Cell 3 is disconnected.
+#[test]
+fn law_channel_network_converges_to_exact_closed_chain_modes() {
+    let shape = GridShape::new(4, 1, 1).unwrap();
+    let dx: f64 = 0.5;
+    let volume = dx.powi(3);
+    let conductance = 0.4;
+    let area = 2.0;
+    let length = 4.0;
+    let rate = conductance * area / length / volume;
+    let time = 0.5;
+    let exact = [
+        4.0 + 4.5 * (-rate * time).exp() + 0.5 * (-3.0 * rate * time).exp(),
+        4.0 - (-3.0 * rate * time).exp(),
+        4.0 - 4.5 * (-rate * time).exp() + 0.5 * (-3.0 * rate * time).exp(),
+    ];
+    let mut errors = Vec::new();
+    for steps in [20, 40, 80, 160] {
+        let mut lattice = MaterialLattice::new(shape);
+        for (from, to) in [(0, 1), (1, 2)] {
+            lattice
+                .add_channel(ManaChannel {
+                    from: [from, 0, 0],
+                    to: [to, 0, 0],
+                    length,
+                    area,
+                    conductance,
+                    max_flux: 1000.0,
+                })
+                .unwrap();
+        }
+        let mut field = FreeManaField::uniform(shape, dx, density(0.0)).unwrap();
+        for (x, value) in [9.0, 3.0, 0.0, 7.0].into_iter().enumerate() {
+            field.set(x, 0, 0, density(value)).unwrap();
+        }
+        let before = field.total_manons().unwrap().value();
+        for _ in 0..steps {
+            let balance = lattice.step(&mut field, time / steps as f64).unwrap();
+            close("network inventory", balance.manons(), before, 1e-12);
+            close("network binding energy", balance.energy(), 0.0, 1e-12);
+            close(
+                "disconnected reservoir",
+                field.at(3, 0, 0).unwrap().value(),
+                7.0,
+                1e-12,
+            );
+            assert!(field.densities().iter().all(|n| n.value() >= 0.0));
+        }
+        errors.push(
+            exact
+                .iter()
+                .enumerate()
+                .map(|(x, expected)| (field.at(x, 0, 0).unwrap().value() - expected).abs())
+                .sum::<f64>(),
+        );
+    }
+    for pair in errors.windows(2) {
+        assert!(
+            (1.8..2.2).contains(&(pair[0] / pair[1])),
+            "channel first-order errors: {errors:?}"
+        );
+    }
+    assert!(errors[3] < 0.03, "channel absolute error: {errors:?}");
+}
+
+/// LAW-CHANNEL-002: shared endpoints use the updated donor inventory.
+/// Saturating edges split 10 into 5+5, then split the remaining 5 into 2.5+2.5.
+/// Insertion order is part of the operator split, rather than simultaneous flow.
+#[test]
+fn law_channel_shared_donor_limits_order_and_invalid_geometry() {
+    let shape = GridShape::new(3, 1, 1).unwrap();
+    for reverse in [false, true] {
+        let mut lattice = MaterialLattice::new(shape);
+        let channel = |to| ManaChannel {
+            from: [0, 0, 0],
+            to: [to, 0, 0],
+            length: 1.0,
+            area: 1.0,
+            conductance: 1000.0,
+            max_flux: 1000.0,
+        };
+        let targets = if reverse { [2, 1] } else { [1, 2] };
+        for target in targets {
+            lattice.add_channel(channel(target)).unwrap();
+        }
+        for invalid in [
+            ManaChannel {
+                length: 0.0,
+                ..channel(1)
+            },
+            ManaChannel {
+                area: -1.0,
+                ..channel(1)
+            },
+            ManaChannel {
+                conductance: f64::NAN,
+                ..channel(1)
+            },
+            ManaChannel {
+                max_flux: -1.0,
+                ..channel(1)
+            },
+            channel(0),
+            channel(3),
+        ] {
+            assert!(lattice.add_channel(invalid).is_err());
+            assert_eq!(lattice.channels().len(), 2);
+        }
+        let mut field = FreeManaField::uniform(shape, 1.0, density(0.0)).unwrap();
+        field.set(0, 0, 0, density(10.0)).unwrap();
+        let balance = lattice.step(&mut field, 1.0).unwrap();
+        close(
+            "shared donor",
+            field.at(0, 0, 0).unwrap().value(),
+            2.5,
+            1e-12,
+        );
+        close(
+            "first receiver",
+            field.at(targets[0], 0, 0).unwrap().value(),
+            5.0,
+            1e-12,
+        );
+        close(
+            "second receiver",
+            field.at(targets[1], 0, 0).unwrap().value(),
+            2.5,
+            1e-12,
+        );
+        close("shared inventory", balance.manons(), 10.0, 1e-12);
+    }
+}
