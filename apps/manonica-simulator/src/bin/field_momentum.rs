@@ -106,9 +106,80 @@ fn validate() -> Result<(), String> {
     }
     Ok(())
 }
+// External kicks are accounted through the shared typed body/load API.
+fn step_loaded(
+    model: Model,
+    state: &mut State,
+    ledger: &mut manonica_physics::ExternalLoadLedger,
+    force: f64,
+    dt: f64,
+) -> Result<(), String> {
+    use manonica_core::{Quantity, Vec3};
+    use manonica_physics::MechanicalBody;
+    let mut candidate = *state;
+    let mut next_ledger = *ledger;
+    for half in 0..2 {
+        if half == 1 {
+            model.step(&mut candidate, dt);
+        }
+        let mut body = MechanicalBody::new(
+            Quantity::new(model.mass).map_err(|e| e.to_string())?,
+            Vec3::try_values(candidate.x, 0.0, 0.0).map_err(|e| e.to_string())?,
+            Vec3::try_values(candidate.p, 0.0, 0.0).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        next_ledger
+            .apply_impulse(
+                &mut body,
+                Vec3::try_values(force * dt / 2.0, 0.0, 0.0).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+        candidate.p = body.momentum().x.value();
+    }
+    if !model.energy(candidate).is_finite() || !model.momentum(candidate).is_finite() {
+        return Err("nonfinite loaded field state".into());
+    }
+    *state = candidate;
+    *ledger = next_ledger;
+    Ok(())
+}
+fn validate_load() -> Result<(), String> {
+    let mut previous: Option<f64> = None;
+    for steps in [100, 200, 400] {
+        let (model, mut state) = setup();
+        let mut ledger = manonica_physics::ExternalLoadLedger::default();
+        let e0 = model.energy(state);
+        let p0 = model.momentum(state);
+        let mut maximum: f64 = 0.0;
+        for _ in 0..steps {
+            step_loaded(model, &mut state, &mut ledger, 0.1, 5.0 / steps as f64)?;
+            let error = (model.momentum(state) - p0 - ledger.impulse().x.value()).abs();
+            if error > 1e-11 {
+                return Err(format!("external impulse balance: {error}"));
+            }
+            maximum = maximum.max((model.energy(state) - e0 - ledger.work().value()).abs());
+        }
+        if let Some(error) = previous
+            && !(3.8..4.2).contains(&(error / maximum))
+        {
+            return Err(format!("loaded energy convergence: {}", error / maximum));
+        }
+        if steps == 400 && maximum > 0.001 {
+            return Err(format!("loaded energy error: {maximum}"));
+        }
+        previous = Some(maximum);
+        println!(
+            "loaded steps={steps}, external impulse={:.6} kg m/s, work={:.6} J, max energy residual={maximum:.6e} J",
+            ledger.impulse().x.value(),
+            ledger.work().value()
+        );
+    }
+    Ok(())
+}
 fn main() -> Result<(), String> {
     println!("Experimental dynamic scalar field: two modes, one body, periodic length {TAU:.6} m");
-    validate()
+    validate()?;
+    validate_load()
 }
 
 #[cfg(test)]
@@ -167,6 +238,25 @@ mod tests {
     #[test]
     fn law_mech_003_coupled_energy_converges_and_total_momentum_is_conserved() {
         validate().unwrap();
+    }
+    #[test]
+    fn law_load_004_field_body_balance_includes_external_impulse_and_work() {
+        validate_load().unwrap();
+    }
+    #[test]
+    fn rejected_external_load_preserves_field_and_ledger() {
+        let (model, mut state) = setup();
+        let before = state;
+        let mut ledger = manonica_physics::ExternalLoadLedger::default();
+        let ledger_before = ledger;
+        assert!(step_loaded(model, &mut state, &mut ledger, f64::MAX, 1.0).is_err());
+        assert_eq!(ledger, ledger_before);
+        assert_eq!(state.x, before.x);
+        assert_eq!(state.p, before.p);
+        assert_eq!(state.a, before.a);
+        assert_eq!(state.b, before.b);
+        assert_eq!(state.pa, before.pa);
+        assert_eq!(state.pb, before.pb);
     }
     #[test]
     fn law_mech_004_translation_covariance_and_time_reversal() {

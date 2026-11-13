@@ -7,6 +7,7 @@ pub mod dynamics;
 pub mod error;
 pub mod field;
 pub mod manon;
+pub mod mechanics;
 pub mod system;
 
 pub use dynamics::{FreeMotion, ParticleLaw};
@@ -18,3 +19,5 @@ pub use field::{
 };
 pub use manon::{Manon, ManonId, ManonState};
 pub use system::ManonSystem;
+
+pub use mechanics::{ExternalLoadLedger, MechanicalBody};

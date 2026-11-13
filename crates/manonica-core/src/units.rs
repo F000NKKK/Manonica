@@ -27,6 +27,8 @@ units!(
     ManaPotential,
     Diffusivity,
     Newtons,
+    Kilograms,
+    KilogramMetresPerSecond,
     Kelvin,
 );
 
