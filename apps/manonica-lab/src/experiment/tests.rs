@@ -827,3 +827,85 @@ fn heterogeneous_formula_traps_match_transport_reactions_and_heat_reference() {
         assert!((simulation.tracked_energy().unwrap() - 20.0).abs() < 1e-10);
     }
 }
+
+/// LAW-LAB-GEOM-001: circle rasterization approaches its analytic geometry
+/// within O(dx), while integrated source/capacity/flux remain fixed.
+#[test]
+fn refined_formula_ring_preserves_resources_and_approaches_exact_circle() {
+    let radius = 0.4;
+    for cells in [8, 16, 32] {
+        let dx = 2.0 / cells as f64;
+        let segments = cells * 8;
+        let mut experiment = Experiment::parse(include_str!(
+            "../../experiments/local_boundary_conductor.toml"
+        ))
+        .unwrap();
+        experiment.grid.dimensions = [cells, 1, cells];
+        experiment.grid.cell_size = dx;
+        experiment.physics.diffusivity = 0.0;
+        experiment.physics.flow = AmbientFlow::Still;
+        experiment.local_boundaries.clear();
+        let formula = &mut experiment.formulas[0];
+        formula.x = "0.4*cos(t)".into();
+        formula.y = "0".into();
+        formula.z = "0.4*sin(t)".into();
+        formula.segments = segments;
+        let trap = formula.trap.as_mut().unwrap();
+        trap.capacity = 32.0;
+        trap.max_flux = 1000.0;
+        let occupied = super::capture_cells(formula, [cells, 1, cells], dx).unwrap();
+        let centers: Vec<_> = occupied
+            .iter()
+            .map(|[x, _, z]| [(*x as f64 + 0.5) * dx - 1.0, (*z as f64 + 0.5) * dx - 1.0])
+            .collect();
+        // A chord is at most sagitta away from the exact circle; the cell
+        // centre is at most half a 2D cell diagonal from a chord point.
+        let sagitta = radius * (1.0 - (std::f64::consts::PI / segments as f64).cos());
+        let radial_bound = dx / 2.0_f64.sqrt() + sagitta;
+        for [x, z] in &centers {
+            assert!(((x * x + z * z).sqrt() - radius).abs() <= radial_bound + 1e-12);
+        }
+        // Check the other direction too: no part of the circle disappears.
+        for sample in 0..1024 {
+            let angle = std::f64::consts::TAU * sample as f64 / 1024.0;
+            let point = [radius * angle.cos(), radius * angle.sin()];
+            let distance = centers
+                .iter()
+                .map(|center| {
+                    ((point[0] - center[0]).powi(2) + (point[1] - center[1]).powi(2)).sqrt()
+                })
+                .fold(f64::INFINITY, f64::min);
+            assert!(distance <= 2.0_f64.sqrt() * dx + sagitta);
+        }
+        experiment.field_sources[0].strength = 8.0;
+        let settings = experiment.physics.potential.as_mut().unwrap();
+        settings.boundary = super::PotentialBoundaryKind::Insulated;
+        settings.screening = 1.0;
+        settings.permittivity = 0.1;
+        settings.iterations = 4096;
+        settings.initial_work_joules = 1e6;
+        let simulation = Simulation::new(experiment).unwrap();
+        let state = simulation.coupled_state();
+        assert!((state.materials.total_capacity() - 32.0).abs() < 1e-10);
+        let total_flux: f64 = state
+            .materials
+            .cells()
+            .iter()
+            .filter_map(|cell| cell.material.map(|m| m.max_flux))
+            .sum();
+        assert!((total_flux - 1000.0).abs() < 1e-10);
+        assert_eq!(
+            state
+                .materials
+                .cells()
+                .iter()
+                .filter(|cell| cell.material.is_some())
+                .count(),
+            occupied.len()
+        );
+        // Integrated insulated Poisson equation: screening*integral(phi)=S.
+        let integrated_potential =
+            simulation.potential().unwrap().values().iter().sum::<f64>() * dx.powi(3);
+        assert!((integrated_potential - 8.0).abs() < 1e-8);
+    }
+}

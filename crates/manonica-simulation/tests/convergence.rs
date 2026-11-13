@@ -170,3 +170,147 @@ fn coupled_network_second_order_space_convergence() {
         );
     }
 }
+
+// Independent continuous-time two-cell equations. These do not invoke any
+// production transport/reaction operator or reproduce its exponential split.
+fn drift_capture_rhs(y: [f64; 4]) -> [f64; 4] {
+    let drift = 0.2 * y[0];
+    let left = 0.2 * y[0] * (4.0 - y[2]) - 0.3 * y[2];
+    let right = 0.2 * y[1] * (4.0 - y[3]) - 0.3 * y[3];
+    [-drift - left, drift - right, left, right]
+}
+
+fn independent_rk4(steps: usize) -> [f64; 4] {
+    let mut y = [8.0, 8.0, 0.0, 0.0];
+    let dt = 0.5 / steps as f64;
+    for _ in 0..steps {
+        let a = drift_capture_rhs(y);
+        let b = drift_capture_rhs(std::array::from_fn(|i| y[i] + dt * a[i] / 2.0));
+        let c = drift_capture_rhs(std::array::from_fn(|i| y[i] + dt * b[i] / 2.0));
+        let d = drift_capture_rhs(std::array::from_fn(|i| y[i] + dt * c[i]));
+        y = std::array::from_fn(|i| y[i] + dt / 6.0 * (a[i] + 2.0 * b[i] + 2.0 * c[i] + d[i]));
+    }
+    y
+}
+
+/// LAW-COUPLED-CONV-003: nonlinear capture/release and potential drift.
+/// Fixed spatial grid, independent RK4 reference with refinement audit.
+#[test]
+fn nonlinear_capture_and_drift_first_order_time_convergence() {
+    use manonica_physics::{
+        LocalBoundarySite, LocalPotentialBoundary, PotentialBoundary, PotentialField,
+    };
+    use manonica_simulation::{FieldControl, FieldLedger};
+    let reference = independent_rk4(2000);
+    let refined = independent_rk4(4000);
+    for i in 0..4 {
+        assert!((reference[i] - refined[i]).abs() < 1e-11);
+    }
+    assert!((reference.iter().sum::<f64>() - 16.0).abs() < 1e-11);
+    let shape = GridShape::new(2, 1, 1).unwrap();
+    let potential = PotentialField::solve_with_local(
+        shape,
+        1.0,
+        &[0.0; 2],
+        1.0,
+        1.0,
+        PotentialBoundary::Insulated,
+        10,
+        &[
+            LocalBoundarySite {
+                index: 0,
+                condition: LocalPotentialBoundary::Dirichlet { value: 1.0 },
+            },
+            LocalBoundarySite {
+                index: 1,
+                condition: LocalPotentialBoundary::Dirichlet { value: 0.0 },
+            },
+        ],
+    )
+    .unwrap();
+    let mut errors = Vec::new();
+    for steps in [20, 40, 80, 160] {
+        let field =
+            FreeManaField::uniform(shape, 1.0, Quantity::nonnegative(8.0).unwrap()).unwrap();
+        let mut materials = MaterialLattice::new(shape);
+        for x in 0..2 {
+            materials
+                .install(
+                    [x, 0, 0],
+                    TrapMaterial {
+                        capacity: 4.0,
+                        capture_rate: 0.2,
+                        release_rate: 0.3,
+                        binding_energy: 2.0,
+                        heat_capacity: 5.0,
+                        reference_temperature: 300.0,
+                        activation_temperature: 0.0,
+                        max_flux: 1000.0,
+                        conductivity: 0.0,
+                    },
+                )
+                .unwrap();
+        }
+        // Independent heat supply ensures the energy limiter never hides kinetics.
+        materials
+            .try_replace_storage(&[[0.0, 100.0], [0.0, 100.0]])
+            .unwrap();
+        let mut state = CoupledState {
+            field,
+            materials,
+            potential: Some(potential.clone()),
+            field_ledger: Some(FieldLedger {
+                field_energy_joules: 1.0,
+                manon_potential_joules: 8.0,
+                peak_potential: 1.0,
+                ..Default::default()
+            }),
+            shutdown: false,
+        };
+        let parameters = StepParameters {
+            diffusivity: 0.0,
+            dt: 0.5 / steps as f64,
+            flow: MediumFlow::Still,
+            thermal_conductance: 0.0,
+            ambient_cooling_rate: 0.0,
+            field: Some(FieldControl {
+                mobility: 0.2,
+                max_power_joules_per_second: 0.0,
+                shutdown_at_bound_fraction: 0.0,
+                shutdown_decay_rate: 0.0,
+            }),
+        };
+        for _ in 0..steps {
+            state.step(&parameters).unwrap();
+            let balance = state.materials.balance(&state.field).unwrap();
+            let ledger = state.field_ledger.unwrap();
+            assert!((balance.manons() - 16.0).abs() < 1e-10);
+            assert!((balance.energy() + ledger.tracked_energy() - 209.0).abs() < 1e-10);
+            assert!(ledger.operating_work_joules.abs() < 1e-10);
+            for cell in state.materials.cells() {
+                assert!((0.0..=4.0).contains(&cell.bound) && cell.heat >= 0.0);
+            }
+        }
+        let observed = [
+            state.field.at(0, 0, 0).unwrap().value(),
+            state.field.at(1, 0, 0).unwrap().value(),
+            state.materials.cells()[0].bound,
+            state.materials.cells()[1].bound,
+        ];
+        errors.push(std::array::from_fn::<_, 4, _>(|i| {
+            (observed[i] - reference[i]).abs()
+        }));
+    }
+    for metric in 0..4 {
+        for pair in errors.windows(2) {
+            assert!(
+                (1.8..2.2).contains(&(pair[0][metric] / pair[1][metric])),
+                "nonlinear first-order errors: {errors:?}"
+            );
+        }
+        assert!(
+            errors[3][metric] < 0.01,
+            "nonlinear absolute errors: {errors:?}"
+        );
+    }
+}
