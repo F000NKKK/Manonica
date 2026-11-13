@@ -264,7 +264,8 @@ mod three_dimensional;
 fn main() -> Result<(), String> {
     validate()?;
     validate_domain()?;
-    three_dimensional::validate_3d()
+    three_dimensional::validate_3d()?;
+    three_dimensional::validate_coordinates()
 }
 
 // Independent real-space convolution with the screened Green function.

@@ -21,19 +21,29 @@ fn cubic(sources: Vec<Source>, cutoff: i32) -> Result<System, String> {
     if !(1..=12).contains(&cutoff) {
         return Err("invalid cubic cutoff".into());
     }
+    cubic_in_domain(sources, cutoff, TAU)
+}
+fn cubic_in_domain(sources: Vec<Source>, cutoff: i32, length: f64) -> Result<System, String> {
+    if !(1..=24).contains(&cutoff) || !length.is_finite() || length <= 0.0 {
+        return Err("invalid cubic domain".into());
+    }
     let mut waves = Vec::new();
     for x in -cutoff..=cutoff {
         for y in -cutoff..=cutoff {
             for z in -cutoff..=cutoff {
                 // One cosine/sine pair for each +/- wave-vector pair; no zero mode.
                 if x > 0 || (x == 0 && y > 0) || (x == 0 && y == 0 && z > 0) {
-                    waves.push([x as f64, y as f64, z as f64]);
+                    waves.push([
+                        x as f64 * TAU / length,
+                        y as f64 * TAU / length,
+                        z as f64 * TAU / length,
+                    ]);
                 }
             }
         }
     }
-    // Lx=Ly=Lz=2*pi, a=1/pi -> mu=a*V/2=4*pi².
-    System::static_modes(sources, waves, 4.0 * PI * PI)
+    // Fixed a=epsilon=screening=1/pi; mu=a*V/2 scales with volume.
+    System::static_modes(sources, waves, length.powi(3) / TAU)
 }
 fn experiment_3d(cutoff: i32, steps: usize) -> Result<(System, f64, f64), String> {
     let mut system = cubic(cubic_sources(), cutoff)?;
@@ -235,5 +245,128 @@ mod tests {
                 .is_err()
         );
         assert_eq!(system, before);
+    }
+}
+
+// Independent coordinate-space Gaussian convolution using the heat-kernel
+// representation of the 3D screened Green function, epsilon=1/pi.
+fn coordinate_force(displacement: [f64; 3], sigma: f64, intervals: usize) -> [f64; 3] {
+    let squared = dot(displacement, displacement);
+    let h = 64.0 / intervals as f64;
+    let integrand = |t: f64| {
+        let u = t + sigma * sigma; // Combined Gaussian variance is 2*sigma².
+        (-t - squared / (4.0 * u)).exp() / (4.0 * PI * u).powf(1.5) / u
+    };
+    let mut sum = integrand(0.0) + integrand(64.0);
+    for i in 1..intervals {
+        sum += (if i % 2 == 0 { 2.0 } else { 4.0 }) * integrand(i as f64 * h);
+    }
+    // q1*q2=-0.16 and grad(G)=-pi*r/2 times the scalar integral.
+    displacement.map(|r| 0.08 * PI * r * sum * h / 3.0)
+}
+fn image_force(length: f64, sigma: f64, images: i32, intervals: usize) -> [f64; 3] {
+    let mut result = [0.0; 3];
+    let separation = [-1.6, -1.1, -2.1];
+    for x in -images..=images {
+        for y in -images..=images {
+            for z in -images..=images {
+                let image = [x, y, z];
+                let force = coordinate_force(
+                    std::array::from_fn(|i| separation[i] + length * image[i] as f64),
+                    sigma,
+                    intervals,
+                );
+                for i in 0..3 {
+                    result[i] += force[i];
+                }
+            }
+        }
+    }
+    result
+}
+fn maximum_difference(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a.into_iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0, f64::max)
+}
+pub(super) fn validate_coordinates() -> Result<(), String> {
+    for sigma in [0.6, 0.8, 1.0] {
+        let infinite = coordinate_force([-1.6, -1.1, -2.1], sigma, 8192);
+        let mut previous = f64::INFINITY;
+        for (scale, cutoff) in [(1.0, 8), (1.5, 12), (2.0, 16)] {
+            let length = scale * TAU;
+            let mut sources = cubic_sources();
+            for s in &mut sources {
+                s.width = sigma;
+            }
+            let system = cubic_in_domain(sources.clone(), cutoff, length)?;
+            let force = system.force_vector(&system.sources[0]);
+            let refined = cubic_in_domain(sources, cutoff + 2, length)?;
+            if maximum_difference(force, refined.force_vector(&refined.sources[0])) > 1e-9 {
+                return Err("3D spectral truncation has not converged".into());
+            }
+            let coordinate = image_force(length, sigma, 3, 4096);
+            let quadrature = image_force(length, sigma, 3, 8192);
+            let image_check = image_force(length, sigma, 2, 4096);
+            if maximum_difference(coordinate, quadrature) > 1e-10
+                || maximum_difference(coordinate, image_check) > 1e-9
+            {
+                return Err(format!(
+                    "3D coordinate reference not converged at sigma={sigma}, L={length}"
+                ));
+            }
+            let difference = maximum_difference(force, quadrature);
+            if difference > 1e-8 {
+                return Err(format!("3D force reference mismatch {difference}"));
+            }
+            let domain_error = maximum_difference(force, infinite);
+            if domain_error >= 0.2 * previous {
+                return Err(format!("3D domain refinement failed {domain_error}"));
+            }
+            previous = domain_error;
+            println!(
+                "3D sigma={sigma:.1} m, L={length:.6} m, coordinate discrepancy={difference:.3e} N, infinite-domain error={domain_error:.3e} N"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod coordinate_tests {
+    use super::*;
+    #[test]
+    fn law_spectral_3d_005_coordinate_green_reference_period_and_width() {
+        validate_coordinates().unwrap();
+    }
+    #[test]
+    fn coordinate_zero_width_limit_matches_analytic_point_yukawa_force() {
+        let r: [f64; 3] = [-1.6, -1.1, -2.1];
+        let radius = dot(r, r).sqrt();
+        // G(r)=exp(-r)/(4r), force=q1*q2*grad(G), q1*q2=-0.16.
+        let point =
+            r.map(|x| 0.04 * (-radius).exp() * (1.0 / radius.powi(2) + 1.0 / radius.powi(3)) * x);
+        let mut errors = Vec::new();
+        for sigma in [0.2, 0.1, 0.05] {
+            errors.push(maximum_difference(coordinate_force(r, sigma, 8192), point));
+        }
+        for pair in errors.windows(2) {
+            assert!(
+                (3.8..4.2).contains(&(pair[0] / pair[1])),
+                "3D point errors {errors:?}"
+            );
+        }
+        let point_scale = point.into_iter().map(f64::abs).fold(0.0, f64::max);
+        // Away from r=0 Gaussian smoothing changes the screened kernel by
+        // exp(sigma²); exp(sigma²)-1 < 2*sigma² on this width interval.
+        assert!(errors[2] < point_scale * 2.0 * 0.05_f64.powi(2));
+    }
+    #[test]
+    fn cubic_domain_rejects_invalid_periods_and_cutoffs() {
+        for length in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::MAX] {
+            assert!(cubic_in_domain(cubic_sources(), 4, length).is_err());
+        }
+        assert!(cubic_in_domain(cubic_sources(), 25, TAU).is_err());
     }
 }
