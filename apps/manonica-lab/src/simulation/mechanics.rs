@@ -5,6 +5,7 @@ use manonica_physics::SpectralMechanics;
 #[derive(Clone, Debug)]
 pub struct MechanicsObservation {
     pub positions: Vec<[f64; 3]>,
+    pub field: std::sync::Arc<manonica_physics::SpectralFieldSnapshot>,
     pub energy: f64,
     pub momentum: [f64; 3],
     pub energy_error: f64,
@@ -36,6 +37,12 @@ impl MechanicsSession {
         self.system.advance(dt)?;
         Ok(())
     }
+    pub fn energy(&self) -> f64 {
+        self.system
+            .total_energy()
+            .expect("validated mechanics state")
+            .value()
+    }
     pub fn observation(&self) -> MechanicsObservation {
         let energy = self
             .system
@@ -48,6 +55,7 @@ impl MechanicsSession {
             .expect("validated mechanics state");
         let momentum = [p.x.value(), p.y.value(), p.z.value()];
         MechanicsObservation {
+            field: std::sync::Arc::new(self.system.field_snapshot()),
             positions: self
                 .system
                 .sources()

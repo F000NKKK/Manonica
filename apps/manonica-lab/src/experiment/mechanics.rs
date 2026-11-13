@@ -30,6 +30,9 @@ impl MechanicsConfig {
         if self.bodies.is_empty() || self.bodies.len() > 8 || self.cutoff.iter().any(|n| *n > 6) {
             return Err(BaseError::new(ErrorCode::InvalidRange, "mechanics_lab_budget").into());
         }
+        if self.period.iter().any(|p| !p.is_finite() || *p > 10000.0) {
+            return Err(BaseError::new(ErrorCode::InvalidRange, "mechanics_display_period").into());
+        }
         let domain = PeriodicSpectralDomain::new(vector(self.period)?, self.cutoff)?;
         let mut bodies = Vec::new();
         for b in &self.bodies {

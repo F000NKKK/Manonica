@@ -254,7 +254,7 @@ impl Plot {
             12,
             449,
             &if m.mechanics.is_some() {
-                "E/P INCLUDE BODIES AND DYNAMIC FIELD".to_owned()
+                format!("TAB / {}", m.volume.channel.label())
             } else {
                 format!(
                     "BOUND RATE {:.2e}/s  STABLE {} steps",

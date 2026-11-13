@@ -12,6 +12,7 @@ pub(super) struct InputBridge {
     pub(super) debug: bool,
     pub(super) paused: bool,
     pub(super) threshold: f64,
+    pub(super) field_display: crate::visualization::FieldDisplay,
     pub(super) wisps: bool,
     pub(super) size: [u32; 2],
     pub(super) snapshot: Arc<SimulationSnapshot>,
@@ -29,6 +30,11 @@ impl InputBridge {
             debug: false,
             paused: false,
             threshold: experiment.visualization.relative_threshold,
+            field_display: if experiment.mechanics.is_some() {
+                crate::visualization::FieldDisplay::Potential
+            } else {
+                crate::visualization::FieldDisplay::Density
+            },
             wisps: experiment.visualization.wisps,
             size: [1280, 800],
             snapshot: Arc::new(snapshot),
@@ -52,6 +58,7 @@ impl InputBridge {
             debug: self.debug,
             paused: self.paused,
             threshold: self.threshold,
+            field_display: self.field_display,
             wisps: self.wisps,
             size: self.size,
             snapshot: Arc::clone(&self.snapshot),
@@ -68,6 +75,7 @@ pub(super) struct RenderInput {
     pub(super) debug: bool,
     pub(super) paused: bool,
     pub(super) threshold: f64,
+    pub(super) field_display: crate::visualization::FieldDisplay,
     pub(super) wisps: bool,
     pub(super) size: [u32; 2],
     pub(super) snapshot: Arc<SimulationSnapshot>,

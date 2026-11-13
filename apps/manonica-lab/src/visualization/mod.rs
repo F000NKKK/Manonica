@@ -5,3 +5,5 @@ mod field_view;
 mod volume;
 
 pub use field_view::FieldView;
+
+pub use volume::FieldDisplay;

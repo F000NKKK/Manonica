@@ -371,3 +371,6 @@ impl PeriodicSpectralDomain {
         SpectralMechanics::static_equilibrium(sources, self.waves.clone(), self.inertia)
     }
 }
+
+mod sampling;
+pub use sampling::{SpectralFieldSample, SpectralFieldSnapshot};

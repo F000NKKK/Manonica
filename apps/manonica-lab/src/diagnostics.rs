@@ -73,6 +73,7 @@ pub struct FieldMetrics {
 }
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VolumeMetrics {
+    pub channel: crate::visualization::FieldDisplay,
     pub peak_density: f64,
     pub shown_slices: usize,
     pub grid_cells: usize,
@@ -194,6 +195,7 @@ mod tests {
                     shutdown: false,
                 },
                 volume: crate::diagnostics::VolumeMetrics {
+                    channel: crate::visualization::FieldDisplay::Density,
                     peak_density: 3.0,
                     shown_slices: 20,
                     grid_cells: 1000,
@@ -215,6 +217,7 @@ mod tests {
                 ..Default::default()
             },
             volume: crate::diagnostics::VolumeMetrics {
+                channel: crate::visualization::FieldDisplay::Density,
                 peak_density: 1.0,
                 ..Default::default()
             },

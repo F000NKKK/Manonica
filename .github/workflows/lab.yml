@@ -54,6 +54,8 @@ jobs:
         run: cargo test --manifest-path apps/manonica-lab/Cargo.toml mechanical_gpu -- --ignored --nocapture
       - name: Headless coupled physics validation
         run: cargo run -p manonica-simulator --features gpu --bin gpu-coupled
+      - name: Headless dynamic mechanics packet validation
+        run: cargo run -p manonica-simulator --features gpu --bin gpu-mechanics -- --steps 100 --batch 10 --warmup 10 --label ci-software-vulkan
       - name: Headless resident transport experiment
         run: cargo run -p manonica-simulator --features gpu --bin gpu-transport
       - name: Build native Lab smoke target

@@ -160,7 +160,7 @@ impl Simulation {
     }
     pub fn tracked_energy(&self) -> Result<f64, ExperimentError> {
         if let Some(mechanics) = &self.mechanics {
-            return Ok(mechanics.observation().energy);
+            return Ok(mechanics.energy());
         }
         let material = self.material_balance()?.energy();
         Ok(material

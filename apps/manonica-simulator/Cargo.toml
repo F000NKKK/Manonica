@@ -28,3 +28,8 @@ required-features = ["gpu"]
 name = "gpu-coupled"
 path = "src/bin/gpu_coupled.rs"
 required-features = ["gpu"]
+
+[[bin]]
+name = "gpu-mechanics"
+path = "src/bin/gpu_mechanics.rs"
+required-features = ["gpu"]

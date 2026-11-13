@@ -150,4 +150,7 @@ impl ExternalLoadLedger {
 }
 
 mod spectral;
-pub use spectral::{GaussianBody, PeriodicSpectralDomain, SpectralMechanics, SpectralMode};
+pub use spectral::{
+    GaussianBody, PeriodicSpectralDomain, SpectralFieldSample, SpectralFieldSnapshot,
+    SpectralMechanics, SpectralMode,
+};

@@ -1,8 +1,11 @@
 //! GPU-facing side of the manon volume. The costly trilinear resampling
 //! runs in a separate CPU worker, never inside the window/redraw callback.
 
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -75,8 +78,117 @@ fn near_slice_visibility(depth: f64, cell_width: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FieldDisplay {
+    #[default]
+    Density,
+    Potential,
+    EnergyDensity,
+    Hidden,
+}
+impl FieldDisplay {
+    pub fn next(self, mechanics: bool) -> Self {
+        if mechanics {
+            match self {
+                Self::Potential => Self::EnergyDensity,
+                Self::EnergyDensity => Self::Hidden,
+                _ => Self::Potential,
+            }
+        } else {
+            if self == Self::Hidden {
+                Self::Density
+            } else {
+                Self::Hidden
+            }
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Density => "MANA DENSITY / manons/m3",
+            Self::Potential => "POTENTIAL / J/manon",
+            Self::EnergyDensity => "FIELD ENERGY / J/m3",
+            Self::Hidden => "FIELD HIDDEN",
+        }
+    }
+}
+enum AtlasSource {
+    Density(Arc<FreeManaField>),
+    Spectral {
+        field: Arc<manonica_physics::SpectralFieldSnapshot>,
+        dimensions: [usize; 3],
+        period: [f64; 3],
+    },
+}
+struct ScalarGrid {
+    dimensions: [usize; 3],
+    spacing: [f64; 3],
+    values: Vec<f64>,
+}
+impl AtlasSource {
+    fn sample(&self, display: FieldDisplay, stop: &AtomicBool) -> Option<ScalarGrid> {
+        match self {
+            Self::Density(field) => {
+                let shape = field.shape();
+                Some(ScalarGrid {
+                    dimensions: [shape.nx(), shape.ny(), shape.nz()],
+                    spacing: [field.cell_width_metres(); 3],
+                    values: field.densities().iter().map(|v| v.value()).collect(),
+                })
+            }
+            Self::Spectral {
+                field,
+                dimensions,
+                period,
+            } => {
+                let spacing = std::array::from_fn(|i| period[i] / dimensions[i] as f64);
+                let mut values = Vec::with_capacity(dimensions.iter().product());
+                for z in 0..dimensions[2] {
+                    for y in 0..dimensions[1] {
+                        if stop.load(Ordering::Relaxed) {
+                            return None;
+                        }
+                        for x in 0..dimensions[0] {
+                            let index = [x, y, z];
+                            let p: [f64; 3] = std::array::from_fn(|i| {
+                                (index[i] as f64 + 0.5) * spacing[i] - period[i] / 2.0
+                            });
+                            let sample = field
+                                .sample(
+                                    manonica_core::Vec3::try_values(p[0], p[1], p[2])
+                                        .expect("finite display coordinates"),
+                                )
+                                .expect("finite spectral observables");
+                            values.push(if display == FieldDisplay::Potential {
+                                sample.potential.value()
+                            } else {
+                                sample.energy_density.value()
+                            });
+                        }
+                    }
+                }
+                Some(ScalarGrid {
+                    dimensions: *dimensions,
+                    spacing,
+                    values,
+                })
+            }
+        }
+    }
+}
+fn display_lengths(experiment: &Experiment) -> [f64; 3] {
+    experiment.mechanics.as_ref().map_or_else(
+        || {
+            experiment
+                .grid
+                .dimensions
+                .map(|n| n as f64 * experiment.grid.cell_size)
+        },
+        |m| m.period,
+    )
+}
 struct AtlasRequest {
-    field: Arc<FreeManaField>,
+    source: AtlasSource,
+    display: FieldDisplay,
     axis: usize,
     planes: usize,
     threshold: f64,
@@ -86,6 +198,7 @@ struct AtlasRequest {
 }
 
 struct AtlasResult {
+    display: FieldDisplay,
     image: ImageAsset,
     axis: usize,
     threshold: f64,
@@ -99,6 +212,7 @@ struct AtlasResult {
 /// Bounded one-slot queues: if rendering is behind, work is dropped instead
 /// of accumulating stale frames or blocking the main thread.
 struct AtlasWorker {
+    stop: Arc<AtomicBool>,
     sender: Option<SyncSender<AtlasRequest>>,
     receiver: Receiver<AtlasResult>,
     thread: Option<JoinHandle<()>>,
@@ -108,27 +222,34 @@ impl AtlasWorker {
     fn spawn() -> Self {
         let (request_tx, request_rx) = mpsc::sync_channel::<AtlasRequest>(1);
         let (result_tx, result_rx) = mpsc::sync_channel::<AtlasResult>(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = Arc::clone(&stop);
         let thread = thread::Builder::new()
             .name("manonica-volume".into())
             .spawn(move || {
                 while let Ok(request) = request_rx.recv() {
                     let now = Instant::now();
-                    let peak = request
-                        .field
-                        .densities()
-                        .iter()
-                        .map(|n| n.value())
-                        .fold(0.0_f64, f64::max);
-                    let image = build_density_atlas(
-                        &request.field,
+                    if stopping.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let Some(grid) = request.source.sample(request.display, &stopping) else {
+                        break;
+                    };
+                    let peak = grid.values.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
+                    let image = build_scalar_atlas(
+                        &grid,
                         request.axis,
                         request.planes,
-                        request.threshold,
-                        peak,
-                        request.optical_density,
                         request.view,
+                        AtlasAppearance {
+                            display: request.display,
+                            threshold: request.threshold,
+                            peak,
+                            optical_density: request.optical_density,
+                        },
                     );
                     let result = AtlasResult {
+                        display: request.display,
                         image,
                         axis: request.axis,
                         threshold: request.threshold,
@@ -146,6 +267,7 @@ impl AtlasWorker {
             })
             .expect("failed to spawn volume sampling thread");
         Self {
+            stop,
             sender: Some(request_tx),
             receiver: result_rx,
             thread: Some(thread),
@@ -169,6 +291,7 @@ impl AtlasWorker {
 
 impl Drop for AtlasWorker {
     fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
         self.sender.take();
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
@@ -177,6 +300,9 @@ impl Drop for AtlasWorker {
 }
 
 pub struct ManaVolume {
+    lengths: [f64; 3],
+    display: FieldDisplay,
+    material_display: Option<FieldDisplay>,
     meshes: [Vec<MeshHandle>; 3],
     material: Option<MaterialHandle>,
     material_gain: Option<f32>,
@@ -199,18 +325,15 @@ impl ManaVolume {
                 axis_meshes.push(
                     base.render
                         .meshes
-                        .register(plane_mesh(
-                            exp.grid.dimensions,
-                            exp.grid.cell_size,
-                            axis,
-                            layer,
-                            count,
-                        ))
+                        .register(plane_mesh_lengths(display_lengths(exp), axis, layer, count))
                         .map_err(|err| format!("volume plane {axis}/{layer}: {err}"))?,
                 );
             }
         }
         Ok(Self {
+            lengths: display_lengths(exp),
+            display: FieldDisplay::Density,
+            material_display: None,
             meshes,
             material: None,
             material_gain: None,
@@ -225,6 +348,42 @@ impl ManaVolume {
         })
     }
 
+    pub fn reconfigure(
+        &mut self,
+        base: &mut GraphicsSession,
+        experiment: &Experiment,
+    ) -> Result<(), String> {
+        let lengths = display_lengths(experiment);
+        if self.lengths != lengths {
+            let mut meshes: [Vec<MeshHandle>; 3] = std::array::from_fn(|_| Vec::new());
+            for axis in 0..3 {
+                for layer in 0..MAX_PLANES {
+                    match base
+                        .render
+                        .meshes
+                        .register(plane_mesh_lengths(lengths, axis, layer, MAX_PLANES))
+                    {
+                        Ok(mesh) => meshes[axis].push(mesh),
+                        Err(error) => {
+                            for mesh in meshes.into_iter().flatten() {
+                                base.render.meshes.unregister(mesh);
+                            }
+                            return Err(error.to_string());
+                        }
+                    }
+                }
+            }
+            for mesh in std::mem::replace(&mut self.meshes, meshes)
+                .into_iter()
+                .flatten()
+            {
+                base.render.meshes.unregister(mesh);
+            }
+            self.lengths = lengths;
+        }
+        self.invalidate();
+        Ok(())
+    }
     /// Discard cached atlas metadata after a live experiment reconfiguration.
     pub fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -254,12 +413,36 @@ impl ManaVolume {
         static_count: usize,
         snapshot: &SimulationSnapshot,
         experiment: &Experiment,
+        display: FieldDisplay,
     ) {
+        if self.display != display {
+            self.invalidate();
+            self.display = display;
+            self.peak = 0.0;
+            scene.renderables.truncate(static_count);
+        }
+        if display == FieldDisplay::Hidden {
+            return;
+        }
         let eye = scene.camera.frame.transform_point(Vec3::ZERO);
         // Meridian's fly camera uses local +X as its forward axis.
         let forward = scene.camera.frame.transform_vector(Vec3::X);
         let axis = slice_axis(forward);
-        let view = SliceView::new(eye, forward, axis, snapshot.field.cell_width_metres());
+        let dimensions = experiment.mechanics.as_ref().map_or_else(
+            || {
+                [
+                    snapshot.field.shape().nx(),
+                    snapshot.field.shape().ny(),
+                    snapshot.field.shape().nz(),
+                ]
+            },
+            |m| m.cutoff.map(|k| (4 * k + 4).clamp(8, 32)),
+        );
+        let lengths = display_lengths(experiment);
+        let dx = (0..3)
+            .map(|i| lengths[i] / dimensions[i] as f64)
+            .fold(f64::INFINITY, f64::min);
+        let view = SliceView::new(eye, forward, axis, dx);
         let threshold = experiment.visualization.relative_threshold;
         let optical_density = experiment.visualization.optical_density;
 
@@ -297,7 +480,18 @@ impl ManaVolume {
         }
 
         let sent = self.worker.offer(AtlasRequest {
-            field: Arc::clone(&snapshot.field),
+            source: if let (Some(mechanics), Some(config)) =
+                (&snapshot.mechanics, &experiment.mechanics)
+            {
+                AtlasSource::Spectral {
+                    field: Arc::clone(&mechanics.field),
+                    dimensions,
+                    period: config.period,
+                }
+            } else {
+                AtlasSource::Density(Arc::clone(&snapshot.field))
+            },
+            display,
             axis,
             planes: self.meshes[axis].len(),
             threshold,
@@ -334,10 +528,18 @@ impl ManaVolume {
         // The atlas keeps its identity across snapshots, so the material and
         // renderer bind groups can remain resident as well.
         let gain = (experiment.visualization.exposure / 3.0).sqrt().min(2.0);
-        if !reused || self.material_gain != Some(gain) || self.material.is_none() {
+        if !reused
+            || self.material_gain != Some(gain)
+            || self.material.is_none()
+            || self.material_display != Some(result.display)
+        {
             let next = base.render.materials.register(Material {
                 albedo: Some(texture),
-                base_color_factor: [0.70 * gain, 0.90 * gain, 1.05 * gain, 1.0],
+                base_color_factor: if result.display == FieldDisplay::Density {
+                    [0.70 * gain, 0.90 * gain, 1.05 * gain, 1.0]
+                } else {
+                    [gain, gain, gain, 1.0]
+                },
                 blend: BlendMode::AlphaBlend,
                 unlit: true,
                 ..Default::default()
@@ -346,16 +548,14 @@ impl ManaVolume {
                 base.render.materials.unregister(old);
             }
             self.material_gain = Some(gain);
+            self.material_display = Some(result.display);
         }
         let material = self.material.expect("live volume material");
 
         scene.renderables.truncate(static_count);
         let axis = result.axis;
         let count = self.meshes[axis].len();
-        let lengths = experiment
-            .grid
-            .dimensions
-            .map(|n| n as f32 * experiment.grid.cell_size as f32);
+        let lengths = display_lengths(experiment).map(|v| v as f32);
         // Alpha blending requires back-to-front order relative to the
         // dominant viewing axis. The previous ascending order was wrong
         // whenever the camera looked toward positive X/Y/Z.
@@ -395,6 +595,7 @@ fn other_axes(axis: usize) -> [usize; 2] {
     }
 }
 
+#[cfg(test)]
 fn plane_mesh(
     dimensions: [usize; 3],
     cell_size: f64,
@@ -402,9 +603,12 @@ fn plane_mesh(
     layer: usize,
     count: usize,
 ) -> MeshSource {
+    plane_mesh_lengths(dimensions.map(|n| n as f64 * cell_size), axis, layer, count)
+}
+fn plane_mesh_lengths(lengths: [f64; 3], axis: usize, layer: usize, count: usize) -> MeshSource {
     let [u, v] = other_axes(axis);
-    let half_u = dimensions[u] as f32 * cell_size as f32 * 0.5;
-    let half_v = dimensions[v] as f32 * cell_size as f32 * 0.5;
+    let half_u = lengths[u] as f32 * 0.5;
+    let half_v = lengths[v] as f32 * 0.5;
     let positions = [
         [-half_u, -half_v],
         [half_u, -half_v],
@@ -478,14 +682,24 @@ impl AxisSample {
 
 /// Exact trilinear interpolation of the same solver grid. No new particles
 /// or physics cells are produced; this is just smooth visualization.
+#[cfg(test)]
 #[inline]
 fn interpolated_density(field: &FreeManaField, coords: [AxisSample; 3]) -> f64 {
     let shape = field.shape();
+    interpolated_scalar([shape.nx(), shape.ny(), shape.nz()], coords, |i| {
+        field.densities()[i].value()
+    })
+}
+#[inline]
+fn interpolated_scalar(
+    dimensions: [usize; 3],
+    coords: [AxisSample; 3],
+    value: impl Fn(usize) -> f64,
+) -> f64 {
     let [x, y, z] = coords;
-    let row = shape.nx();
-    let plane = row * shape.ny();
-    let values = field.densities();
-    let at = |ix: usize, iy: usize, iz: usize| values[iz * plane + iy * row + ix].value();
+    let row = dimensions[0];
+    let plane = row * dimensions[1];
+    let at = |ix: usize, iy: usize, iz: usize| value(iz * plane + iy * row + ix);
     let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
     let z0y0 = lerp(
         at(x.first, y.first, z.first),
@@ -539,6 +753,7 @@ fn rgba_from_density(normalized: f64, layer_thickness: f64, optical_density: f64
     ]
 }
 
+#[cfg(test)]
 fn build_density_atlas(
     field: &FreeManaField,
     axis: usize,
@@ -548,30 +763,66 @@ fn build_density_atlas(
     optical_density: f64,
     view: SliceView,
 ) -> ImageAsset {
-    let shape = field.shape();
-    let dimensions = [shape.nx(), shape.ny(), shape.nz()];
+    let grid = AtlasSource::Density(Arc::new(field.clone()))
+        .sample(FieldDisplay::Density, &AtomicBool::new(false))
+        .unwrap();
+    build_scalar_atlas(
+        &grid,
+        axis,
+        planes,
+        view,
+        AtlasAppearance {
+            display: FieldDisplay::Density,
+            threshold,
+            peak,
+            optical_density,
+        },
+    )
+}
+struct AtlasAppearance {
+    display: FieldDisplay,
+    threshold: f64,
+    peak: f64,
+    optical_density: f64,
+}
+fn build_scalar_atlas(
+    grid: &ScalarGrid,
+    axis: usize,
+    planes: usize,
+    view: SliceView,
+    appearance: AtlasAppearance,
+) -> ImageAsset {
+    let AtlasAppearance {
+        display,
+        threshold,
+        peak,
+        optical_density,
+    } = appearance;
+
+    let dimensions = grid.dimensions;
+    let spacing = grid.spacing;
     let width = TEXTURE_SIZE;
     let stride = TEXTURE_SIZE + BORDER_ROWS;
     let height = stride * planes;
     let mut pixels = vec![0_u8; width * height * 4];
-    let dx = field.cell_width_metres();
+    let dx = spacing.into_iter().fold(f64::INFINITY, f64::min);
     let [u, v] = other_axes(axis);
-    let layer_thickness = dimensions[axis] as f64 * dx / planes as f64;
+    let layer_thickness = dimensions[axis] as f64 * spacing[axis] / planes as f64;
     let axis_lookup = (0..planes)
-        .map(|layer| AxisSample::texel(layer, planes, dimensions[axis], dx))
+        .map(|layer| AxisSample::texel(layer, planes, dimensions[axis], spacing[axis]))
         .collect::<Vec<_>>();
     let column_lookup = (0..width)
-        .map(|x| AxisSample::texel(x, width, dimensions[u], dx))
+        .map(|x| AxisSample::texel(x, width, dimensions[u], spacing[u]))
         .collect::<Vec<_>>();
     let row_lookup = (0..TEXTURE_SIZE)
-        .map(|y| AxisSample::texel(y, TEXTURE_SIZE, dimensions[v], dx))
+        .map(|y| AxisSample::texel(y, TEXTURE_SIZE, dimensions[v], spacing[v]))
         .collect::<Vec<_>>();
 
     let camera = view.camera(dx);
     let forward = view.forward();
     for (layer, &normal) in axis_lookup.iter().enumerate() {
         let layer_position =
-            ((layer as f64 + 0.5) / planes as f64 - 0.5) * dimensions[axis] as f64 * dx;
+            ((layer as f64 + 0.5) / planes as f64 - 0.5) * dimensions[axis] as f64 * spacing[axis];
         let mut coords = [normal; 3];
         coords[axis] = normal;
         for (yy, &row_sample) in row_lookup.iter().enumerate() {
@@ -579,8 +830,9 @@ fn build_density_atlas(
             let i = ((layer * stride + yy + 1) * width) * 4;
             for (xx, &column_sample) in column_lookup.iter().enumerate() {
                 coords[u] = column_sample;
+                let value = interpolated_scalar(dimensions, coords, |i| grid.values[i]);
                 let relative = if peak > 0.0 {
-                    (interpolated_density(field, coords) / peak).clamp(0.0, 1.0)
+                    (value.abs() / peak).clamp(0.0, 1.0)
                 } else {
                     0.0
                 };
@@ -588,9 +840,11 @@ fn build_density_atlas(
                 // the near clip at different positions across its surface.
                 let mut world = [0.0_f64; 3];
                 world[axis] = layer_position;
-                world[u] = ((xx as f64 + 0.5) / width as f64 - 0.5) * dimensions[u] as f64 * dx;
-                world[v] =
-                    ((yy as f64 + 0.5) / TEXTURE_SIZE as f64 - 0.5) * dimensions[v] as f64 * dx;
+                world[u] =
+                    ((xx as f64 + 0.5) / width as f64 - 0.5) * dimensions[u] as f64 * spacing[u];
+                world[v] = ((yy as f64 + 0.5) / TEXTURE_SIZE as f64 - 0.5)
+                    * dimensions[v] as f64
+                    * spacing[v];
                 let depth = (0..3).map(|i| (world[i] - camera[i]) * forward[i]).sum();
                 let near_fade = near_slice_visibility(depth, dx);
                 let visible = ((relative - threshold) / (1.0 - threshold)).max(0.0)
@@ -598,7 +852,17 @@ fn build_density_atlas(
                     * row_sample.fade
                     * column_sample.fade
                     * near_fade;
-                let rgba = rgba_from_density(visible, layer_thickness, optical_density);
+                let mut rgba = rgba_from_density(visible, layer_thickness, optical_density);
+                if display == FieldDisplay::Potential && value < 0.0 {
+                    rgba.swap(0, 2);
+                    rgba[1] = (rgba[1] as f64 * 0.65) as u8;
+                }
+                if display == FieldDisplay::EnergyDensity {
+                    let core = visible.clamp(0.0, 1.0).sqrt();
+                    rgba[0] = 255;
+                    rgba[1] = (70.0 + 180.0 * core) as u8;
+                    rgba[2] = (15.0 + 60.0 * core) as u8;
+                }
                 pixels[i + xx * 4..i + xx * 4 + 4].copy_from_slice(&rgba);
             }
         }
@@ -882,5 +1146,107 @@ mod interior_view_tests {
             f.total_manons().unwrap().value(),
             10.0 * (12.0_f64 * 0.5).powi(3)
         );
+    }
+}
+
+#[cfg(test)]
+mod spectral_tests {
+    use super::*;
+    fn field() -> Arc<manonica_physics::SpectralFieldSnapshot> {
+        let mut system = manonica_physics::SpectralMechanics::static_equilibrium(
+            vec![],
+            vec![[1.0, 0.0, 0.0]],
+            1.0,
+        )
+        .unwrap();
+        system
+            .replace_mode_storage(&[[2.0, 0.0, 0.0, 0.0]])
+            .unwrap();
+        Arc::new(system.field_snapshot())
+    }
+    #[test]
+    fn spectral_grid_preserves_signed_potential_and_total_local_energy() {
+        let source = AtlasSource::Spectral {
+            field: field(),
+            dimensions: [8; 3],
+            period: [std::f64::consts::TAU; 3],
+        };
+        let stop = AtomicBool::new(false);
+        let potential = source.sample(FieldDisplay::Potential, &stop).unwrap();
+        assert!(potential.values.iter().any(|v| *v < 0.0));
+        assert!(potential.values.iter().any(|v| *v > 0.0));
+        let energy = source.sample(FieldDisplay::EnergyDensity, &stop).unwrap();
+        for value in energy.values {
+            assert!((value - 2.0 / std::f64::consts::PI).abs() < 1e-12);
+        }
+        stop.store(true, Ordering::Relaxed);
+        assert!(source.sample(FieldDisplay::Potential, &stop).is_none());
+    }
+    #[test]
+    fn potential_sign_controls_colour_and_energy_has_distinct_palette() {
+        let mut grid = ScalarGrid {
+            dimensions: [4; 3],
+            spacing: [1.0; 3],
+            values: vec![1.0; 64],
+        };
+        let view = SliceView::new(Vec3::new(-10.0, 0.0, 0.0), Vec3::X, 0, 1.0);
+        let positive = build_scalar_atlas(
+            &grid,
+            0,
+            8,
+            view,
+            AtlasAppearance {
+                display: FieldDisplay::Potential,
+                threshold: 0.0,
+                peak: 1.0,
+                optical_density: 0.5,
+            },
+        );
+        grid.values.fill(-1.0);
+        let negative = build_scalar_atlas(
+            &grid,
+            0,
+            8,
+            view,
+            AtlasAppearance {
+                display: FieldDisplay::Potential,
+                threshold: 0.0,
+                peak: 1.0,
+                optical_density: 0.5,
+            },
+        );
+        let index = positive
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .position(|p| p[3] > 0)
+            .unwrap();
+        let a = positive.pixels.as_chunks::<4>().0[index];
+        let b = negative.pixels.as_chunks::<4>().0[index];
+        assert!(a[2] > a[0]);
+        assert!(b[0] > b[2]);
+        assert_eq!(a[3], b[3]);
+        grid.values.fill(1.0);
+        let energy = build_scalar_atlas(
+            &grid,
+            0,
+            8,
+            view,
+            AtlasAppearance {
+                display: FieldDisplay::EnergyDensity,
+                threshold: 0.0,
+                peak: 1.0,
+                optical_density: 0.5,
+            },
+        );
+        let c = energy.pixels.as_chunks::<4>().0[index];
+        assert!(c[0] > c[1] && c[1] > c[2]);
+        assert_eq!(
+            FieldDisplay::Potential.next(true),
+            FieldDisplay::EnergyDensity
+        );
+        assert_eq!(FieldDisplay::EnergyDensity.next(true), FieldDisplay::Hidden);
+        assert_eq!(FieldDisplay::Hidden.next(true), FieldDisplay::Potential);
     }
 }

@@ -97,6 +97,12 @@ impl App {
                 window.set_cursor_grabbed(state.mouse_locked);
             }
             if !state.editor.open {
+                if input.was_key_pressed(KeyCode::Tab) {
+                    state.field_display = state
+                        .field_display
+                        .next(self.experiment.mechanics.is_some());
+                }
+
                 if input.was_key_pressed(KeyCode::C) {
                     load_comparison = true;
                 }

@@ -60,6 +60,11 @@ impl App {
                 ConfigurationResult::Applied { snapshot, .. } => {
                     if matches!(pending.intent, ConfigurationIntent::Experiment) {
                         state.threshold = pending.experiment.visualization.relative_threshold;
+                        state.field_display = if pending.experiment.mechanics.is_some() {
+                            crate::visualization::FieldDisplay::Potential
+                        } else {
+                            crate::visualization::FieldDisplay::Density
+                        };
                         state.wisps = pending.experiment.visualization.wisps;
                         state.editor.circuit = 0;
                         state.editor.load(&pending.experiment.formulas);

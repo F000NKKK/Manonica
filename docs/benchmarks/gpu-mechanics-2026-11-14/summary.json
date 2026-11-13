@@ -1,0 +1,89 @@
+{
+  "date": "2026-11-14",
+  "adapter": "NVIDIA GeForce RTX 4050 Laptop GPU",
+  "backend": "Vulkan",
+  "build": "release",
+  "bodies": 2,
+  "mode_pairs": 171,
+  "cutoff": [
+    3,
+    3,
+    3
+  ],
+  "dt_seconds": 0.005,
+  "steps_per_run": 3000,
+  "warmup_steps_per_run": 100,
+  "steps_per_packet": 10,
+  "runs_per_condition": 3,
+  "timing": "host wall clock around full accepted GPU packet: submission, synchronization, readback, CPU snapshot validation; no window or volume sampling",
+  "before_loaded": {
+    "gpu_utilization_percent": 39,
+    "pstate": "P5",
+    "graphics_clock_mhz": 495,
+    "gpu_memory_mib": 275,
+    "ftb": "running, user confirmed"
+  },
+  "before_closed": {
+    "gpu_utilization_percent": 0,
+    "pstate": "P8",
+    "graphics_clock_mhz": 210,
+    "gpu_memory_mib": 93,
+    "ftb": "closed, user confirmed; no java/manonica-lab process in check"
+  },
+  "limitations": [
+    "short repeated runs, no fixed GPU clock",
+    "loaded runs preceded unloaded runs; not randomized",
+    "no confidence intervals or long steady-state claim",
+    "two-body scene; no large-world extrapolation"
+  ],
+  "summary": {
+    "loaded": {
+      "packets": 900,
+      "p50_ms": 1.6424385,
+      "p95_ms": 2.5252243,
+      "p99_ms": 2.8851257599999998,
+      "max_ms": 3.423205,
+      "mean_packet_ms": 1.7227351033333334,
+      "mean_step_ms": 0.17227351033333332
+    },
+    "closed": {
+      "packets": 900,
+      "p50_ms": 1.425143,
+      "p95_ms": 1.7700432,
+      "p99_ms": 1.9875926899999998,
+      "max_ms": 2.220455,
+      "mean_packet_ms": 1.4521548055555555,
+      "mean_step_ms": 0.14521548055555555
+    }
+  },
+  "cpu_gpu_max_errors_all_runs": {
+    "body": 4.271133e-06,
+    "mode": 4.335083e-07,
+    "energy_joules": 6.256764e-08,
+    "momentum_component": 3.589888e-07
+  },
+  "cpu_reference_ms_by_run": {
+    "loaded": [
+      103.093433,
+      85.33188,
+      83.96831
+    ],
+    "closed": [
+      77.162726,
+      72.383852,
+      72.380235
+    ]
+  },
+  "gpu_end_to_end_ms_by_run": {
+    "loaded": [
+      503.126703,
+      513.999846,
+      535.659843
+    ],
+    "closed": [
+      418.067893,
+      445.857,
+      444.535296
+    ]
+  }
+}

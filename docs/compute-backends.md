@@ -162,3 +162,25 @@ rollback after nonfinite shader output, alongside parity and Lab device
 reset/replacement. Software Vulkan executes these shaders in CI; it does
 not establish RTX performance. The current GPU scenario is an autonomous
 closed body/field system, without a configured external load.
+
+## Headless dynamic-mechanics packets
+
+Use the same two-body/171-mode scene as Lab without a window:
+
+```bash
+cargo run --release -p manonica-simulator --features gpu --bin gpu-mechanics --   --steps 3000 --batch 10 --warmup 100 --label ftb-loaded --csv /tmp/mechanics-ftb.csv
+```
+
+The tool times distinct accepted physical packets, reporting p50/p95/p99/max,
+wall time per physical step, CPU-reference time and final body/modal/energy/
+momentum errors. Packet wall time includes GPU submission, synchronization,
+readback and host snapshot validation; it is not device timestamp kernel time.
+CSV records each independent packet. Existing files are not overwritten.
+Use a step count divisible by batch length to compare equal-sized packets.
+`--cutoff` selects 1..6; the default 3 matches `dynamic_mechanics.toml`.
+The benchmark performs no density-volume rendering or atlas reconstruction.
+
+Repeat identical commands with FTB active and closed, keeping the label/output
+path distinct. Record GPU utilization/clocks and other active applications;
+DVFS and background scheduling may affect results in either direction.
+A loaded/unloaded comparison must name its actual background conditions.

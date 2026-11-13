@@ -131,7 +131,11 @@ pub(super) fn render_loop(
         graphics.scene.camera = camera.camera(aspect);
 
         let cpu_start = Instant::now();
-        graphics.update(&render_input.snapshot, &experiment);
+        graphics.update(
+            &render_input.snapshot,
+            &experiment,
+            render_input.field_display,
+        );
         let graphics_update_ms = cpu_start.elapsed().as_secs_f64() * 1000.0;
         let field = &render_input.snapshot.field;
         let metrics = FrameMetrics {
@@ -189,6 +193,7 @@ pub(super) fn render_loop(
                 shutdown: render_input.snapshot.field_shutdown,
             },
             volume: crate::diagnostics::VolumeMetrics {
+                channel: render_input.field_display,
                 peak_density: graphics.peak_density(),
                 shown_slices: graphics.visible_slices(),
                 grid_cells: field.shape().len(),

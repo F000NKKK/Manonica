@@ -155,11 +155,16 @@ impl FieldView {
         self.scene.renderables.clear();
         self.static_count = next.len();
         self.scene.renderables = next;
-        self.volume.invalidate();
+        self.volume.reconfigure(&mut self.base, experiment)?;
         Ok(())
     }
 
-    pub fn update(&mut self, snapshot: &SimulationSnapshot, experiment: &Experiment) {
+    pub fn update(
+        &mut self,
+        snapshot: &SimulationSnapshot,
+        experiment: &Experiment,
+        display: super::FieldDisplay,
+    ) {
         if let (Some(observation), Some(config)) = (&snapshot.mechanics, &experiment.mechanics) {
             for (i, x) in observation.positions.iter().enumerate() {
                 if let Some(marker) = self
@@ -176,15 +181,14 @@ impl FieldView {
             }
         }
 
-        if experiment.mechanics.is_none() {
-            self.volume.update(
-                &mut self.base,
-                &mut self.scene,
-                self.static_count,
-                snapshot,
-                experiment,
-            );
-        }
+        self.volume.update(
+            &mut self.base,
+            &mut self.scene,
+            self.static_count,
+            snapshot,
+            experiment,
+            display,
+        );
     }
 
     pub fn sampling_cpu_ms(&self) -> f64 {

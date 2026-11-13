@@ -21,6 +21,7 @@ units!(
     Hertz,
     Radians,
     Joules,
+    JoulesPerCubicMetre,
     ManonCount,
     ManonDensity,
     ManonFlux,
