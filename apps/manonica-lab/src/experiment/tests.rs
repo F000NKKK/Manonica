@@ -909,3 +909,5 @@ fn refined_formula_ring_preserves_resources_and_approaches_exact_circle() {
         assert!((integrated_potential - 8.0).abs() < 1e-8);
     }
 }
+
+mod spatial_convergence;
