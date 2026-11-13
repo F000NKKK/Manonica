@@ -1,0 +1,3 @@
+{"key":"manonica:stone","display":{"name":"Stone"},"stack":{"limit":64},"behavior":{"place_block":"manonica:stone"}}
+{"key":"manonica:mana_crystal","display":{"name":"Mana crystal"},"stack":{"limit":16},"behavior":{"place_block":"manonica:mana_crystal"}}
+{"key":"manonica:probe","display":{"name":"Field probe"},"stack":{"limit":1},"metadata":{"calibration":{"type":"double","value":1.0}}}

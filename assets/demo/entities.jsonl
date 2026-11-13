@@ -1,0 +1,2 @@
+{"key":"manonica:player","display":{"name":"Demo player"},"physics":{"mass":80.0,"collider":{"half_extents":[0.3,0.9,0.3]}},"inventory":{"slots":16},"metadata":{"name":{"type":"string","value":"Researcher"}}}
+{"key":"manonica:test_body","display":{"name":"Test body"},"physics":{"mass":2.0,"collider":{"half_extents":[0.25,0.25,0.25]}},"inventory":{"slots":0}}

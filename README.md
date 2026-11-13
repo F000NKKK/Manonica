@@ -21,6 +21,7 @@ Minecraft: свободные и связанные маноны, распред
 | `manonica-simulation` | Связанный шаг физики, состояние материалов и энергетический баланс; общий контракт CPU/GPU для Lab, симулятора и мода |
 | `manonica-control` | Типизированное управление, P/I/D, диагностика и модели ТАУ |
 | `manonica-compute-gpu` | Резидентный WGPU backend: полный связанный физический шаг, параллельные операторы, свёртки и атомарные снимки |
+| `manonica-world` | Игровой runtime: JSONL-реестры, блоки, предметы, сущности, инвентари, чанки и NBT-сохранения |
 | `manonica-simulator` | Консольные воспроизводимые опыты |
 | `manonica-lab` | Конфигурирование опытов, редактор формул, рендер Meridian SDK и F3 |
 | `adapters/minecraft/fabric/mc26_3` | Адаптер игры; законы не живут в Java/Fabric |
@@ -133,3 +134,5 @@ gradle build
 ```bash
 cargo run --release -p manonica-simulator --bin spectral_field
 ```
+
+Headless-демка игрового мира: [запуск, формат контента и ограничения](docs/game-runtime.md).
