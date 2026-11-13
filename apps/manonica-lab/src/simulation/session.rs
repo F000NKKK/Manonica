@@ -19,6 +19,7 @@ use manonica_simulation::{CoupledState, FieldControl, StepParameters};
 pub struct Simulation {
     pub experiment: Experiment,
     state: CoupledState,
+    mechanics: Option<super::mechanics::MechanicsSession>,
     equilibrium: EquilibriumMonitor,
     time_seconds: f64,
     steps: u64,
@@ -50,7 +51,20 @@ impl Simulation {
         // temporal discretization. This validation must not advance the session.
         let mut probe = field.clone();
         advection.evolve(&mut probe, TimeStep::from_seconds(experiment.physics.dt)?)?;
+        let mechanics = experiment
+            .mechanics
+            .as_ref()
+            .map(|config| super::mechanics::MechanicsSession::new(config, experiment.physics.dt))
+            .transpose()?;
+        if should_cancel() {
+            return Err(manonica_error::BaseError::new(
+                manonica_error::ErrorCode::InvalidState,
+                "experiment_cancelled",
+            )
+            .into());
+        }
         Ok(Self {
+            mechanics,
             experiment,
             state: CoupledState {
                 field,
@@ -64,6 +78,13 @@ impl Simulation {
             steps: 0,
             revision: 0,
         })
+    }
+
+    pub fn has_mechanics(&self) -> bool {
+        self.mechanics.is_some()
+    }
+    pub fn mechanics_observation(&self) -> Option<super::MechanicsObservation> {
+        self.mechanics.as_ref().map(|m| m.observation())
     }
 
     pub fn field(&self) -> &FreeManaField {
@@ -152,7 +173,24 @@ impl Simulation {
     ) -> Result<ConservationReport, ExperimentError> {
         let parameters = self.step_parameters();
         let dt = TimeStep::from_seconds(parameters.dt)?;
-        let report = self.state.step_with_diffusion(&parameters, backend)?;
+        let report = if let Some(mechanics) = &mut self.mechanics {
+            if backend.is_some() {
+                return Err(manonica_error::BaseError::new(
+                    manonica_error::ErrorCode::InvalidState,
+                    "mechanics_cpu_only",
+                )
+                .into());
+            }
+            let total = self.state.field.total_manons()?;
+            mechanics.step(dt)?;
+            ConservationReport {
+                before: total,
+                after: total,
+                absolute_error: Quantity::nonnegative(0.0)?,
+            }
+        } else {
+            self.state.step_with_diffusion(&parameters, backend)?
+        };
         let after = report.after;
         self.time_seconds += dt.seconds();
         self.steps += 1;
@@ -170,6 +208,13 @@ impl Simulation {
         gpu: &mut manonica_compute_gpu::GpuCoupled,
         steps: u32,
     ) -> Result<ConservationReport, ExperimentError> {
+        if self.has_mechanics() {
+            return Err(manonica_error::BaseError::new(
+                manonica_error::ErrorCode::InvalidState,
+                "mechanics_cpu_only",
+            )
+            .into());
+        }
         let before = self.total()?;
         let state = gpu.advance(steps)?.clone();
         let after =
@@ -200,8 +245,9 @@ impl Simulation {
                 ..
             } => *angular_speed != 0.0 || *axial_speed != 0.0,
         };
-        let source_active =
-            (self.state.potential.is_some() && !self.state.shutdown) || medium_driven;
+        let source_active = (self.state.potential.is_some() && !self.state.shutdown)
+            || medium_driven
+            || self.has_mechanics();
         let potential_peak = self
             .state
             .potential
@@ -245,6 +291,15 @@ impl Simulation {
         let field = seeded_field(&self.experiment)?;
         let materials = build_materials(&self.experiment, &field)?;
         let (potential, field_ledger) = build_potential(&self.experiment, &field)?;
+        let mechanics = self
+            .experiment
+            .mechanics
+            .as_ref()
+            .map(|config| {
+                super::mechanics::MechanicsSession::new(config, self.experiment.physics.dt)
+            })
+            .transpose()?;
+        self.mechanics = mechanics;
         self.state.potential = potential;
         self.state.field_ledger = field_ledger;
         self.state.shutdown = false;

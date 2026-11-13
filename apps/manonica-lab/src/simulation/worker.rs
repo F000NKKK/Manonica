@@ -70,6 +70,7 @@ impl Default for ComputeTelemetry {
 #[derive(Clone)]
 pub struct SimulationSnapshot {
     pub revision: u64,
+    pub mechanics: Option<super::MechanicsObservation>,
     pub field: Arc<FreeManaField>,
     pub elapsed: f64,
     pub steps: u64,
@@ -103,6 +104,7 @@ impl SimulationSnapshot {
     ) -> Self {
         Self {
             revision: sim.revision,
+            mechanics: sim.mechanics_observation(),
             field: Arc::new(sim.field().clone()),
             elapsed: sim.elapsed(),
             steps: sim.steps(),

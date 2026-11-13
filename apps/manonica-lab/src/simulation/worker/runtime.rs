@@ -49,6 +49,12 @@ pub(super) fn run_simulation(
     let mut error: Option<String> = None;
     let mut cpu_ms = 0.0;
     let create_gpu = |sim: &Simulation| -> Result<Option<GpuCoupled>, String> {
+        if sim.has_mechanics() {
+            if backend == BackendPreference::Gpu {
+                return Err("dynamic mechanics requires --backend cpu or auto".into());
+            }
+            return Ok(None);
+        }
         if !backend.attempts_gpu() {
             return Ok(None);
         }
@@ -84,7 +90,7 @@ pub(super) fn run_simulation(
         } else {
             ComputeBackend::Cpu
         },
-        cpu_fallback: gpu.is_none() && backend.attempts_gpu(),
+        cpu_fallback: gpu.is_none() && backend.attempts_gpu() && !sim.has_mechanics(),
         batch_wall_ms: 0.0,
         batch_steps: 0,
     };
@@ -127,7 +133,8 @@ pub(super) fn run_simulation(
                                 } else {
                                     ComputeBackend::Cpu
                                 };
-                                compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
+                                compute.cpu_fallback =
+                                    gpu.is_none() && backend.attempts_gpu() && !sim.has_mechanics();
                                 compute.batch_wall_ms = 0.0;
                                 compute.batch_steps = 0;
                                 next_tick = Instant::now() + period;
@@ -171,7 +178,8 @@ pub(super) fn run_simulation(
                         } else {
                             ComputeBackend::Cpu
                         };
-                        compute.cpu_fallback = gpu.is_none() && backend.attempts_gpu();
+                        compute.cpu_fallback =
+                            gpu.is_none() && backend.attempts_gpu() && !sim.has_mechanics();
                         compute.batch_wall_ms = 0.0;
                         compute.batch_steps = 0;
                         period = Duration::from_secs_f64(sim.experiment.physics.dt);

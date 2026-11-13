@@ -9,7 +9,8 @@ impl Simulation {
     /// safely execute multiple time steps without CPU-side material updates.
     /// This guard is about laws, not the visual presence of a formula.
     pub fn supports_resident_diffusion(&self) -> bool {
-        self.state.potential.is_none()
+        !self.has_mechanics()
+            && self.state.potential.is_none()
             && matches!(self.experiment.physics.flow, AmbientFlow::Still)
             && self.experiment.materials.is_empty()
             && self.experiment.channels.is_empty()
@@ -19,7 +20,8 @@ impl Simulation {
     /// Resident transport is safe only without intermediate material,
     /// potential or thermal interactions. Vortex transport is not supported.
     pub fn supports_resident_transport(&self) -> bool {
-        self.state.potential.is_none()
+        !self.has_mechanics()
+            && self.state.potential.is_none()
             && matches!(
                 self.experiment.physics.flow,
                 AmbientFlow::Still | AmbientFlow::Uniform { .. }

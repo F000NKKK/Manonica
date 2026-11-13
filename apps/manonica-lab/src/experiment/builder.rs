@@ -12,6 +12,7 @@ impl ExperimentBuilder {
         Self {
             experiment: Experiment {
                 name: name.into(),
+                mechanics: None,
                 grid: Grid {
                     dimensions: [24, 24, 24],
                     cell_size: 0.5,

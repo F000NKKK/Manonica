@@ -9,6 +9,8 @@ use super::ExperimentError;
 pub struct Experiment {
     pub name: String,
     pub grid: Grid,
+    #[serde(default)]
+    pub mechanics: Option<super::MechanicsConfig>,
     pub physics: Diffusion,
     #[serde(default)]
     pub seeds: Vec<FieldSeed>,
@@ -429,6 +431,24 @@ impl Experiment {
             "cell_size",
         )?;
         let p = &self.physics;
+        if let Some(mechanics) = &self.mechanics {
+            check(
+                p.potential.is_none()
+                    && p.diffusivity == 0.0
+                    && p.thermal_conductance == 0.0
+                    && p.ambient_cooling_rate == 0.0
+                    && matches!(p.flow, AmbientFlow::Still)
+                    && self.seeds.is_empty()
+                    && self.materials.is_empty()
+                    && self.channels.is_empty()
+                    && self.field_sources.is_empty()
+                    && self.local_boundaries.is_empty()
+                    && self.formulas.iter().all(|f| f.trap.is_none()),
+                "mechanics_requires_separate_experiment",
+            )?;
+            mechanics.build(p.dt)?;
+        }
+
         check(
             p.diffusivity.is_finite() && p.diffusivity >= 0.0,
             "diffusivity",

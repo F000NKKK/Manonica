@@ -3,6 +3,8 @@
 mod builder;
 mod error;
 mod formula;
+mod mechanics;
+pub use mechanics::{MechanicalBodyConfig, MechanicsConfig};
 mod specification;
 
 pub use builder::ExperimentBuilder;

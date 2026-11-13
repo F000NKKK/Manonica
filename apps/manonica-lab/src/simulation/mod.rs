@@ -2,6 +2,8 @@ mod backend_policy;
 mod equilibrium;
 mod field;
 mod flow;
+mod mechanics;
+pub use mechanics::MechanicsObservation;
 #[cfg(test)]
 mod resident_tests;
 mod session;
