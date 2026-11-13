@@ -720,3 +720,110 @@ fn multicell_formula_source_and_traps_converge_to_joint_kinetics() {
         assert!(errors[3] < 0.01, "Lab absolute bound error: {errors:?}");
     }
 }
+
+/// LAW-LAB-COUPLED-002: two disjoint formula traps at phi=[2,0].
+/// Independent two-step reference, dx=1, dt=.1, initial free=[8,8]:
+/// drift R=.05*n_left; capture=(4-b)*(1-exp(-.02*n_after_drift));
+/// release=b*(1-exp(-.03)); binding heat=2*(capture-release);
+/// heat exchange=.07*(Q_left/2-Q_right/5); cooling retains exp(-.03).
+#[test]
+fn heterogeneous_formula_traps_match_transport_reactions_and_heat_reference() {
+    let mut experiment = Experiment::parse(include_str!(
+        "../../experiments/local_boundary_conductor.toml"
+    ))
+    .unwrap();
+    experiment.grid.dimensions = [2, 1, 1];
+    experiment.grid.cell_size = 1.0;
+    experiment.physics.dt = 0.1;
+    experiment.physics.diffusivity = 0.0;
+    experiment.physics.flow = AmbientFlow::Still;
+    experiment.physics.thermal_conductance = 0.7;
+    experiment.physics.ambient_cooling_rate = 0.3;
+    experiment.field_sources.clear();
+    experiment.seeds[0].total_manons = 16.0;
+    let mut left = experiment.formulas[0].clone();
+    left.x = "-0.5+0.1*cos(t)".into();
+    left.y = "0.1*sin(t)".into();
+    left.z = "0".into();
+    left.trap = Some(super::FormulaTrap {
+        capacity: 4.0,
+        capture_rate: 0.2,
+        release_rate: 0.3,
+        binding_energy: 2.0,
+        heat_capacity: 2.0,
+        reference_temperature: 300.0,
+        activation_temperature: 0.0,
+        max_flux: 100.0,
+    });
+    let mut right = left.clone();
+    right.name = "right".into();
+    right.x = "0.5+0.1*cos(t)".into();
+    right.trap.as_mut().unwrap().heat_capacity = 5.0;
+    assert_eq!(
+        super::capture_cells(&left, [2, 1, 1], 1.0).unwrap(),
+        vec![[0, 0, 0]]
+    );
+    assert_eq!(
+        super::capture_cells(&right, [2, 1, 1], 1.0).unwrap(),
+        vec![[1, 0, 0]]
+    );
+    experiment.formulas = vec![left, right];
+    experiment.local_boundaries = vec![
+        super::LocalBoundarySpec::Dirichlet {
+            formula: 0,
+            value: 2.0,
+        },
+        super::LocalBoundarySpec::Dirichlet {
+            formula: 1,
+            value: 0.0,
+        },
+    ];
+    let settings = experiment.physics.potential.as_mut().unwrap();
+    settings.mobility = 0.25;
+    settings.screening = 1.0;
+    settings.permittivity = 1.0;
+    settings.boundary = super::PotentialBoundaryKind::Insulated;
+    settings.initial_work_joules = 4.0;
+    settings.max_power_joules_per_second = 0.0;
+    settings.shutdown_at_bound_fraction = 0.0;
+    let mut simulation = Simulation::new(experiment).unwrap();
+    assert!((simulation.tracked_energy().unwrap() - 20.0).abs() < 1e-10);
+    // Reference constants come directly from the equations above, without
+    // invoking the production operators or reading the simulation output.
+    let reference = [
+        (
+            [7.035953122964493, 7.781415338738635],
+            [0.5640468770355063, 0.618584661261365],
+            [1.0732456471910026, 1.2221133411565976],
+            0.7763564268388066,
+            0.09354766140733563,
+            0.4,
+        ),
+        (
+            [6.27087533547864, 7.643864954969089],
+            [0.9773270083731348, 1.1079327011791353],
+            [1.8090308436635205, 2.1703929889685494],
+            1.436212555111156,
+            0.25847834365776323,
+            0.35179765614822467,
+        ),
+    ];
+    for (free, bound, heat, field_heat, exported, transported) in reference {
+        simulation.step().unwrap();
+        let state = simulation.coupled_state();
+        for i in 0..2 {
+            assert!((state.field.at(i, 0, 0).unwrap().value() - free[i]).abs() < 1e-10);
+            assert!((state.materials.cells()[i].bound - bound[i]).abs() < 1e-10);
+            assert!((state.materials.cells()[i].heat - heat[i]).abs() < 1e-10);
+            assert!((simulation.formula_bound().unwrap()[i] - bound[i]).abs() < 1e-10);
+        }
+        let ledger = simulation.field_ledger().unwrap();
+        assert!((ledger.manon_potential_joules - 2.0 * (free[0] + bound[0])).abs() < 1e-10);
+        assert!((ledger.dissipated_heat_joules - field_heat).abs() < 1e-10);
+        assert!((ledger.exported_heat_joules - exported).abs() < 1e-10);
+        assert!((ledger.last_transport_manons - transported).abs() < 1e-10);
+        assert!(ledger.operating_work_joules.abs() < 1e-10);
+        assert!((simulation.material_balance().unwrap().manons() - 16.0).abs() < 1e-10);
+        assert!((simulation.tracked_energy().unwrap() - 20.0).abs() < 1e-10);
+    }
+}
