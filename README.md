@@ -136,3 +136,5 @@ cargo run --release -p manonica-simulator --bin spectral_field
 ```
 
 Headless-демка игрового мира: [запуск, формат контента и ограничения](docs/game-runtime.md).
+
+[Игровая 3D-демка: запуск, управление и текущие ограничения](docs/playable-demo.md).

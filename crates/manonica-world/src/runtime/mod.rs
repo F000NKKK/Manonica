@@ -45,7 +45,8 @@ pub struct EntityState {
 #[derive(Clone, Debug)]
 pub struct GameRuntime {
     pub world: ChunkWorld,
-    entities: BTreeMap<EntityId, EntityState>,
+    pub(crate) entities: BTreeMap<EntityId, EntityState>,
+    pub(crate) magic: crate::magic::MagicState,
     clock: GameClock,
     next_id: u64,
 }
@@ -54,6 +55,7 @@ impl GameRuntime {
         Self {
             world: ChunkWorld::new(content, layout),
             entities: BTreeMap::new(),
+            magic: crate::magic::MagicState::default(),
             clock: GameClock::default(),
             next_id: 1,
         }
@@ -68,6 +70,14 @@ impl GameRuntime {
         self.entities
             .get(&id)
             .ok_or(WorldError::Invalid("unknown_entity"))
+    }
+    pub fn set_transform(&mut self, id: EntityId, transform: EntityTransform) -> WorldResult<()> {
+        transform.validate()?;
+        self.entities
+            .get_mut(&id)
+            .ok_or(WorldError::Invalid("unknown_entity"))?
+            .transform = transform;
+        Ok(())
     }
     pub fn spawn(&mut self, key: &ResourceKey) -> WorldResult<EntityId> {
         self.spawn_at(key, EntityTransform::default())
@@ -215,7 +225,8 @@ impl GameRuntime {
             })
             .collect::<WorldResult<Vec<_>>>()?;
         let save = SavedGame {
-            version: 1,
+            version: 2,
+            magic: self.magic.clone(),
             registry: self.world.content().fingerprint().into(),
             dimensions: self.world.layout().dimensions().map(|v| v as i32),
             cell_width: self.world.layout().cell_width(),
@@ -229,7 +240,7 @@ impl GameRuntime {
     }
     pub fn from_nbt(content: Arc<ContentRegistry>, bytes: &[u8]) -> WorldResult<Self> {
         let save: SavedGame = decode_nbt(bytes)?;
-        if save.version != 1
+        if save.version != 2
             || save.registry != content.fingerprint()
             || !save.clock.elapsed_seconds.is_finite()
             || save.clock.elapsed_seconds < 0.0
@@ -239,6 +250,8 @@ impl GameRuntime {
         let dims = save.dimensions.map(|v| usize::try_from(v).unwrap_or(0));
         let mut game = Self::new(content, ChunkLayout::new(dims, save.cell_width)?);
         game.clock = save.clock;
+        save.magic.validate()?;
+        game.magic = save.magic;
         for chunk in save.chunks {
             if !matches!(chunk.active, 0 | 1) {
                 return Err(WorldError::Invalid("chunk_activity"));
@@ -299,6 +312,7 @@ struct SavedEntity {
 struct SavedGame {
     version: i32,
     registry: String,
+    magic: crate::magic::MagicState,
     dimensions: [i32; 3],
     cell_width: f64,
     clock: GameClock,

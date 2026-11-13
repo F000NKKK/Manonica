@@ -7,3 +7,6 @@ pub mod metadata;
 pub mod registry;
 pub mod runtime;
 pub use error::{WorldError, WorldResult};
+
+pub mod gameplay;
+pub mod magic;

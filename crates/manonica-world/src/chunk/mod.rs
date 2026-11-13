@@ -46,6 +46,35 @@ impl ChunkWorld {
     pub fn layout(&self) -> ChunkLayout {
         self.layout
     }
+    pub fn occupied_blocks(&self) -> impl Iterator<Item = (CellPosition, &BlockState)> + '_ {
+        let dims = self.layout.dimensions();
+        let air = self.content.air();
+        self.chunks.iter().flat_map(move |(coord, slot)| {
+            let chunk = match slot {
+                Slot::Resident { chunk, .. } => Some(chunk),
+                _ => None,
+            };
+            chunk.into_iter().flat_map(move |chunk| {
+                (0..self.layout.cells()).filter_map(move |i| {
+                    let state = chunk.state(i);
+                    if state.block() == air {
+                        return None;
+                    }
+                    let x = i % dims[0];
+                    let y = (i / dims[0]) % dims[1];
+                    let z = i / (dims[0] * dims[1]);
+                    Some((
+                        CellPosition {
+                            x: i64::from(coord.x) * dims[0] as i64 + x as i64,
+                            y,
+                            z: i64::from(coord.z) * dims[2] as i64 + z as i64,
+                        },
+                        state,
+                    ))
+                })
+            })
+        })
+    }
     pub fn coordinates(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
         self.chunks.keys().copied()
     }
@@ -103,6 +132,23 @@ impl ChunkWorld {
     pub fn density(&self, pos: CellPosition) -> WorldResult<f64> {
         let (c, i) = self.layout.locate(pos)?;
         Ok(self.resident(c)?.mana.at(i))
+    }
+    /// Explicit source/sink API; callers account for the corresponding resource transfer.
+    pub fn set_density(&mut self, pos: CellPosition, density: f64) -> WorldResult<()> {
+        if !density.is_finite() || density < 0.0 {
+            return Err(WorldError::Invalid("density"));
+        }
+        let (coord, index) = self.layout.locate(pos)?;
+        let len = self.layout.cells();
+        let volume = self.layout.cell_width.powi(3);
+        let chunk = self.resident_mut(coord)?;
+        let mut values = chunk.mana.values(len);
+        values[index] = density;
+        if !(values.iter().sum::<f64>() * volume).is_finite() {
+            return Err(WorldError::Invalid("density_balance"));
+        }
+        chunk.mana = DensityStorage::from_values(values);
+        Ok(())
     }
     pub fn block(&self, pos: CellPosition) -> WorldResult<&BlockState> {
         let (c, i) = self.layout.locate(pos)?;

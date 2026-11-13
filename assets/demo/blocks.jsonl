@@ -1,3 +1,5 @@
 {"key":"manonica:air","display":{"name":"Air"},"physics":{"collision":"empty","replaceable":true,"mana":{"permeability":1.0}}}
 {"key":"manonica:stone","display":{"name":"Stone"},"physics":{"collision":"full_cube","replaceable":false,"mana":{"permeability":0.0}}}
 {"key":"manonica:mana_crystal","display":{"name":"Mana crystal"},"physics":{"collision":"full_cube","replaceable":false,"mana":{"permeability":0.25}},"state":{"allowed":{"axis":["x","y","z"]},"defaults":{"axis":"y"}},"metadata":{"capacity":{"type":"double","value":500.0},"owner":{"type":"string","value":""}}}
+{"key":"manonica:grass","display":{"name":"Grass"},"physics":{"collision":"full_cube","replaceable":false,"mana":{"permeability":0.6}}}
+{"key":"manonica:dirt","display":{"name":"Dirt"},"physics":{"collision":"full_cube","replaceable":false,"mana":{"permeability":0.4}}}
