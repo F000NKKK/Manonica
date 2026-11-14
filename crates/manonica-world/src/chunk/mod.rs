@@ -31,6 +31,7 @@ pub struct ChunkWorld {
     content: Arc<ContentRegistry>,
     layout: ChunkLayout,
     chunks: BTreeMap<ChunkCoord, Slot>,
+    geometry_revision: u64,
 }
 impl ChunkWorld {
     pub fn new(content: Arc<ContentRegistry>, layout: ChunkLayout) -> Self {
@@ -38,7 +39,11 @@ impl ChunkWorld {
             content,
             layout,
             chunks: BTreeMap::new(),
+            geometry_revision: 0,
         }
+    }
+    pub fn geometry_revision(&self) -> u64 {
+        self.geometry_revision
     }
     pub fn content(&self) -> &ContentRegistry {
         &self.content
@@ -140,6 +145,7 @@ impl ChunkWorld {
             mana: DensityStorage::Uniform(density),
         };
         self.chunks.insert(coord, Slot::Resident { chunk, active });
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
         Ok(())
     }
     fn resident(&self, coord: ChunkCoord) -> WorldResult<&Chunk> {
@@ -240,7 +246,9 @@ impl ChunkWorld {
         data.validate()?;
         let (c, i) = self.layout.locate(pos)?;
         let len = self.layout.cells();
-        self.resident_mut(c)?.set(i, state, data, len)
+        self.resident_mut(c)?.set(i, state, data, len)?;
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        Ok(())
     }
     pub fn export(&self, coord: ChunkCoord) -> WorldResult<Vec<u8>> {
         match self.chunks.get(&coord) {
@@ -256,6 +264,7 @@ impl ChunkWorld {
             return Err(WorldError::Invalid("duplicate_chunk"));
         }
         self.chunks.insert(coord, Slot::Resident { chunk, active });
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
         Ok(coord)
     }
     pub fn unload(&mut self, coord: ChunkCoord) -> WorldResult<()> {
@@ -263,6 +272,7 @@ impl ChunkWorld {
         let total = chunk.mana.sum(self.layout.cells()) * self.layout.cell_width.powi(3);
         let bytes = self.export(coord)?;
         self.chunks.insert(coord, Slot::Archived { bytes, total });
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
         Ok(())
     }
     pub fn reload(&mut self, coord: ChunkCoord, active: bool) -> WorldResult<()> {
@@ -272,6 +282,7 @@ impl ChunkWorld {
         };
         let chunk = save::decode(bytes, self.layout, &self.content)?;
         self.chunks.insert(coord, Slot::Resident { chunk, active });
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
         Ok(())
     }
     pub fn statistics(&self) -> WorldStatistics {

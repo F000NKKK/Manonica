@@ -88,6 +88,7 @@ pub(super) fn run(
     let mut frame_count = 0;
     let mut pending_jump = false;
     let mut diagnostics = false;
+    let mut terrain_revision = game.world.geometry_revision();
     if showcase {
         for (slot, target) in [
             (3, [-11.0, 4.5, -3.0]),
@@ -269,6 +270,13 @@ pub(super) fn run(
                 }
             }
         }
+        game.set_transform(
+            player,
+            EntityTransform {
+                position_metres: character.feet,
+                rotation_radians: [f64::from(camera.pitch), f64::from(camera.yaw), 0.0],
+            },
+        )?;
         if locked || showcase {
             accumulator = (accumulator + dt).min(0.1);
             while accumulator >= 1.0 / 120.0 {
@@ -288,6 +296,9 @@ pub(super) fn run(
                 );
                 pending_jump = false;
                 if let Err(error) = game.advance_magic(1.0 / 120.0) {
+                    if smoke_frames.is_some() {
+                        return Err(error.into());
+                    }
                     status = format!("FIELD PAUSED: {error}");
                 }
                 accumulator -= 1.0 / 120.0;
@@ -297,7 +308,9 @@ pub(super) fn run(
             pending_jump = false;
         }
 
+        dirty |= terrain_revision != game.world.geometry_revision();
         if dirty {
+            terrain_revision = game.world.geometry_revision();
             terrain
                 .rebuild(&mut base, &game.world)
                 .map_err(std::io::Error::other)?;
@@ -313,6 +326,7 @@ pub(super) fn run(
             .update(&mut base, game.magic(), &game.world)
             .map_err(std::io::Error::other)?;
         effects.append(&mut scene, game.magic());
+        effects.append_matter(&mut base, &mut scene, game.matter(), &game.world);
         let stack = game.entity(player)?.inventory.get(selected)?;
         let item = stack
             .map(|s| {
@@ -350,9 +364,9 @@ pub(super) fn run(
                     dt * 1000.
                 ),
                 format!(
-                    "Fields: {} active, {:.0} solver-owned manons | energy residual {:.2e} J",
+                    "Fields: {} active, {:.0} manons | matter energy error {:.2e} J",
                     game.magic().active().len(),
-                    game.magic().bound_manons(),game.magic().energy_residual_joules()
+                    game.magic().bound_manons(),game.coupled_energy_residual_joules()?
                 ),
                 status.clone(),
             ],

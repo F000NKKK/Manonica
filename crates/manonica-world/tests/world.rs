@@ -359,3 +359,28 @@ fn malformed_content_and_nbt_limits_fail_before_acceptance() {
     assert!(NbtCompound::new(BTreeMap::from([("deep".into(), tag)])).is_err());
     assert!(NbtCompound::new(BTreeMap::from([("nan".into(), NbtTag::Double(f64::NAN))])).is_err());
 }
+#[test]
+fn all_geometry_mutations_advance_the_world_revision() {
+    let mut w = ChunkWorld::new(content(), ChunkLayout::new([2, 2, 2], 1.).unwrap());
+    let c = ChunkCoord { x: 0, z: 0 };
+    let initial = w.geometry_revision();
+    w.create(c, 3., true).unwrap();
+    assert_ne!(initial, w.geometry_revision());
+    let created = w.geometry_revision();
+    w.set_block(
+        pos(0),
+        &key("manonica:stone"),
+        BTreeMap::new(),
+        NbtCompound::default(),
+    )
+    .unwrap();
+    assert_ne!(created, w.geometry_revision());
+    let changed = w.geometry_revision();
+    w.set_density(pos(0), 5.).unwrap();
+    assert_eq!(changed, w.geometry_revision());
+    w.unload(c).unwrap();
+    assert_ne!(changed, w.geometry_revision());
+    let unloaded = w.geometry_revision();
+    w.reload(c, true).unwrap();
+    assert_ne!(unloaded, w.geometry_revision());
+}

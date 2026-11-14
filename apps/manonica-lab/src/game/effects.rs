@@ -161,6 +161,9 @@ pub struct SpellView {
     grammar: CircleGrammar,
     constructions: BTreeMap<u64, (MeshHandle, Renderable3d)>,
     diagnostics: bool,
+    body_mesh: MeshHandle,
+    body_materials: BTreeMap<manonica_world::registry::ResourceKey, MaterialHandle>,
+    particle_meshes: Vec<MeshHandle>,
 }
 impl SpellView {
     pub fn new(
@@ -176,6 +179,11 @@ impl SpellView {
                 ..Default::default()
             })
         });
+        let body_mesh = base
+            .render
+            .meshes
+            .register(meridian_sdk::cube_mesh_source(1.0))
+            .map_err(|e| e.to_string())?;
         Ok(Self {
             materials,
             meshes: vec![],
@@ -187,6 +195,9 @@ impl SpellView {
             .map_err(|e| e.to_string())?,
             constructions: BTreeMap::new(),
             diagnostics: false,
+            body_mesh,
+            body_materials: BTreeMap::new(),
+            particle_meshes: vec![],
         })
     }
     pub fn invalidate(&mut self) {
@@ -353,6 +364,90 @@ impl SpellView {
         }
         self.signature = signature;
         Ok(())
+    }
+    pub fn append_matter(
+        &mut self,
+        base: &mut GraphicsSession,
+        scene: &mut meridian_sdk::Scene3d,
+        state: &manonica_world::matter::MatterState,
+        world: &manonica_world::chunk::ChunkWorld,
+    ) {
+        for mesh in self.particle_meshes.drain(..) {
+            base.render.meshes.unregister(mesh);
+        }
+        let mut particles: BTreeMap<manonica_world::registry::ResourceKey, MeshSource> =
+            BTreeMap::new();
+        for event in &state.particles {
+            let t = event.age_seconds;
+            let mesh = particles.entry(event.block.clone()).or_insert_with(empty);
+            for i in 0..18 {
+                let phase = i as f64 * 2.399963;
+                let speed = 1.0 + (i % 5) as f64 * 0.2;
+                let p = [
+                    event.position[0] + phase.cos() * speed * t,
+                    event.position[1] + (1.2 + (i % 3) as f64 * 0.4) * t - 7.0 * t * t,
+                    event.position[2] + phase.sin() * speed * t,
+                ];
+                particle(
+                    mesh,
+                    p.map(|v| v as f32),
+                    (0.035 * (1.0 - t / 1.25).max(0.0)) as f32,
+                );
+            }
+        }
+        for body in &state.bodies {
+            let material = if let Some(material) = self.body_materials.get(&body.block) {
+                *material
+            } else {
+                let appearance = world
+                    .content()
+                    .block_id(&body.block)
+                    .ok()
+                    .and_then(|id| world.content().block(id).ok())
+                    .map(|d| d.appearance)
+                    .unwrap_or_default();
+                let c = appearance.base_color;
+                let material = base.render.materials.register(Material {
+                    base_color_factor: [c[0], c[1], c[2], 1.0],
+                    emissive: appearance.emissive,
+                    unlit: true,
+                    ..Default::default()
+                });
+                self.body_materials.insert(body.block.clone(), material);
+                material
+            };
+            let p = body.motion.position_metres;
+            let mut object = draw(self.body_mesh, material);
+            object.frame = Motor3::translation(Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32));
+            let extent = (world.layout().cell_width() * 0.5) as f32;
+            object.scale = Scale3::new(extent, extent, extent).expect("positive cell extent");
+            scene.renderables.push(object);
+        }
+        for (key, mesh) in particles {
+            let material = if let Some(handle) = self.body_materials.get(&key) {
+                *handle
+            } else {
+                let appearance = world
+                    .content()
+                    .block_id(&key)
+                    .ok()
+                    .and_then(|id| world.content().block(id).ok())
+                    .map(|d| d.appearance)
+                    .unwrap_or_default();
+                let c = appearance.base_color;
+                let handle = base.render.materials.register(Material {
+                    base_color_factor: [c[0], c[1], c[2], 1.0],
+                    unlit: true,
+                    ..Default::default()
+                });
+                self.body_materials.insert(key, handle);
+                handle
+            };
+            if let Ok(handle) = base.render.meshes.register(mesh) {
+                scene.renderables.push(draw(handle, material));
+                self.particle_meshes.push(handle);
+            }
+        }
     }
     pub fn append(&self, scene: &mut meridian_sdk::Scene3d, _state: &MagicState) {
         scene.renderables.extend(self.renderables.iter().cloned());

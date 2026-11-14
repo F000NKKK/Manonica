@@ -12,13 +12,20 @@ use manonica_physics::{
 #[serde(deny_unknown_fields)]
 pub struct FieldEnergy {
     pub field_joules: f64,
+    pub kinetic_joules: f64,
+    pub exported_mechanical_work_joules: f64,
     pub potential_joules: f64,
     pub heat_joules: f64,
     pub external_work_joules: f64,
 }
 impl FieldEnergy {
     pub fn residual_joules(&self) -> f64 {
-        self.field_joules + self.potential_joules + self.heat_joules - self.external_work_joules
+        self.field_joules
+            + self.kinetic_joules
+            + self.potential_joules
+            + self.heat_joules
+            + self.exported_mechanical_work_joules
+            - self.external_work_joules
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -27,6 +34,7 @@ pub struct ManonField {
     pub origin: [i64; 3],
     pub dimensions: [usize; 3],
     pub cell_width: f64,
+    pub carrier_mass_kg_per_manon: f64,
     pub densities: Vec<f64>,
     pub reference_density: Vec<f64>,
     pub potential: Vec<f64>,
@@ -65,6 +73,8 @@ impl ManonField {
                 .chain(self.sources.iter())
                 .chain(self.velocity.iter().flatten())
                 .any(|v| !v.is_finite())
+            || !self.carrier_mass_kg_per_manon.is_finite()
+            || self.carrier_mass_kg_per_manon <= 0.0
             || !self.cell_width.is_finite()
             || self.cell_width <= 0.0
             || !self.manons().is_finite()
@@ -73,9 +83,27 @@ impl ManonField {
         {
             return Err(WorldError::Invalid("manon_field"));
         }
+        let actual_kinetic = self
+            .densities
+            .iter()
+            .zip(&self.velocity)
+            .map(|(n, v)| {
+                0.5 * self.carrier_mass_kg_per_manon
+                    * n
+                    * self.cell_width.powi(3)
+                    * v.iter().map(|v| v * v).sum::<f64>()
+            })
+            .sum::<f64>();
+        if !actual_kinetic.is_finite()
+            || (actual_kinetic - self.energy.kinetic_joules).abs() > 1e-8 * actual_kinetic.max(1.0)
+        {
+            return Err(WorldError::Invalid("carrier_kinetic_energy"));
+        }
         let e = &self.energy;
         if [
             e.field_joules,
+            e.kinetic_joules,
+            e.exported_mechanical_work_joules,
             e.potential_joules,
             e.heat_joules,
             e.external_work_joules,
@@ -83,6 +111,7 @@ impl ManonField {
         .iter()
         .any(|v| !v.is_finite())
             || e.field_joules < 0.0
+            || e.kinetic_joules < 0.0
             || e.heat_joules < 0.0
             || e.external_work_joules < 0.0
             || e.residual_joules().abs()
@@ -254,6 +283,40 @@ pub(super) fn step(event: &mut SpellEvent, dt: f64, finishing: bool) -> WorldRes
             *v = [out.x.value(), out.y.value(), out.z.value()];
         }
     }
+    if !finishing {
+        for (i, bulk) in velocity.iter_mut().enumerate() {
+            let xyz = [i % nx, (i / nx) % ny, i / (nx * ny)];
+            let n = density.densities()[i].value();
+            for axis in 0..3 {
+                let mut low = xyz;
+                let mut high = xyz;
+                low[axis] = low[axis].saturating_sub(1);
+                high[axis] = (high[axis] + 1).min([nx, ny, nz][axis] - 1);
+                let a = shape.index(low[0], low[1], low[2]).unwrap();
+                let b = shape.index(high[0], high[1], high[2]).unwrap();
+                let distance = (high[axis] - low[axis]) as f64 * f.cell_width;
+                bulk[axis] -=
+                    s.mobility * (potential.values()[b] - potential.values()[a]) / distance;
+                bulk[axis] -= s.diffusivity
+                    * (density.densities()[b].value() - density.densities()[a].value())
+                    / distance
+                    / n.max(1e-9);
+            }
+        }
+    }
+    let kinetic = velocity
+        .iter()
+        .zip(density.densities())
+        .map(|(v, n)| {
+            0.5 * f.carrier_mass_kg_per_manon
+                * n.value()
+                * f.cell_width.powi(3)
+                * v.iter().map(|v| v * v).sum::<f64>()
+        })
+        .sum::<f64>();
+    let kinetic_change = kinetic - energy.kinetic_joules;
+    pay(&mut energy, kinetic_change, event.program.work, &mut limit)?;
+    energy.kinetic_joules = kinetic;
     let after_u = potential.manon_potential_energy(&density)?;
     pay(
         &mut energy,
@@ -287,6 +350,7 @@ pub(super) fn step(event: &mut SpellEvent, dt: f64, finishing: bool) -> WorldRes
         origin: f.origin,
         dimensions: f.dimensions,
         cell_width: f.cell_width,
+        carrier_mass_kg_per_manon: f.carrier_mass_kg_per_manon,
         reference_density: f.reference_density.clone(),
         densities: density.densities().iter().map(|v| v.value()).collect(),
         potential: potential.values().to_vec(),
@@ -301,4 +365,39 @@ pub(super) fn step(event: &mut SpellEvent, dt: f64, finishing: bool) -> WorldRes
     }
     event.field = next;
     Ok(())
+}
+
+pub(super) fn exchange(
+    event: &mut crate::magic::SpellEvent,
+    index: usize,
+    body: &mut manonica_physics::MechanicalBody,
+    rate: f64,
+    dt: f64,
+) -> WorldResult<f64> {
+    let f = &mut event.field;
+    let mass = f.densities[index] * f.cell_width.powi(3) * f.carrier_mass_kg_per_manon;
+    if mass <= 1e-12 {
+        return Ok(0.0);
+    }
+    let position = f.position(index);
+    let v = f.velocity[index];
+    let mut packet = manonica_physics::MechanicalBody::new(
+        Quantity::new(mass)?,
+        Vec3::try_values(position[0], position[1], position[2])?,
+        Vec3::try_values(v[0] * mass, v[1] * mass, v[2] * mass)?,
+    )?;
+    let old_packet = packet.kinetic_energy()?.value();
+    let before = body.kinetic_energy()?.value();
+    let report = manonica_physics::DissipativeExchange::new(Quantity::<
+        manonica_core::units::PerSecond<manonica_core::units::Dimensionless>,
+    >::nonnegative(rate)?)?
+    .exchange(&mut packet, body, TimeStep::from_seconds(dt)?)?;
+    let work = body.kinetic_energy()?.value() - before;
+    let p = packet.momentum();
+    f.velocity[index] = [p.x.value() / mass, p.y.value() / mass, p.z.value() / mass];
+    f.energy.kinetic_joules += packet.kinetic_energy()?.value() - old_packet;
+    f.energy.kinetic_joules = f.energy.kinetic_joules.max(0.0);
+    f.energy.heat_joules += report.heat.value();
+    f.energy.exported_mechanical_work_joules += work;
+    Ok(work)
 }

@@ -100,6 +100,7 @@ impl SpellEvent {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasedEnergy {
+    pub exported_mechanical_work_joules: f64,
     pub heat_joules: f64,
     pub external_work_joules: f64,
 }
@@ -121,8 +122,17 @@ impl MagicState {
     pub fn bound_manons(&self) -> f64 {
         self.active.iter().map(|e| e.field.manons()).sum()
     }
+    pub fn cumulative_mechanical_work_joules(&self) -> f64 {
+        self.released.exported_mechanical_work_joules
+            + self
+                .active
+                .iter()
+                .map(|e| e.field.energy.exported_mechanical_work_joules)
+                .sum::<f64>()
+    }
     pub fn energy_residual_joules(&self) -> f64 {
-        self.released.heat_joules - self.released.external_work_joules
+        self.released.heat_joules + self.released.exported_mechanical_work_joules
+            - self.released.external_work_joules
             + self
                 .active
                 .iter()
@@ -258,6 +268,7 @@ impl GameRuntime {
             origin: first,
             dimensions: dims,
             cell_width: dx,
+            carrier_mass_kg_per_manon: self.physics.carrier_mass_kg_per_manon,
             densities: vec![0.; len],
             reference_density: vec![0.; len],
             potential: vec![0.; len],
@@ -327,15 +338,106 @@ impl GameRuntime {
                     restore.push((cell, self.world.density(cell)? + n));
                 }
                 next.released.heat_joules += event.field.energy.heat_joules;
+                next.released.exported_mechanical_work_joules +=
+                    event.field.energy.exported_mechanical_work_joules;
                 next.released.external_work_joules += event.field.energy.external_work_joules;
             } else {
                 active.push(event);
             }
         }
         next.active = active;
+        let occupied = self
+            .entities
+            .values()
+            .map(|e| {
+                let half = self
+                    .world
+                    .content()
+                    .entity(e.kind)
+                    .expect("registered entity")
+                    .physics
+                    .collider
+                    .half_extents;
+                let mut center = e.transform.position_metres;
+                center[1] += half[1];
+                (center, half)
+            })
+            .collect::<Vec<_>>();
+        let (matter, edits) = crate::matter::step(
+            &self.world,
+            &mut next,
+            &self.matter,
+            self.physics,
+            dt,
+            &occupied,
+        )?;
         next.validate()?;
-        self.world.replace_cells(&restore)?;
+        if (next.cumulative_mechanical_work_joules()
+            - matter.energy.mechanical_work_received_joules)
+            .abs()
+            > 1e-7 * (next.cumulative_mechanical_work_joules().abs() + 1.0)
+        {
+            return Err(WorldError::Invalid("field_matter_work_transfer"));
+        }
+        if !restore.is_empty() || !edits.detached.is_empty() || !edits.settled.is_empty() {
+            let mut candidate = self.world.clone();
+            candidate.replace_cells(&restore)?;
+            let air = candidate
+                .content()
+                .block(candidate.content().air())?
+                .key
+                .clone();
+            for position in edits.detached {
+                candidate.set_block(
+                    position,
+                    &air,
+                    BTreeMap::new(),
+                    crate::metadata::NbtCompound::default(),
+                )?;
+            }
+            for block in edits.settled {
+                candidate.set_block(block.position, &block.block, block.properties, block.data)?;
+            }
+            self.world = candidate;
+        }
         self.magic = next;
+        self.matter = matter;
         Ok(())
+    }
+}
+
+impl crate::matter::MomentumMedium for MagicState {
+    fn samples(&self) -> Vec<crate::matter::MediumSample> {
+        self.active
+            .iter()
+            .enumerate()
+            .flat_map(|(domain, e)| {
+                e.field
+                    .velocity
+                    .iter()
+                    .enumerate()
+                    .map(move |(cell, velocity)| crate::matter::MediumSample {
+                        id: crate::matter::MediumCellId { domain, cell },
+                        position: e.field.position(cell),
+                        velocity: *velocity,
+                    })
+            })
+            .collect()
+    }
+    fn transfer(
+        &mut self,
+        id: crate::matter::MediumCellId,
+        body: &mut manonica_physics::MechanicalBody,
+        rate: f64,
+        dt: f64,
+    ) -> WorldResult<f64> {
+        let event = self
+            .active
+            .get_mut(id.domain)
+            .ok_or(WorldError::Invalid("medium_domain"))?;
+        if id.cell >= event.field.densities.len() {
+            return Err(WorldError::Invalid("medium_cell"));
+        }
+        field::exchange(event, id.cell, body, rate, dt)
     }
 }

@@ -154,3 +154,6 @@ pub use spectral::{
     GaussianBody, PeriodicSpectralDomain, SpectralFieldSample, SpectralFieldSnapshot,
     SpectralMechanics, SpectralMode,
 };
+
+mod contact;
+pub use contact::{ContactExchange, DissipativeExchange};

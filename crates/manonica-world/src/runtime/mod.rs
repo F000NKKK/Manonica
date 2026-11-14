@@ -47,6 +47,8 @@ pub struct GameRuntime {
     pub world: ChunkWorld,
     pub(crate) entities: BTreeMap<EntityId, EntityState>,
     pub(crate) magic: crate::magic::MagicState,
+    pub(crate) physics: crate::matter::WorldPhysics,
+    pub(crate) matter: crate::matter::MatterState,
     clock: GameClock,
     next_id: u64,
 }
@@ -56,9 +58,20 @@ impl GameRuntime {
             world: ChunkWorld::new(content, layout),
             entities: BTreeMap::new(),
             magic: crate::magic::MagicState::default(),
+            physics: crate::matter::WorldPhysics::default(),
+            matter: crate::matter::MatterState::default(),
             clock: GameClock::default(),
             next_id: 1,
         }
+    }
+    pub fn matter(&self) -> &crate::matter::MatterState {
+        &self.matter
+    }
+    pub fn coupled_energy_residual_joules(&self) -> WorldResult<f64> {
+        Ok(self.magic.energy_residual_joules()
+            + self.matter.energy_residual_joules()?
+            + self.matter.energy.mechanical_work_received_joules
+            - self.magic.cumulative_mechanical_work_joules())
     }
     pub fn clock(&self) -> GameClock {
         self.clock
@@ -158,6 +171,7 @@ impl GameRuntime {
     pub fn break_block(&mut self, id: EntityId, slot: usize, pos: CellPosition) -> WorldResult<()> {
         let content = self.world.content();
         let state = self.world.block(pos)?;
+        let broken_key = content.block(state.block())?.key.clone();
         let item = content
             .item_for_block(state.block())
             .ok_or(WorldError::Invalid("block_has_no_drop"))?;
@@ -173,6 +187,15 @@ impl GameRuntime {
         self.world
             .set_block(pos, &air, BTreeMap::new(), NbtCompound::default())?;
         self.entities.get_mut(&id).unwrap().inventory = inventory;
+        let dx = self.world.layout().cell_width();
+        self.matter.emit_break(
+            broken_key,
+            [
+                (pos.x as f64 + 0.5) * dx,
+                (pos.y as f64 + 0.5) * dx,
+                (pos.z as f64 + 0.5) * dx,
+            ],
+        );
         Ok(())
     }
     pub fn tick(&mut self, diffusivity: f64, dt: f64) -> WorldResult<()> {
@@ -225,7 +248,9 @@ impl GameRuntime {
             })
             .collect::<WorldResult<Vec<_>>>()?;
         let save = SavedGame {
-            version: 3,
+            version: 4,
+            physics: self.physics,
+            matter: self.matter.clone(),
             magic: self.magic.clone(),
             registry: self.world.content().fingerprint().into(),
             dimensions: self.world.layout().dimensions().map(|v| v as i32),
@@ -240,7 +265,7 @@ impl GameRuntime {
     }
     pub fn from_nbt(content: Arc<ContentRegistry>, bytes: &[u8]) -> WorldResult<Self> {
         let save: SavedGame = decode_nbt(bytes)?;
-        if save.version != 3
+        if save.version != 4
             || save.registry != content.fingerprint()
             || !save.clock.elapsed_seconds.is_finite()
             || save.clock.elapsed_seconds < 0.0
@@ -249,6 +274,10 @@ impl GameRuntime {
         }
         let dims = save.dimensions.map(|v| usize::try_from(v).unwrap_or(0));
         let mut game = Self::new(content, ChunkLayout::new(dims, save.cell_width)?);
+        save.physics.validate()?;
+        game.physics = save.physics;
+        save.matter.validate()?;
+        game.matter = save.matter;
         game.clock = save.clock;
         save.magic.validate()?;
         game.magic = save.magic;
@@ -288,6 +317,17 @@ impl GameRuntime {
                 .next_id
                 .max(id.checked_add(1).ok_or(WorldError::Invalid("entity_id"))?);
         }
+        game.matter.validate()?;
+        for body in &game.matter.bodies {
+            game.world
+                .content()
+                .state(&body.block, body.properties.clone())?;
+        }
+        if game.coupled_energy_residual_joules()?.abs()
+            > 1e-7 * (game.magic.cumulative_mechanical_work_joules().abs() + 1.0)
+        {
+            return Err(WorldError::Invalid("saved_field_matter_work"));
+        }
         Ok(game)
     }
 }
@@ -311,6 +351,8 @@ struct SavedEntity {
 #[serde(deny_unknown_fields)]
 struct SavedGame {
     version: i32,
+    physics: crate::matter::WorldPhysics,
+    matter: crate::matter::MatterState,
     registry: String,
     magic: crate::magic::MagicState,
     dimensions: [i32; 3],

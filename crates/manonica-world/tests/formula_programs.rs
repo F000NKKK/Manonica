@@ -244,3 +244,44 @@ fn object_commands_and_nonfinite_evaluations_are_rejected() {
         2
     );
 }
+#[test]
+fn every_construction_layer_obeys_its_declared_symmetry_group() {
+    use manonica_world::magic::{
+        ManonProgram,
+        construction::{CircleGrammar, group_action},
+    };
+    use std::collections::BTreeSet;
+    let grammar =
+        CircleGrammar::from_jsonl(include_str!("../../../assets/demo/circles.jsonl")).unwrap();
+    let program: ManonProgram = serde_json::from_value(recipe(2)["program"].clone()).unwrap();
+    let c = grammar.compile(&program).unwrap();
+    assert!(c.layers.len() > 1);
+    let quantize = |p: [f64; 3]| p.map(|v| (v * 100000.0).round() as i64);
+    for layer in &c.layers {
+        let points = c.paths[layer.paths[0]..layer.paths[1]]
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        let set = points.iter().map(|p| quantize(*p)).collect::<BTreeSet<_>>();
+        for p in &points {
+            for (rotation, reflection) in [(1, false), (0, true)] {
+                if reflection && !layer.symmetry.reflections {
+                    continue;
+                }
+                let transformed = group_action(
+                    *p,
+                    layer.symmetry.axis,
+                    rotation,
+                    layer.symmetry.order,
+                    reflection,
+                );
+                assert!(
+                    set.contains(&quantize(transformed)),
+                    "channel {} violates declared symmetry",
+                    layer.channel
+                );
+            }
+        }
+    }
+}

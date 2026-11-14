@@ -19,6 +19,8 @@ pub struct BlockPhysics {
     pub collision: BlockCollision,
     pub replaceable: bool,
     pub mana: ManaTransport,
+    #[serde(default)]
+    pub mechanics: Option<MaterialMechanics>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +38,8 @@ pub struct BlockStateSchema {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockDefinition {
+    #[serde(default)]
+    pub appearance: BlockAppearance,
     pub key: ResourceKey,
     pub display: DisplayInfo,
     pub physics: BlockPhysics,
@@ -91,4 +95,31 @@ pub struct EntityDefinition {
     pub inventory: InventoryLayout,
     #[serde(default)]
     pub metadata: NbtCompound,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterialMechanics {
+    pub mass_kg: f64,
+    pub drag_rate_per_second: f64,
+    pub tensile_strength_newtons: f64,
+    pub fracture_energy_joules: f64,
+    pub heat_capacity_joules_per_kelvin: f64,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockAppearance {
+    pub base_color: [f32; 3],
+    pub top_color: Option<[f32; 3]>,
+    pub emissive: [f32; 3],
+}
+impl Default for BlockAppearance {
+    fn default() -> Self {
+        Self {
+            base_color: [0.45, 0.49, 0.54],
+            top_color: None,
+            emissive: [0.; 3],
+        }
+    }
 }

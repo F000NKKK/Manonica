@@ -14,8 +14,30 @@ pub struct CurveFormula {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlyphRule {
+    pub symmetry: SymmetryGroup,
     pub symbol: String,
     pub curve: CurveFormula,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymmetryAxis {
+    X,
+    Y,
+    Z,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymmetryGroup {
+    pub order: usize,
+    pub reflections: bool,
+    pub axis: SymmetryAxis,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstructionLayer {
+    pub channel: usize,
+    pub symmetry: SymmetryGroup,
+    pub paths: [usize; 2],
+    pub links: [usize; 2],
 }
 #[derive(Clone, Debug)]
 pub struct CircleGrammar {
@@ -32,6 +54,7 @@ pub struct ConstructionNode {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MagicConstruction {
     pub nodes: Vec<ConstructionNode>,
+    pub layers: Vec<ConstructionLayer>,
     pub paths: Vec<Vec<[f64; 3]>>,
     pub links: Vec<[[f64; 3]; 2]>,
     pub fingerprint: u64,
@@ -55,7 +78,9 @@ impl CircleGrammar {
                 line: i + 1,
                 detail: e.to_string(),
             })?;
-            if rule.symbol.len() > 64
+            if rule.symmetry.order == 0
+                || rule.symmetry.order > 12
+                || rule.symbol.len() > 64
                 || rule.symbol.is_empty()
                 || rule.curve.samples < 8
                 || rule.curve.samples > 256
@@ -158,62 +183,144 @@ impl CircleGrammar {
         if nodes.len() > 1280 {
             return Err(WorldError::Invalid("construction_node_limit"));
         }
-        // Five physical channels occupy five planes. Dependency depth is radial;
-        // operand order is angular. Coefficients affect scale and chirality below.
+        let mut paths: Vec<Vec<[f64; 3]>> = vec![];
+        let mut links: Vec<[[f64; 3]; 2]> = vec![];
+        let mut layers = vec![];
         let mut begin = 0;
         for (channel, &root) in roots.iter().enumerate() {
             let end = root + 1;
-            let max_depth = nodes[begin..end].iter().map(|n| n.depth).max().unwrap_or(0);
-            for depth in 0..=max_depth {
-                let ids = (begin..end)
-                    .filter(|i| nodes[*i].depth == depth)
-                    .collect::<Vec<_>>();
-                let count = ids.len();
-                for (ordinal, id) in ids.into_iter().enumerate() {
-                    let angle = std::f64::consts::TAU * ordinal as f64 / count.max(1) as f64
-                        + channel as f64 * 0.37;
-                    let radius = 0.35 + (max_depth - depth) as f64 * 0.3;
-                    nodes[id].center = [
-                        angle.cos() * radius,
-                        channel as f64 * 0.18,
-                        angle.sin() * radius,
-                    ];
+            if end - begin == 1
+                && nodes[root].symbol == "constant"
+                && nodes[root].value == Some(0.0)
+            {
+                begin = end;
+                continue;
+            }
+            let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+            for (id, node) in nodes.iter().enumerate().take(end).skip(begin) {
+                groups.entry(node.symbol.clone()).or_default().push(id);
+            }
+            let axis = match channel {
+                1 => SymmetryAxis::X,
+                3 => SymmetryAxis::Z,
+                _ => SymmetryAxis::Y,
+            };
+            let root_group = self.rules["root"].symmetry;
+            let symmetry = SymmetryGroup { axis, ..root_group };
+            let start_paths = paths.len();
+            let start_links = links.len();
+            let mut centers = BTreeMap::new();
+            let mut base_paths = vec![];
+            for (ordinal, (symbol, ids)) in groups.iter().enumerate() {
+                let rule = self
+                    .rules
+                    .get(symbol)
+                    .or_else(|| self.rules.get(symbol.split(':').next().unwrap()))
+                    .ok_or(WorldError::Invalid("missing_glyph"))?;
+                let ring = ordinal / 3;
+                let sector = ordinal % 3;
+                let angle =
+                    (sector as f64 - 1.0) * std::f64::consts::PI / (symmetry.order as f64 * 3.0);
+                let average_depth =
+                    ids.iter().map(|i| nodes[*i].depth as f64).sum::<f64>() / ids.len() as f64;
+                let radius = 0.65 + ring as f64 * 0.34 + average_depth * 0.015;
+                let center = [radius * angle.cos(), 0.0, radius * angle.sin()];
+                centers.insert(symbol.clone(), center);
+                let magnitude = ids
+                    .iter()
+                    .filter_map(|i| nodes[*i].value)
+                    .map(|v| v.abs().ln_1p())
+                    .sum::<f64>();
+                let negative = ids
+                    .iter()
+                    .filter_map(|i| nodes[*i].value)
+                    .filter(|v| *v < 0.0)
+                    .count();
+                let amplitude =
+                    0.055 + 0.008 * magnitude.min(8.0) + 0.004 * (ids.len() as f64).ln_1p();
+                let phase = if negative % 2 == 1 { -1.0 } else { 1.0 };
+                let raw = sample_curve(&rule.curve, amplitude, phase)?;
+                for reflected in 0..=usize::from(rule.symmetry.reflections) {
+                    for rotation in 0..rule.symmetry.order {
+                        let path = raw
+                            .iter()
+                            .map(|p| {
+                                let q = group_action(
+                                    *p,
+                                    rule.symmetry.axis,
+                                    rotation,
+                                    rule.symmetry.order,
+                                    reflected == 1,
+                                );
+                                std::array::from_fn(|i| q[i] + center[i])
+                            })
+                            .collect::<Vec<_>>();
+                        base_paths.push(path);
+                    }
                 }
             }
-            begin = end;
-        }
-        let mut paths = vec![];
-        let mut links = vec![];
-        for node in &nodes {
-            let short = node.symbol.split(':').next().unwrap();
-            let rule = self
-                .rules
-                .get(&node.symbol)
-                .or_else(|| self.rules.get(short))
-                .ok_or(WorldError::Invalid("missing_glyph"))?;
-            let value = node.value.unwrap_or(1.0);
-            let amplitude = 0.09 + 0.025 * value.abs().ln_1p().min(6.0);
-            let phase = if value < 0.0 { -1.0 } else { 1.0 };
-            let raw = sample_curve(&rule.curve, amplitude, phase)?;
-            let path = raw
-                .into_iter()
-                .map(|p| std::array::from_fn(|a| p[a] + node.center[a]))
-                .collect();
-            paths.push(path);
-            for operand in &node.operands {
-                links.push([node.center, nodes[*operand].center]);
+            let mut base_links = vec![];
+            let mut seen = BTreeSet::new();
+            for id in begin..end {
+                nodes[id].center = orient(centers[&nodes[id].symbol], axis);
+                for operand in &nodes[id].operands {
+                    let pair = (nodes[id].symbol.clone(), nodes[*operand].symbol.clone());
+                    if pair.0 != pair.1 && seen.insert(pair.clone()) {
+                        base_links.push([centers[&pair.0], centers[&pair.1]]);
+                    }
+                }
             }
-        }
-        // Concentric support rings encode expression depth; they are notation,
-        // not the isopotential debug contours of the simulated scalar field.
-        let outer = nodes
-            .iter()
-            .map(|n| n.center[0].hypot(n.center[2]))
-            .fold(0., f64::max)
-            + 0.25;
-        let ring = &self.rules["root"].curve;
-        for radius in [outer, outer + 0.08] {
-            paths.push(sample_curve(ring, radius, 1.0)?);
+            let outer = centers
+                .values()
+                .map(|p| p[0].hypot(p[2]))
+                .fold(0.0, f64::max)
+                + 0.22;
+            for radius in [outer, outer + 0.08] {
+                base_paths.push(sample_curve(&self.rules["root"].curve, radius, 1.0)?);
+            }
+            for reflected in 0..=usize::from(symmetry.reflections) {
+                for rotation in 0..symmetry.order {
+                    for path in &base_paths {
+                        paths.push(
+                            path.iter()
+                                .map(|p| {
+                                    orient(
+                                        group_action(
+                                            *p,
+                                            SymmetryAxis::Y,
+                                            rotation,
+                                            symmetry.order,
+                                            reflected == 1,
+                                        ),
+                                        axis,
+                                    )
+                                })
+                                .collect(),
+                        );
+                    }
+                    for link in &base_links {
+                        links.push(link.map(|p| {
+                            orient(
+                                group_action(
+                                    p,
+                                    SymmetryAxis::Y,
+                                    rotation,
+                                    symmetry.order,
+                                    reflected == 1,
+                                ),
+                                axis,
+                            )
+                        }));
+                    }
+                }
+            }
+            layers.push(ConstructionLayer {
+                channel,
+                symmetry,
+                paths: [start_paths, paths.len()],
+                links: [start_links, links.len()],
+            });
+            begin = end;
         }
         let mut hash = 0xcbf29ce484222325_u64;
         for path in &paths {
@@ -235,6 +342,7 @@ impl CircleGrammar {
             }
         }
         Ok(MagicConstruction {
+            layers,
             nodes,
             paths,
             links,
@@ -270,4 +378,28 @@ fn sample_curve(curve: &CurveFormula, a: f64, phase: f64) -> WorldResult<Vec<[f6
         points.push(p);
     }
     Ok(points)
+}
+
+fn orient(p: [f64; 3], axis: SymmetryAxis) -> [f64; 3] {
+    match axis {
+        SymmetryAxis::X => [p[1], p[0], p[2]],
+        SymmetryAxis::Y => p,
+        SymmetryAxis::Z => [p[0], p[2], p[1]],
+    }
+}
+/// Conjugate the standard action about Y onto a principal axis.
+pub fn group_action(
+    p: [f64; 3],
+    axis: SymmetryAxis,
+    rotation: usize,
+    order: usize,
+    reflected: bool,
+) -> [f64; 3] {
+    let mut p = orient(p, axis);
+    if reflected {
+        p[2] = -p[2];
+    }
+    let angle = std::f64::consts::TAU * rotation as f64 / order as f64;
+    let (s, c) = angle.sin_cos();
+    orient([p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c], axis)
 }

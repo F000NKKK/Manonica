@@ -95,22 +95,21 @@ impl TerrainView {
             let material = if let Some(handle) = self.materials.get(&(block, face)) {
                 *handle
             } else {
-                let name = world
+                let appearance = world
                     .content()
                     .block(block)
                     .map_err(|e| e.to_string())?
-                    .key
-                    .to_string();
-                let color = match name.as_str() {
-                    "manonica:grass" if face == 2 => [0.28, 0.57, 0.19],
-                    "manonica:grass" | "manonica:dirt" => [0.38, 0.25, 0.14],
-                    "manonica:mana_crystal" => [0.05, 0.8, 0.95],
-                    _ => [0.45, 0.49, 0.54],
+                    .appearance;
+                let color = if face == 2 {
+                    appearance.top_color.unwrap_or(appearance.base_color)
+                } else {
+                    appearance.base_color
                 };
                 let shade = [0.75, 0.6, 1.0, 0.4, 0.82, 0.68][face];
                 let c = color.map(|v| v * shade);
                 let handle = base.render.materials.register(Material {
                     base_color_factor: [c[0], c[1], c[2], 1.0],
+                    emissive: appearance.emissive,
                     unlit: true,
                     ..Default::default()
                 });

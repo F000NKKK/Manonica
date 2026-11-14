@@ -105,6 +105,20 @@ impl ContentRegistry {
                 return Err(WorldError::Invalid("block_definition"));
             }
             block.metadata.validate()?;
+            if block
+                .appearance
+                .base_color
+                .iter()
+                .chain(block.appearance.top_color.iter().flatten())
+                .chain(block.appearance.emissive.iter())
+                .any(|v| !v.is_finite() || *v < 0.0 || *v > 1.0)
+            {
+                return Err(WorldError::Invalid("block_appearance"));
+            }
+            if let Some(m) = block.physics.mechanics {
+                validate_mechanics(m)?;
+            }
+
             if block.state.allowed.len() != block.state.defaults.len() {
                 return Err(WorldError::Invalid("block_state_defaults"));
             }
@@ -257,4 +271,21 @@ impl ContentRegistry {
         }
         Ok(BlockState { block, properties })
     }
+}
+
+fn validate_mechanics(m: MaterialMechanics) -> WorldResult<()> {
+    if [m.mass_kg, m.heat_capacity_joules_per_kelvin]
+        .iter()
+        .any(|v| !v.is_finite() || *v <= 0.0)
+        || [
+            m.drag_rate_per_second,
+            m.tensile_strength_newtons,
+            m.fracture_energy_joules,
+        ]
+        .iter()
+        .any(|v| !v.is_finite() || *v < 0.0)
+    {
+        return Err(WorldError::Invalid("material_mechanics"));
+    }
+    Ok(())
 }

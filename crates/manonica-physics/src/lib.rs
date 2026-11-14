@@ -21,6 +21,7 @@ pub use manon::{Manon, ManonId, ManonState};
 pub use system::ManonSystem;
 
 pub use mechanics::{
-    ExternalLoadLedger, GaussianBody, MechanicalBody, PeriodicSpectralDomain, SpectralFieldSample,
-    SpectralFieldSnapshot, SpectralMechanics, SpectralMode,
+    ContactExchange, DissipativeExchange, ExternalLoadLedger, GaussianBody, MechanicalBody,
+    PeriodicSpectralDomain, SpectralFieldSample, SpectralFieldSnapshot, SpectralMechanics,
+    SpectralMode,
 };

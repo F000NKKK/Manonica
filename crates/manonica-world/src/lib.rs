@@ -10,3 +10,5 @@ pub use error::{WorldError, WorldResult};
 
 pub mod gameplay;
 pub mod magic;
+
+pub mod matter;
