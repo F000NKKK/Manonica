@@ -12,3 +12,4 @@ pub mod gameplay;
 pub mod magic;
 
 pub mod matter;
+pub mod thermal;

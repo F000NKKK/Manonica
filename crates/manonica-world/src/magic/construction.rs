@@ -236,8 +236,9 @@ impl CircleGrammar {
                     .filter_map(|i| nodes[*i].value)
                     .filter(|v| *v < 0.0)
                     .count();
-                let amplitude =
-                    0.055 + 0.008 * magnitude.min(8.0) + 0.004 * (ids.len() as f64).ln_1p();
+                let amplitude = 0.055
+                    + 0.07 * magnitude / (1.0 + magnitude)
+                    + 0.004 * (ids.len() as f64).ln_1p();
                 let phase = if negative % 2 == 1 { -1.0 } else { 1.0 };
                 let raw = sample_curve(&rule.curve, amplitude, phase)?;
                 for reflected in 0..=usize::from(rule.symmetry.reflections) {

@@ -26,6 +26,16 @@ pub struct MediumSample {
 /// Ordinary world mechanics depends on a physical momentum reservoir, not a spell API.
 pub trait MomentumMedium {
     fn samples(&self) -> Vec<MediumSample>;
+    fn transfer_heat(
+        &mut self,
+        _id: MediumCellId,
+        _heat: &mut f64,
+        _capacity: f64,
+        _conductance: f64,
+        _dt: f64,
+    ) -> WorldResult<f64> {
+        Ok(0.0)
+    }
     fn transfer(
         &mut self,
         id: MediumCellId,
@@ -49,6 +59,7 @@ pub(crate) struct MaterialChanges {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldPhysics {
+    pub thermal: crate::thermal::MediumThermodynamics,
     pub minimum_dynamic_height: usize,
     pub carrier_mass_kg_per_manon: f64,
     pub gravity_metres_per_second_squared: f64,
@@ -57,6 +68,7 @@ impl Default for WorldPhysics {
     fn default() -> Self {
         Self {
             minimum_dynamic_height: 1,
+            thermal: crate::thermal::MediumThermodynamics::default(),
             carrier_mass_kg_per_manon: 0.25,
             gravity_metres_per_second_squared: 20.0,
         }
@@ -64,6 +76,7 @@ impl Default for WorldPhysics {
 }
 impl WorldPhysics {
     pub(crate) fn validate(self) -> WorldResult<()> {
+        self.thermal.validate()?;
         if !self.carrier_mass_kg_per_manon.is_finite()
             || self.carrier_mass_kg_per_manon <= 0.0
             || !self.gravity_metres_per_second_squared.is_finite()
@@ -126,6 +139,10 @@ pub struct MaterialAnchor {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MatterEnergy {
+    pub heat_received_joules: f64,
+    pub heat_exported_to_fields_joules: f64,
+    pub radiated_joules: f64,
+    pub dispersed_joules: f64,
     pub mechanical_work_received_joules: f64,
     pub gravity_work_joules: f64,
     pub surface_joules: f64,
@@ -134,6 +151,11 @@ pub struct MatterEnergy {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MaterialParticles {
+    pub emissivity: f64,
+    pub heat_joules: f64,
+    pub capacity_joules_per_kelvin: f64,
+    pub velocity: [f64; 3],
+    pub lifetime_seconds: f64,
     pub block: ResourceKey,
     pub position: [f64; 3],
     pub age_seconds: f64,
@@ -141,6 +163,9 @@ pub struct MaterialParticles {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MatterState {
+    pub medium_heat: Vec<crate::thermal::ThermalCell>,
+    pub dispersed_blocks: u64,
+    pub dispersed_mass_kg: f64,
     pub particles: Vec<MaterialParticles>,
     pub bodies: Vec<MaterialBody>,
     pub anchors: Vec<MaterialAnchor>,
@@ -155,12 +180,42 @@ impl MatterState {
         self.particles.push(MaterialParticles {
             block,
             position,
+            heat_joules: 0.,
+            capacity_joules_per_kelvin: 1.,
+            velocity: [0.; 3],
+            lifetime_seconds: 1.25,
+            emissivity: 0.8,
             age_seconds: 0.0,
         });
     }
 
+    fn emit_thermal_break(
+        &mut self,
+        block: ResourceKey,
+        position: [f64; 3],
+        heat: f64,
+        capacity: f64,
+        velocity: [f64; 3],
+        emissivity: f64,
+    ) {
+        if self.particles.len() >= 128 {
+            self.particles.remove(0);
+        }
+        self.particles.push(MaterialParticles {
+            block,
+            position,
+            heat_joules: heat,
+            capacity_joules_per_kelvin: capacity,
+            velocity,
+            lifetime_seconds: 4.0,
+            emissivity,
+            age_seconds: 0.0,
+        });
+    }
     pub fn stored_energy_joules(&self) -> WorldResult<f64> {
-        let mut stored = self.energy.surface_joules
+        let mut stored = self.energy.dispersed_joules
+            + self.medium_heat.iter().map(|c| c.heat_joules).sum::<f64>()
+            + self.energy.surface_joules
             + self.energy.contact_heat_joules
             + self.anchors.iter().map(|a| a.heat_joules).sum::<f64>();
         for b in &self.bodies {
@@ -169,14 +224,31 @@ impl MatterState {
         Ok(stored)
     }
     pub fn energy_residual_joules(&self) -> WorldResult<f64> {
-        Ok(self.stored_energy_joules()?
+        Ok(self.stored_energy_joules()? + self.energy.radiated_joules
+            - self.energy.heat_received_joules
+            + self.energy.heat_exported_to_fields_joules
             - self.energy.mechanical_work_received_joules
             - self.energy.gravity_work_joules)
     }
     pub(crate) fn validate(&self) -> WorldResult<()> {
-        if self.particles.len() > 128
+        if self.medium_heat.len() > 32768
+            || self
+                .medium_heat
+                .iter()
+                .any(|c| !c.heat_joules.is_finite() || c.heat_joules < 0.0 || c.position[1] < 0)
+            || self.particles.len() > 128
             || self.particles.iter().any(|p| {
-                !p.age_seconds.is_finite()
+                !p.emissivity.is_finite()
+                    || !(0.0..=1.0).contains(&p.emissivity)
+                    || !p.heat_joules.is_finite()
+                    || p.heat_joules < 0.0
+                    || !p.capacity_joules_per_kelvin.is_finite()
+                    || p.capacity_joules_per_kelvin <= 0.0
+                    || !p.lifetime_seconds.is_finite()
+                    || p.lifetime_seconds <= 0.0
+                    || p.age_seconds >= p.lifetime_seconds
+                    || p.velocity.iter().any(|v| !v.is_finite())
+                    || !p.age_seconds.is_finite()
                     || p.age_seconds < 0.0
                     || p.position.iter().any(|v| !v.is_finite())
             })
@@ -208,6 +280,22 @@ impl MatterState {
             if !a.heat_joules.is_finite() || a.heat_joules < 0.0 || a.position[1] < 0 {
                 return Err(WorldError::Invalid("anchor_heat"));
             }
+        }
+        if [
+            self.energy.dispersed_joules,
+            self.energy.radiated_joules,
+            self.energy.heat_exported_to_fields_joules,
+            self.dispersed_mass_kg,
+        ]
+        .iter()
+        .any(|v| !v.is_finite() || *v < 0.0)
+        {
+            return Err(WorldError::Invalid("thermal_matter_ledger"));
+        }
+        if self.particles.iter().map(|p| p.heat_joules).sum::<f64>()
+            > self.energy.dispersed_joules + 1e-7 * self.energy.dispersed_joules.max(1.0)
+        {
+            return Err(WorldError::Invalid("dispersed_heat_partition"));
         }
         let residual = self.energy_residual_joules()?;
         if !residual.is_finite()
@@ -276,12 +364,47 @@ pub(crate) fn step(
     physics: WorldPhysics,
     dt: f64,
     occupied: &[([f64; 3], [f64; 3])],
+    heat_deposits: &[(CellPosition, f64)],
 ) -> WorldResult<(MatterState, MaterialChanges)> {
     let mut next = previous.clone();
-    for event in &mut next.particles {
+    let mut gas_heat = next
+        .medium_heat
+        .iter()
+        .map(|c| (c.position, c.heat_joules))
+        .collect::<BTreeMap<_, _>>();
+    let mut particles = vec![];
+    for mut event in next.particles.drain(..) {
         event.age_seconds += dt;
+        if event.heat_joules > 0.0 {
+            let mut reservoir = manonica_materials::ThermalReservoir {
+                heat_joules: event.heat_joules,
+                capacity_joules_per_kelvin: event.capacity_joules_per_kelvin,
+            };
+            let radiated = manonica_materials::radiate_to_bath(
+                &mut reservoir,
+                physics.thermal.reference_temperature_kelvin,
+                event.emissivity,
+                6. * world.layout().cell_width().powi(2) * 18_f64.cbrt(),
+                dt,
+            )?;
+            event.heat_joules = reservoir.heat_joules;
+            next.energy.dispersed_joules = (next.energy.dispersed_joules - radiated).max(0.0);
+            next.energy.radiated_joules += radiated;
+        }
+        if event.age_seconds < event.lifetime_seconds {
+            particles.push(event);
+        } else if event.heat_joules > 0.0 {
+            let p = cell(event.position, world.layout().cell_width())?;
+            *gas_heat.entry([p.x, p.y as i64, p.z]).or_default() += event.heat_joules;
+            next.energy.dispersed_joules =
+                (next.energy.dispersed_joules - event.heat_joules).max(0.0);
+        }
     }
-    next.particles.retain(|p| p.age_seconds < 1.25);
+    next.particles = particles;
+    for (cell, q) in heat_deposits {
+        *gas_heat.entry([cell.x, cell.y as i64, cell.z]).or_default() += q;
+        next.energy.heat_received_joules += q;
+    }
     let mut edits = vec![];
     let mut anchors = next
         .anchors
@@ -292,9 +415,6 @@ pub(crate) fn step(
     for sample in &samples {
         if next.bodies.len() >= 1024 {
             break;
-        }
-        if sample.velocity.iter().map(|v| v * v).sum::<f64>() < 1e-8 {
-            continue;
         }
         let base = cell(sample.position, world.layout().cell_width())?;
         for offset in [
@@ -334,6 +454,15 @@ pub(crate) fn step(
                 (p.y as f64 + 0.5) * dx,
                 (p.z as f64 + 0.5) * dx,
             ];
+            let anchor = anchors.entry([p.x, p.y as i64, p.z]).or_default();
+            let heat = medium.transfer_heat(
+                sample.id,
+                anchor,
+                material.heat_capacity_joules_per_kelvin,
+                material.thermal_contact_watts_per_kelvin * weight,
+                dt,
+            )?;
+            next.energy.heat_received_joules += heat;
             let mut body = mechanical(material.mass_kg, position, [0.; 3])?;
             let work = medium.transfer(
                 sample.id,
@@ -350,6 +479,34 @@ pub(crate) fn step(
                 .hypot(momentum.z.value())
                 / dt;
             let anchor = anchors.entry([p.x, p.y as i64, p.z]).or_default();
+            if p.y >= physics.minimum_dynamic_height
+                && material
+                    .crushing_energy_joules
+                    .is_some_and(|threshold| *anchor + work >= threshold)
+            {
+                next.energy.surface_joules += material.fracture_energy_joules;
+                let fragment_energy = *anchor + work - material.fracture_energy_joules;
+                next.energy.dispersed_joules += fragment_energy;
+                *anchor = 0.;
+                next.dispersed_blocks += 1;
+                next.dispersed_mass_kg += material.mass_kg;
+                let fragment_momentum = body.momentum();
+                next.emit_thermal_break(
+                    block,
+                    position,
+                    fragment_energy,
+                    material.heat_capacity_joules_per_kelvin,
+                    [
+                        fragment_momentum.x.value() / material.mass_kg,
+                        fragment_momentum.y.value() / material.mass_kg,
+                        fragment_momentum.z.value() / material.mass_kg,
+                    ],
+                    material.surface_emissivity,
+                );
+                edits.push(p);
+                next.revision += 1;
+                continue;
+            }
             if p.y >= physics.minimum_dynamic_height
                 && stress >= material.tensile_strength_newtons
                 && *anchor >= material.fracture_energy_joules
@@ -381,6 +538,97 @@ pub(crate) fn step(
             }
         }
     }
+    for (position, q) in &mut gas_heat {
+        let p = CellPosition {
+            x: position[0],
+            y: position[1] as usize,
+            z: position[2],
+        };
+        if let Ok(definition) = world
+            .block(p)
+            .and_then(|state| world.content().block(state.block()))
+            && let Some(material) = definition.physics.mechanics
+        {
+            let solid = anchors.entry(*position).or_default();
+            let mut gas = manonica_materials::ThermalReservoir {
+                heat_joules: *q,
+                capacity_joules_per_kelvin: physics
+                    .thermal
+                    .heat_capacity_joules_per_cubic_metre_kelvin
+                    * world.layout().cell_width().powi(3),
+            };
+            let mut solid_reservoir = manonica_materials::ThermalReservoir {
+                heat_joules: *solid,
+                capacity_joules_per_kelvin: material.heat_capacity_joules_per_kelvin,
+            };
+            manonica_materials::exchange_heat_exact(
+                &mut gas,
+                &mut solid_reservoir,
+                material.thermal_contact_watts_per_kelvin,
+                dt,
+            )?;
+            *q = gas.heat_joules;
+            *solid = solid_reservoir.heat_joules;
+        }
+        let mut reservoir = manonica_materials::ThermalReservoir {
+            heat_joules: *q,
+            capacity_joules_per_kelvin: physics.thermal.heat_capacity_joules_per_cubic_metre_kelvin
+                * world.layout().cell_width().powi(3),
+        };
+        next.energy.radiated_joules += manonica_materials::radiate_to_bath(
+            &mut reservoir,
+            physics.thermal.reference_temperature_kelvin,
+            physics.thermal.emissivity,
+            6. * world.layout().cell_width().powi(2),
+            dt,
+        )?;
+        *q = reservoir.heat_joules;
+    }
+    next.medium_heat = gas_heat
+        .into_iter()
+        .filter(|(_, q)| *q > 0.0)
+        .map(|(position, heat_joules)| crate::thermal::ThermalCell {
+            position,
+            heat_joules,
+        })
+        .collect();
+    for (position, q) in &mut anchors {
+        let p = CellPosition {
+            x: position[0],
+            y: position[1] as usize,
+            z: position[2],
+        };
+        let definition = world
+            .block(p)
+            .ok()
+            .and_then(|s| world.content().block(s.block()).ok())
+            .and_then(|d| d.physics.mechanics);
+        let emissivity = definition
+            .map(|m| m.surface_emissivity)
+            .unwrap_or(physics.thermal.emissivity);
+        let capacity = world
+            .block(p)
+            .ok()
+            .and_then(|s| world.content().block(s.block()).ok())
+            .and_then(|d| d.physics.mechanics)
+            .map(|m| m.heat_capacity_joules_per_kelvin)
+            .unwrap_or(
+                physics.thermal.heat_capacity_joules_per_cubic_metre_kelvin
+                    * world.layout().cell_width().powi(3),
+            );
+        let mut reservoir = manonica_materials::ThermalReservoir {
+            heat_joules: *q,
+            capacity_joules_per_kelvin: capacity,
+        };
+        next.energy.radiated_joules += manonica_materials::radiate_to_bath(
+            &mut reservoir,
+            physics.thermal.reference_temperature_kelvin,
+            emissivity,
+            6. * world.layout().cell_width().powi(2),
+            dt,
+        )?;
+        *q = reservoir.heat_joules;
+    }
     next.anchors = anchors
         .into_iter()
         .filter(|(_, heat)| *heat > 0.)
@@ -403,6 +651,21 @@ pub(crate) fn step(
                     continue;
                 }
                 let weight = if distance == 0 { 1.0 } else { 0.5 };
+                let capacity = world
+                    .content()
+                    .block(world.content().block_id(&material.block)?)?
+                    .physics
+                    .mechanics
+                    .map(|m| m.heat_capacity_joules_per_kelvin)
+                    .unwrap_or(100.);
+                let q = medium.transfer_heat(
+                    sample.id,
+                    &mut material.heat_joules,
+                    capacity,
+                    physics.thermal.contact_watts_per_kelvin * weight,
+                    dt,
+                )?;
+                next.energy.heat_received_joules += q;
                 let work = medium.transfer(
                     sample.id,
                     &mut body,
@@ -416,6 +679,32 @@ pub(crate) fn step(
                 }
             }
         }
+        let emissivity = world
+            .content()
+            .block(world.content().block_id(&material.block)?)?
+            .physics
+            .mechanics
+            .map(|m| m.surface_emissivity)
+            .unwrap_or(physics.thermal.emissivity);
+        let capacity = world
+            .content()
+            .block(world.content().block_id(&material.block)?)?
+            .physics
+            .mechanics
+            .map(|m| m.heat_capacity_joules_per_kelvin)
+            .unwrap_or(100.);
+        let mut reservoir = manonica_materials::ThermalReservoir {
+            heat_joules: material.heat_joules,
+            capacity_joules_per_kelvin: capacity,
+        };
+        next.energy.radiated_joules += manonica_materials::radiate_to_bath(
+            &mut reservoir,
+            physics.thermal.reference_temperature_kelvin,
+            emissivity,
+            6. * world.layout().cell_width().powi(2),
+            dt,
+        )?;
+        material.heat_joules = reservoir.heat_joules;
         material.age_seconds += dt;
         if material.resting {
             material.still_seconds += dt;
@@ -487,7 +776,33 @@ pub(crate) fn step(
     let mut settled = vec![];
     let mut retained = vec![];
     let mut places = std::collections::BTreeSet::new();
-    for body in next.bodies.drain(..) {
+    let bodies = std::mem::take(&mut next.bodies);
+    for body in bodies {
+        let definition = world
+            .content()
+            .block(world.content().block_id(&body.block)?)?;
+        let material = definition.physics.mechanics;
+        if material.is_some_and(|m| {
+            m.crushing_energy_joules
+                .is_some_and(|threshold| body.heat_joules >= threshold)
+        }) {
+            let energy = body.heat_joules + body.motion.body()?.kinetic_energy()?.value();
+            next.energy.dispersed_joules += energy;
+            next.dispersed_blocks += 1;
+            next.dispersed_mass_kg += body.motion.mass_kg;
+            let velocity = body.motion.momentum.map(|v| v / body.motion.mass_kg);
+            next.emit_thermal_break(
+                body.block,
+                body.motion.position_metres,
+                energy,
+                material.unwrap().heat_capacity_joules_per_kelvin,
+                velocity,
+                material.unwrap().surface_emissivity,
+            );
+            next.revision += 1;
+            continue;
+        }
+
         let p = cell(body.motion.position_metres, world.layout().cell_width())?;
         let xyz = [p.x, p.y as i64, p.z];
         let lo = xyz.map(|v| v as f64 * world.layout().cell_width());
@@ -657,6 +972,7 @@ mod tests {
                 WorldPhysics::default(),
                 0.025,
                 &[],
+                &[],
             )
             .unwrap();
             state = next;
@@ -670,8 +986,16 @@ mod tests {
         assert_eq!(state.bodies[0].data, metadata);
         assert_eq!(state.bodies[0].properties, properties);
         for _ in 0..240 {
-            let (next, changes) =
-                step(&w, &mut Empty, &state, WorldPhysics::default(), 0.025, &[]).unwrap();
+            let (next, changes) = step(
+                &w,
+                &mut Empty,
+                &state,
+                WorldPhysics::default(),
+                0.025,
+                &[],
+                &[],
+            )
+            .unwrap();
             state = next;
             apply(&mut w, changes);
             if state.bodies.is_empty() {
@@ -709,13 +1033,29 @@ mod tests {
             still_seconds: 0.,
         });
         for _ in 0..19 {
-            let (next, changes) =
-                step(&w, &mut Empty, &state, WorldPhysics::default(), 0.05, &[]).unwrap();
+            let (next, changes) = step(
+                &w,
+                &mut Empty,
+                &state,
+                WorldPhysics::default(),
+                0.05,
+                &[],
+                &[],
+            )
+            .unwrap();
             assert!(changes.settled.is_empty());
             state = next;
         }
-        let (next, changes) =
-            step(&w, &mut Empty, &state, WorldPhysics::default(), 0.05, &[]).unwrap();
+        let (next, changes) = step(
+            &w,
+            &mut Empty,
+            &state,
+            WorldPhysics::default(),
+            0.05,
+            &[],
+            &[],
+        )
+        .unwrap();
         assert_eq!(changes.settled.len(), 1);
         assert!(next.bodies.is_empty());
         let occupied = [([2.5, 1.5, 2.5], [0.3, 0.5, 0.3])];
@@ -726,6 +1066,7 @@ mod tests {
             WorldPhysics::default(),
             0.05,
             &occupied,
+            &[],
         )
         .unwrap();
         assert_eq!(next.bodies.len(), 1);
@@ -751,6 +1092,7 @@ mod tests {
             &state,
             WorldPhysics::default(),
             0.025,
+            &[],
             &[],
         )
         .unwrap();

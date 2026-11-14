@@ -145,7 +145,7 @@ impl ManonProgram {
         let result = FUNCTIONS
             .with(|functions| expr.eval_with_context((vars, (&self.parameters, functions))))
             .map_err(|e| WorldError::Codec(format!("formula evaluation: {e}")))?;
-        if !result.is_finite() || result.abs() > 1e6 {
+        if !result.is_finite() || result.abs() > 1e12 {
             return Err(WorldError::Invalid("formula_nonfinite_or_range"));
         }
         Ok(result)

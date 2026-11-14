@@ -100,6 +100,9 @@ pub struct EntityDefinition {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MaterialMechanics {
+    pub surface_emissivity: f64,
+    pub thermal_contact_watts_per_kelvin: f64,
+    pub crushing_energy_joules: Option<f64>,
     pub mass_kg: f64,
     pub drag_rate_per_second: f64,
     pub tensile_strength_newtons: f64,

@@ -153,8 +153,59 @@ fn contours(mesh: &mut MeshSource, f: &ManonField) {
         }
     }
 }
+fn thermal_emission(kelvin: f64) -> [f32; 3] {
+    let normal = 1.0 / (650e-9_f64.powi(5) * (0.014387768775_f64 / (650e-9_f64 * 3000.)).exp_m1());
+    [650e-9_f64, 550e-9, 450e-9].map(|wavelength| {
+        ((1.0 / (wavelength.powi(5) * (0.014387768775 / (wavelength * kelvin.max(1.))).exp_m1()))
+            / normal
+            * 8.0)
+            .clamp(0.0, 1000.) as f32
+    })
+}
+fn thermal_bucket(kelvin: f64) -> usize {
+    let temperatures = [800., 1100., 1500., 1900., 2400., 3000., 4000., 6000.];
+    temperatures.iter().position(|t| kelvin <= *t).unwrap_or(7)
+}
+struct FieldTracers {
+    time: f64,
+    positions: Vec<[f64; 3]>,
+}
+fn field_index(field: &ManonField, position: [f64; 3]) -> usize {
+    let c = std::array::from_fn::<_, 3, _>(|a| {
+        ((position[a] / field.cell_width - field.origin[a] as f64).floor() as isize)
+            .clamp(0, field.dimensions[a] as isize - 1) as usize
+    });
+    index(field, c)
+}
+fn make_tracers(field: &ManonField) -> FieldTracers {
+    let sum = field.densities.iter().sum::<f64>();
+    let mut cursor = 0;
+    let mut accumulated = field.densities[0];
+    let mut positions = vec![];
+    for k in 0..512 {
+        let target = sum * (k as f64 + 0.5) / 512.;
+        while cursor + 1 < field.densities.len() && accumulated < target {
+            cursor += 1;
+            accumulated += field.densities[cursor];
+        }
+        let center = field.position(cursor);
+        let phase = k as f64 * 2.399963;
+        positions.push([
+            center[0] + phase.sin() * 0.3 * field.cell_width,
+            center[1] + (phase * 1.7).cos() * 0.3 * field.cell_width,
+            center[2] + (phase * 0.7).sin() * 0.3 * field.cell_width,
+        ]);
+    }
+    FieldTracers {
+        time: field.simulated_seconds,
+        positions,
+    }
+}
 pub struct SpellView {
     materials: [MaterialHandle; 3],
+    emission_materials: [MaterialHandle; 8],
+    thermal_lights: Vec<meridian_sdk::Light>,
+    tracers: BTreeMap<u64, FieldTracers>,
     meshes: Vec<MeshHandle>,
     renderables: Vec<Renderable3d>,
     signature: Vec<(u64, u64)>,
@@ -164,6 +215,7 @@ pub struct SpellView {
     body_mesh: MeshHandle,
     body_materials: BTreeMap<manonica_world::registry::ResourceKey, MaterialHandle>,
     particle_meshes: Vec<MeshHandle>,
+    dust_materials: BTreeMap<(manonica_world::registry::ResourceKey, u8, u8), MaterialHandle>,
 }
 impl SpellView {
     pub fn new(
@@ -179,6 +231,14 @@ impl SpellView {
                 ..Default::default()
             })
         });
+        let emission_materials = [800., 1100., 1500., 1900., 2400., 3000., 4000., 6000.].map(|t| {
+            base.render.materials.register(Material {
+                base_color_factor: [0.15, 0.15, 0.15, 1.],
+                emissive: thermal_emission(t),
+                unlit: true,
+                ..Default::default()
+            })
+        });
         let body_mesh = base
             .render
             .meshes
@@ -186,6 +246,9 @@ impl SpellView {
             .map_err(|e| e.to_string())?;
         Ok(Self {
             materials,
+            emission_materials,
+            thermal_lights: vec![],
+            tracers: BTreeMap::new(),
             meshes: vec![],
             renderables: vec![],
             signature: vec![(u64::MAX, u64::MAX)],
@@ -198,6 +261,7 @@ impl SpellView {
             body_mesh,
             body_materials: BTreeMap::new(),
             particle_meshes: vec![],
+            dust_materials: BTreeMap::new(),
         })
     }
     pub fn invalidate(&mut self) {
@@ -214,24 +278,58 @@ impl SpellView {
         base: &mut GraphicsSession,
         state: &MagicState,
         world: &manonica_world::chunk::ChunkWorld,
+        matter: &manonica_world::matter::MatterState,
+        thermodynamics: manonica_world::thermal::MediumThermodynamics,
     ) -> Result<(), String> {
-        let signature = state
+        let mut signature = state
             .active()
             .iter()
             .map(|e| (e.id, e.field.simulated_seconds.to_bits()))
             .collect::<Vec<_>>();
+        let world_heat = matter
+            .medium_heat
+            .iter()
+            .map(|c| c.heat_joules)
+            .sum::<f64>();
+        signature.push((u64::MAX, (world_heat.ln_1p() * 100.0) as u64));
         if signature == self.signature {
             return Ok(());
         }
-        let mut meshes = [empty(), empty(), empty()];
+        let mut meshes = std::array::from_fn::<_, 11, _>(|_| empty());
         for event in state.active() {
             let f = &event.field;
+            let tracers = self
+                .tracers
+                .entry(event.id)
+                .or_insert_with(|| make_tracers(f));
+            let delta = (f.simulated_seconds - tracers.time).max(0.0);
+            let substeps = (delta / 0.01).ceil().max(1.0) as usize;
+            for p in &mut tracers.positions {
+                for _ in 0..substeps {
+                    let cell = field_index(f, *p);
+                    let velocity = f.velocity[cell];
+                    for a in 0..3 {
+                        p[a] = (p[a] + velocity[a] * delta / substeps as f64).clamp(
+                            f.origin[a] as f64 * f.cell_width + 0.02 * f.cell_width,
+                            (f.origin[a] + f.dimensions[a] as i64) as f64 * f.cell_width
+                                - 0.02 * f.cell_width,
+                        );
+                    }
+                }
+                let cell = field_index(f, *p);
+                let n = f.densities[cell];
+                if n - f.reference_density[cell] < 0.5_f64.max(f.reference_density[cell] * 0.5) {
+                    continue;
+                }
+                let size = (0.023 * (n / f.reference_density[cell].max(0.1)).sqrt())
+                    .clamp(0.015, 0.09) as f32;
+                particle(&mut meshes[0], p.map(|v| v as f32), size);
+            }
+            tracers.time = f.simulated_seconds;
             let average = f.manons() / (f.densities.len() as f64 * f.cell_width.powi(3));
             for (i, &n) in f.densities.iter().enumerate() {
-                if !self.diagnostics
-                    && n - f.reference_density[i] < 0.5_f64.max(f.reference_density[i] * 0.5)
-                    || n <= 0.0
-                {
+                let temperature = f.thermal.temperature(i, f.cell_width.powi(3));
+                if !self.diagnostics && temperature < 700. {
                     continue;
                 }
                 let pos = f.position(i);
@@ -240,7 +338,31 @@ impl SpellView {
                     .map(|v| v * 0.28 * f.cell_width);
                 let p = std::array::from_fn(|a| (pos[a] + jitter[a]) as f32);
                 let size = (0.025 * (n / average.max(1e-6)).sqrt()).clamp(0.012, 0.13) as f32;
-                particle(&mut meshes[0], p, size);
+                let bucket = if temperature >= 700. {
+                    3 + thermal_bucket(temperature)
+                } else {
+                    0
+                };
+                particle(
+                    &mut meshes[bucket],
+                    p,
+                    if temperature >= 700. {
+                        size.max(0.12)
+                    } else {
+                        size
+                    },
+                );
+                if temperature > 1000. {
+                    for phase in [0.0_f32, 2.1, 4.2] {
+                        let q = [
+                            p[0] + phase.cos() * 0.18,
+                            p[1] + (phase + 1.0).sin() * 0.12,
+                            p[2] + phase.sin() * 0.18,
+                        ];
+                        particle(&mut meshes[bucket], q, 0.08);
+                    }
+                }
+
                 if self.diagnostics && i % 11 == 0 {
                     let [nx, ny, nz] = f.dimensions;
                     let xyz = [i % nx, (i / nx) % ny, i / (nx * ny)];
@@ -332,6 +454,63 @@ impl SpellView {
                 ((density - 5.0).sqrt() * 0.012).clamp(0.012, 0.08) as f32,
             );
         }
+        for cell in &matter.medium_heat {
+            let temperature =
+                thermodynamics.temperature(cell.heat_joules, world.layout().cell_width().powi(3));
+            if temperature < 700. {
+                continue;
+            }
+            let dx = world.layout().cell_width();
+            let p = cell.position.map(|v| ((v as f64 + 0.5) * dx) as f32);
+            particle(&mut meshes[3 + thermal_bucket(temperature)], p, 0.14);
+        }
+        let mut sources = vec![];
+        for event in state.active() {
+            let f = &event.field;
+            for (i, q) in f.thermal.cell_heat_joules.iter().enumerate() {
+                let t = f.thermal.temperature(i, f.cell_width.powi(3));
+                if t < 1000. || *q <= 0.0 {
+                    continue;
+                }
+                let power = f.thermal.settings.emissivity
+                    * 5.670374419e-8
+                    * 6.
+                    * f.cell_width.powi(2)
+                    * (t.powi(4) - f.thermal.settings.reference_temperature_kelvin.powi(4));
+                sources.push((power, f.position(i), t));
+            }
+        }
+        for cell in &matter.medium_heat {
+            let t =
+                thermodynamics.temperature(cell.heat_joules, world.layout().cell_width().powi(3));
+            if t < 1000. {
+                continue;
+            }
+            let p = cell
+                .position
+                .map(|v| (v as f64 + 0.5) * world.layout().cell_width());
+            let power = thermodynamics.emissivity
+                * 5.670374419e-8
+                * 6.
+                * world.layout().cell_width().powi(2)
+                * (t.powi(4) - thermodynamics.reference_temperature_kelvin.powi(4));
+            sources.push((power, p, t));
+        }
+        sources.sort_by(|a, b| b.0.total_cmp(&a.0));
+        self.thermal_lights = sources
+            .into_iter()
+            .take(4)
+            .map(|(power, p, t)| {
+                let c = thermal_emission(t);
+                let peak = c.iter().copied().fold(1e-6_f32, f32::max);
+                meridian_sdk::Light::Point {
+                    position: Motor3::translation(Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32)),
+                    color: c.map(|v| v / peak),
+                    intensity: (power / 10000.).min(100.) as f32,
+                    range: 20.,
+                }
+            })
+            .collect();
         let mut handles = vec![];
         let mut renderables = vec![];
         for (i, mesh) in meshes.into_iter().enumerate() {
@@ -344,13 +523,57 @@ impl SpellView {
                 .register(mesh)
                 .map_err(|e| e.to_string())?;
             handles.push(handle);
-            renderables.push(draw(handle, self.materials[i]));
+            renderables.push(draw(
+                handle,
+                if i < 3 {
+                    self.materials[i]
+                } else {
+                    self.emission_materials[i - 3]
+                },
+            ));
+        }
+        for anchor in &matter.anchors {
+            let p = manonica_world::chunk::CellPosition {
+                x: anchor.position[0],
+                y: anchor.position[1] as usize,
+                z: anchor.position[2],
+            };
+            let Ok(state) = world.block(p) else { continue };
+            let Some(mechanics) = world
+                .content()
+                .block(state.block())
+                .ok()
+                .and_then(|d| d.physics.mechanics)
+            else {
+                continue;
+            };
+            let temperature = thermodynamics.reference_temperature_kelvin
+                + anchor.heat_joules / mechanics.heat_capacity_joules_per_kelvin;
+            if temperature < 1500. {
+                continue;
+            }
+            let dx = world.layout().cell_width();
+            let mut object = draw(
+                self.body_mesh,
+                self.emission_materials[thermal_bucket(temperature)],
+            );
+            object.frame = Motor3::translation(Vec3::new(
+                ((anchor.position[0] as f64 + 0.5) * dx) as f32,
+                ((anchor.position[1] as f64 + 0.5) * dx) as f32,
+                ((anchor.position[2] as f64 + 0.5) * dx) as f32,
+            ));
+            let extent = (dx * 0.501) as f32;
+            object.scale =
+                Scale3::new(extent, extent, extent).expect("positive thermal surface extent");
+            renderables.push(object);
         }
         for handle in self.meshes.drain(..) {
             base.render.meshes.unregister(handle);
         }
         self.meshes = handles;
         self.renderables = renderables;
+        self.tracers
+            .retain(|id, _| state.active().iter().any(|e| e.id == *id));
         let expired = self
             .constructions
             .keys()
@@ -371,27 +594,72 @@ impl SpellView {
         scene: &mut meridian_sdk::Scene3d,
         state: &manonica_world::matter::MatterState,
         world: &manonica_world::chunk::ChunkWorld,
+        physics: manonica_world::matter::WorldPhysics,
     ) {
         for mesh in self.particle_meshes.drain(..) {
             base.render.meshes.unregister(mesh);
         }
-        let mut particles: BTreeMap<manonica_world::registry::ResourceKey, MeshSource> =
+        let mut particles: BTreeMap<(manonica_world::registry::ResourceKey, u8, u8), MeshSource> =
             BTreeMap::new();
         for event in &state.particles {
             let t = event.age_seconds;
-            let mesh = particles.entry(event.block.clone()).or_insert_with(empty);
+            let fraction = (t / event.lifetime_seconds).clamp(0., 1.);
+            let temperature = physics.thermal.reference_temperature_kelvin
+                + event.heat_joules / event.capacity_joules_per_kelvin;
+            let hot = event.lifetime_seconds > 1.25;
+            let temp_bucket = if temperature >= 700. {
+                1 + thermal_bucket(temperature) as u8
+            } else {
+                0
+            };
+            let age_bucket = (fraction * 8.) as u8;
+            let mesh = particles
+                .entry((event.block.clone(), age_bucket.min(7), temp_bucket))
+                .or_insert_with(empty);
+            let drag = 3.0;
+            let travel = (1.0 - (-drag * t).exp()) / drag;
+            let buoyancy = if hot {
+                physics.gravity_metres_per_second_squared
+                    * (1.0
+                        - physics.thermal.reference_temperature_kelvin
+                            / temperature.max(physics.thermal.reference_temperature_kelvin))
+            } else {
+                -physics.gravity_metres_per_second_squared
+            };
             for i in 0..18 {
-                let phase = i as f64 * 2.399963;
-                let speed = 1.0 + (i % 5) as f64 * 0.2;
-                let p = [
-                    event.position[0] + phase.cos() * speed * t,
-                    event.position[1] + (1.2 + (i % 3) as f64 * 0.4) * t - 7.0 * t * t,
-                    event.position[2] + phase.sin() * speed * t,
+                let phase = (i / 2) as f64 * 2.399963;
+                let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+                let scatter = if hot { 2.5 } else { 1.0 };
+                let mut p = [
+                    event.position[0]
+                        + event.velocity[0] * travel
+                        + sign * phase.cos() * scatter * travel,
+                    event.position[1]
+                        + event.velocity[1] * travel
+                        + buoyancy / drag * (t - travel)
+                        + sign * (phase * 1.7).sin() * scatter * travel,
+                    event.position[2]
+                        + event.velocity[2] * travel
+                        + sign * phase.sin() * scatter * travel,
                 ];
+                if !hot
+                    && let Some(ground) = manonica_world::gameplay::raycast(
+                        world,
+                        [p[0], event.position[1], p[2]],
+                        [0., -1., 0.],
+                        6.0,
+                    )
+                {
+                    p[1] = p[1].max(ground.block.y as f64 + 1.02);
+                }
                 particle(
                     mesh,
                     p.map(|v| v as f32),
-                    (0.035 * (1.0 - t / 1.25).max(0.0)) as f32,
+                    if hot {
+                        (0.08 + 0.12 * t).min(0.45) as f32
+                    } else {
+                        (0.035 * (1.0 - fraction)) as f32
+                    },
                 );
             }
         }
@@ -410,10 +678,25 @@ impl SpellView {
                 let material = base.render.materials.register(Material {
                     base_color_factor: [c[0], c[1], c[2], 1.0],
                     emissive: appearance.emissive,
-                    unlit: true,
+                    unlit: false,
                     ..Default::default()
                 });
                 self.body_materials.insert(body.block.clone(), material);
+                material
+            };
+            let capacity = world
+                .content()
+                .block_id(&body.block)
+                .ok()
+                .and_then(|id| world.content().block(id).ok())
+                .and_then(|d| d.physics.mechanics)
+                .map(|m| m.heat_capacity_joules_per_kelvin)
+                .unwrap_or(100.);
+            let temperature =
+                physics.thermal.reference_temperature_kelvin + body.heat_joules / capacity;
+            let material = if temperature > 1500. {
+                self.emission_materials[thermal_bucket(temperature)]
+            } else {
                 material
             };
             let p = body.motion.position_metres;
@@ -423,25 +706,37 @@ impl SpellView {
             object.scale = Scale3::new(extent, extent, extent).expect("positive cell extent");
             scene.renderables.push(object);
         }
-        for (key, mesh) in particles {
-            let material = if let Some(handle) = self.body_materials.get(&key) {
-                *handle
+        for ((block, age, temp), mesh) in particles {
+            let key = (block.clone(), age, temp);
+            let material = if let Some(material) = self.dust_materials.get(&key) {
+                *material
             } else {
                 let appearance = world
                     .content()
-                    .block_id(&key)
+                    .block_id(&block)
                     .ok()
                     .and_then(|id| world.content().block(id).ok())
                     .map(|d| d.appearance)
                     .unwrap_or_default();
                 let c = appearance.base_color;
-                let handle = base.render.materials.register(Material {
-                    base_color_factor: [c[0], c[1], c[2], 1.0],
+                let alpha = (1.0 - age as f32 / 8.0).powi(2) * 0.65;
+                let emission = if temp > 0 {
+                    thermal_emission(
+                        [800., 1100., 1500., 1900., 2400., 3000., 4000., 6000.][temp as usize - 1],
+                    )
+                    .map(|v| v * alpha)
+                } else {
+                    [0.; 3]
+                };
+                let material = base.render.materials.register(Material {
+                    base_color_factor: [c[0], c[1], c[2], alpha],
+                    emissive: emission,
                     unlit: true,
+                    blend: meridian_sdk::BlendMode::AlphaBlend,
                     ..Default::default()
                 });
-                self.body_materials.insert(key, handle);
-                handle
+                self.dust_materials.insert(key, material);
+                material
             };
             if let Ok(handle) = base.render.meshes.register(mesh) {
                 scene.renderables.push(draw(handle, material));
@@ -451,6 +746,7 @@ impl SpellView {
     }
     pub fn append(&self, scene: &mut meridian_sdk::Scene3d, _state: &MagicState) {
         scene.renderables.extend(self.renderables.iter().cloned());
+        scene.lights.extend(self.thermal_lights.iter().cloned());
         scene.renderables.extend(
             self.constructions
                 .values()

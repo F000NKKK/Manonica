@@ -14,6 +14,9 @@ pub struct FieldEnergy {
     pub field_joules: f64,
     pub kinetic_joules: f64,
     pub exported_mechanical_work_joules: f64,
+    pub exported_heat_joules: f64,
+    pub received_heat_joules: f64,
+    pub radiated_joules: f64,
     pub potential_joules: f64,
     pub heat_joules: f64,
     pub external_work_joules: f64,
@@ -24,13 +27,44 @@ impl FieldEnergy {
             + self.kinetic_joules
             + self.potential_joules
             + self.heat_joules
+            + self.exported_heat_joules
+            - self.received_heat_joules
+            + self.radiated_joules
             + self.exported_mechanical_work_joules
             - self.external_work_joules
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ManonThermalField {
+    pub settings: crate::thermal::MediumThermodynamics,
+    pub cell_heat_joules: Vec<f64>,
+}
+impl ManonThermalField {
+    pub fn temperature(&self, index: usize, volume: f64) -> f64 {
+        self.settings
+            .temperature(self.cell_heat_joules[index], volume)
+    }
+    fn reconcile(&mut self, total: f64, weights: &[f64]) {
+        let old: f64 = self.cell_heat_joules.iter().sum();
+        if total < old {
+            let ratio = if old > 0. { total / old } else { 0. };
+            for q in &mut self.cell_heat_joules {
+                *q *= ratio;
+            }
+        } else if total > old {
+            let sum = weights.iter().sum::<f64>();
+            let fallback = 1.0 / self.cell_heat_joules.len() as f64;
+            for (q, weight) in self.cell_heat_joules.iter_mut().zip(weights) {
+                *q += (total - old) * if sum > 0.0 { *weight / sum } else { fallback };
+            }
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManonField {
+    pub thermal: ManonThermalField,
     pub origin: [i64; 3],
     pub dimensions: [usize; 3],
     pub cell_width: f64,
@@ -55,7 +89,14 @@ impl ManonField {
     pub(super) fn validate(&self) -> WorldResult<()> {
         let shape = GridShape::new(self.dimensions[0], self.dimensions[1], self.dimensions[2])?;
         let len = shape.len();
+        self.thermal.settings.validate()?;
         if self.origin.iter().any(|v| v.unsigned_abs() > 100_000_000)
+            || self.thermal.cell_heat_joules.len() != len
+            || self
+                .thermal
+                .cell_heat_joules
+                .iter()
+                .any(|v| !v.is_finite() || *v < 0.)
             || len > 4096
             || self.reference_density.len() != len
             || self
@@ -101,6 +142,9 @@ impl ManonField {
         }
         let e = &self.energy;
         if [
+            e.exported_heat_joules,
+            e.received_heat_joules,
+            e.radiated_joules,
             e.field_joules,
             e.kinetic_joules,
             e.exported_mechanical_work_joules,
@@ -110,6 +154,9 @@ impl ManonField {
         ]
         .iter()
         .any(|v| !v.is_finite())
+            || (self.thermal.cell_heat_joules.iter().sum::<f64>() - e.heat_joules).abs()
+                > 1e-8 * e.heat_joules.max(1.0)
+            || e.radiated_joules < 0.0
             || e.field_joules < 0.0
             || e.kinetic_joules < 0.0
             || e.heat_joules < 0.0
@@ -139,6 +186,7 @@ struct Flow<'a> {
     compiled: &'a program::CompiledProgram,
     time: f64,
     field: &'a FreeManaField,
+    thermal: &'a ManonThermalField,
 }
 impl VelocityField for Flow<'_> {
     fn at(&self, p: Vec3<Metres>) -> Result<Vec3<MetresPerSecond>, PhysicsError> {
@@ -171,7 +219,11 @@ impl VelocityField for Flow<'_> {
                 )
             })?;
         }
-        let v = world_vector(self.event, v);
+        let mut v = world_vector(self.event, v);
+        let pressure = pressure_velocity(f, self.thermal, nearest);
+        for axis in 0..3 {
+            v[axis] += pressure[axis];
+        }
         Ok(Vec3::try_values(v[0], v[1], v[2])?)
     }
 }
@@ -243,6 +295,50 @@ pub(super) fn step(event: &mut SpellEvent, dt: f64, finishing: bool) -> WorldRes
     pay(&mut energy, installation, event.program.work, &mut limit)?;
     energy.field_joules = field_energy;
     energy.potential_joules = initial_u;
+    let heat_weights = f
+        .densities
+        .iter()
+        .enumerate()
+        .map(|(i, n)| {
+            n * (potential.values()[i].abs()
+                + f.potential[i].abs()
+                + 0.5
+                    * f.carrier_mass_kg_per_manon
+                    * f.velocity[i].iter().map(|v| v * v).sum::<f64>())
+        })
+        .collect::<Vec<_>>();
+    let mut thermal = f.thermal.clone();
+    thermal.reconcile(energy.heat_joules, &heat_weights);
+    if !finishing {
+        let mut input = vec![0.; shape.len()];
+        for (i, amount) in input.iter_mut().enumerate() {
+            let power = event.program.evaluate(
+                &compiled.heat,
+                program::FormulaPoint {
+                    xyz: local(event, f.position(i)),
+                    time: t,
+                    density: f.densities[i],
+                },
+            )?;
+            if power < 0. {
+                return Err(WorldError::Invalid("negative_heat_power"));
+            }
+            *amount = power * dt * f.cell_width.powi(3);
+        }
+        let work = input.iter().sum::<f64>();
+        if !work.is_finite()
+            || work > limit + 1e-9
+            || work > event.program.work.total_joules - energy.external_work_joules + 1e-9
+        {
+            return Err(WorldError::Invalid("spell_heat_work_budget"));
+        }
+        for (q, input) in thermal.cell_heat_joules.iter_mut().zip(input) {
+            *q += input;
+        }
+        energy.heat_joules += work;
+        energy.external_work_joules += work;
+        limit = (limit - work).max(0.);
+    }
     let mut velocity = vec![[0.; 3]; shape.len()];
     if !finishing {
         // Small physical substeps, including CFL-checked reference operators.
@@ -259,6 +355,7 @@ pub(super) fn step(event: &mut SpellEvent, dt: f64, finishing: bool) -> WorldRes
                 compiled: &compiled,
                 time: t,
                 field: &density,
+                thermal: &thermal,
             };
             let mut transported = density.clone();
             FreeAdvection::new(flow)
@@ -271,6 +368,7 @@ pub(super) fn step(event: &mut SpellEvent, dt: f64, finishing: bool) -> WorldRes
             compiled: &compiled,
             time: t,
             field: &density,
+            thermal: &thermal,
         };
         for (i, v) in velocity.iter_mut().enumerate() {
             let p = std::array::from_fn::<_, 3, _>(|a| {
@@ -325,28 +423,29 @@ pub(super) fn step(event: &mut SpellEvent, dt: f64, finishing: bool) -> WorldRes
         &mut limit,
     )?;
     energy.potential_joules = after_u;
-    if !finishing {
-        let heat = event.program.evaluate(
-            &compiled.heat,
-            program::FormulaPoint {
-                xyz: [0.; 3],
-                time: t,
-                density: 0.0,
-            },
+    thermal.reconcile(energy.heat_joules, &heat_weights);
+    let mut radiated = 0.0;
+    for q in &mut thermal.cell_heat_joules {
+        let mut reservoir = manonica_materials::ThermalReservoir {
+            heat_joules: *q,
+            capacity_joules_per_kelvin: thermal
+                .settings
+                .heat_capacity_joules_per_cubic_metre_kelvin
+                * f.cell_width.powi(3),
+        };
+        radiated += manonica_materials::radiate_to_bath(
+            &mut reservoir,
+            thermal.settings.reference_temperature_kelvin,
+            thermal.settings.emissivity,
+            6. * f.cell_width.powi(2),
+            dt,
         )?;
-        if heat < 0.0 {
-            return Err(WorldError::Invalid("negative_heat_power"));
-        }
-        let work = heat * dt;
-        if work > limit + 1e-9
-            || work > event.program.work.total_joules - energy.external_work_joules + 1e-9
-        {
-            return Err(WorldError::Invalid("spell_heat_work_budget"));
-        }
-        energy.heat_joules += work;
-        energy.external_work_joules += work;
+        *q = reservoir.heat_joules;
     }
+    energy.heat_joules = thermal.cell_heat_joules.iter().sum();
+    energy.radiated_joules += radiated;
     let next = ManonField {
+        thermal,
         origin: f.origin,
         dimensions: f.dimensions,
         cell_width: f.cell_width,
@@ -398,6 +497,56 @@ pub(super) fn exchange(
     f.energy.kinetic_joules += packet.kinetic_energy()?.value() - old_packet;
     f.energy.kinetic_joules = f.energy.kinetic_joules.max(0.0);
     f.energy.heat_joules += report.heat.value();
+    f.thermal.cell_heat_joules[index] += report.heat.value();
     f.energy.exported_mechanical_work_joules += work;
     Ok(work)
+}
+
+fn pressure_velocity(f: &ManonField, thermal: &ManonThermalField, xyz: [usize; 3]) -> [f64; 3] {
+    let mut velocity = [0.; 3];
+    let index = |p: [usize; 3]| (p[2] * f.dimensions[1] + p[1]) * f.dimensions[0] + p[0];
+    let settings = thermal.settings.pressure;
+    for axis in 0..3 {
+        let mut lo = xyz;
+        let mut hi = xyz;
+        lo[axis] = lo[axis].saturating_sub(1);
+        hi[axis] = (hi[axis] + 1).min(f.dimensions[axis] - 1);
+        let gradient = (settings.adiabatic_index - 1.0)
+            * (thermal.cell_heat_joules[index(hi)] - thermal.cell_heat_joules[index(lo)])
+            / (f.cell_width.powi(3) * (hi[axis] - lo[axis]) as f64 * f.cell_width);
+        velocity[axis] = (-settings.mobility * gradient).clamp(
+            -settings.maximum_speed_metres_per_second,
+            settings.maximum_speed_metres_per_second,
+        );
+    }
+    velocity
+}
+
+pub(super) fn transfer_heat(
+    event: &mut SpellEvent,
+    index: usize,
+    heat: &mut f64,
+    capacity: f64,
+    conductance: f64,
+    dt: f64,
+) -> WorldResult<f64> {
+    let f = &mut event.field;
+    let mut gas = manonica_materials::ThermalReservoir {
+        heat_joules: f.thermal.cell_heat_joules[index],
+        capacity_joules_per_kelvin: f
+            .thermal
+            .settings
+            .heat_capacity_joules_per_cubic_metre_kelvin
+            * f.cell_width.powi(3),
+    };
+    let mut solid = manonica_materials::ThermalReservoir {
+        heat_joules: *heat,
+        capacity_joules_per_kelvin: capacity,
+    };
+    let into_gas = manonica_materials::exchange_heat_exact(&mut gas, &mut solid, conductance, dt)?;
+    f.thermal.cell_heat_joules[index] = gas.heat_joules;
+    f.energy.heat_joules += into_gas;
+    f.energy.exported_heat_joules -= into_gas;
+    *heat = solid.heat_joules;
+    Ok(-into_gas)
 }

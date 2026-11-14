@@ -11,3 +11,5 @@ mod conductivity;
 
 pub use binding::{Balance, DischargeReport, ManaChannel, MaterialLattice, TrapCell, TrapMaterial};
 pub use conductivity::DirectionalConductivity;
+mod thermal_contact;
+pub use thermal_contact::{ThermalReservoir, exchange_heat_exact, radiate_to_bath};

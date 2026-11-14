@@ -64,14 +64,77 @@ impl GameRuntime {
             next_id: 1,
         }
     }
+    pub fn physics(&self) -> crate::matter::WorldPhysics {
+        self.physics
+    }
     pub fn matter(&self) -> &crate::matter::MatterState {
         &self.matter
+    }
+    pub fn peak_temperature_kelvin(&self) -> WorldResult<f64> {
+        let thermal = self.physics.thermal;
+        let volume = self.world.layout().cell_width().powi(3);
+        let mut peak = thermal.reference_temperature_kelvin;
+        for event in self.magic.active() {
+            for i in 0..event.field.densities.len() {
+                peak = peak.max(
+                    event
+                        .field
+                        .thermal
+                        .temperature(i, event.field.cell_width.powi(3)),
+                );
+            }
+        }
+        for cell in &self.matter.medium_heat {
+            peak = peak.max(thermal.temperature(cell.heat_joules, volume));
+        }
+        for anchor in &self.matter.anchors {
+            let p = crate::chunk::CellPosition {
+                x: anchor.position[0],
+                y: anchor.position[1] as usize,
+                z: anchor.position[2],
+            };
+            let capacity = self
+                .world
+                .block(p)
+                .ok()
+                .and_then(|s| self.world.content().block(s.block()).ok())
+                .and_then(|d| d.physics.mechanics)
+                .map(|m| m.heat_capacity_joules_per_kelvin)
+                .unwrap_or(thermal.heat_capacity_joules_per_cubic_metre_kelvin * volume);
+            peak = peak.max(thermal.reference_temperature_kelvin + anchor.heat_joules / capacity);
+        }
+        for body in &self.matter.bodies {
+            let definition = self
+                .world
+                .content()
+                .block(self.world.content().block_id(&body.block)?)?;
+            let capacity = definition
+                .physics
+                .mechanics
+                .map(|m| m.heat_capacity_joules_per_kelvin)
+                .unwrap_or(100.);
+            peak = peak.max(thermal.reference_temperature_kelvin + body.heat_joules / capacity);
+        }
+        for event in &self.matter.particles {
+            peak = peak.max(
+                thermal.reference_temperature_kelvin
+                    + event.heat_joules / event.capacity_joules_per_kelvin,
+            );
+        }
+        if !peak.is_finite() {
+            return Err(WorldError::Invalid("world_temperature"));
+        }
+        Ok(peak)
     }
     pub fn coupled_energy_residual_joules(&self) -> WorldResult<f64> {
         Ok(self.magic.energy_residual_joules()
             + self.matter.energy_residual_joules()?
             + self.matter.energy.mechanical_work_received_joules
-            - self.magic.cumulative_mechanical_work_joules())
+            - self.magic.cumulative_mechanical_work_joules()
+            + self.matter.energy.heat_received_joules
+            - self.magic.cumulative_heat_transfers_joules().0
+            - self.matter.energy.heat_exported_to_fields_joules
+            + self.magic.cumulative_heat_transfers_joules().1)
     }
     pub fn clock(&self) -> GameClock {
         self.clock
@@ -248,7 +311,7 @@ impl GameRuntime {
             })
             .collect::<WorldResult<Vec<_>>>()?;
         let save = SavedGame {
-            version: 4,
+            version: 5,
             physics: self.physics,
             matter: self.matter.clone(),
             magic: self.magic.clone(),
@@ -265,7 +328,7 @@ impl GameRuntime {
     }
     pub fn from_nbt(content: Arc<ContentRegistry>, bytes: &[u8]) -> WorldResult<Self> {
         let save: SavedGame = decode_nbt(bytes)?;
-        if save.version != 4
+        if save.version != 5
             || save.registry != content.fingerprint()
             || !save.clock.elapsed_seconds.is_finite()
             || save.clock.elapsed_seconds < 0.0
@@ -328,6 +391,7 @@ impl GameRuntime {
         {
             return Err(WorldError::Invalid("saved_field_matter_work"));
         }
+        game.peak_temperature_kelvin()?;
         Ok(game)
     }
 }

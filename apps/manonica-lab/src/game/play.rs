@@ -86,6 +86,8 @@ pub(super) fn run(
         "Explore the arch and crystal pillars. Scrolls are in slots 4, 5, 6.".to_string();
     let mut size = [1280, 800];
     let mut frame_count = 0;
+    let mut hottest = 300_f64;
+    let mut most_bodies = 0;
     let mut pending_jump = false;
     let mut diagnostics = false;
     let mut terrain_revision = game.world.geometry_revision();
@@ -320,13 +322,27 @@ pub(super) fn run(
         let mut scene = Scene3d {
             camera: camera.camera(size[0] as f32 / size[1] as f32),
             renderables: terrain.renderables.clone(),
+            ambient_ground: [0.25, 0.3, 0.35],
+            ambient_sky: [0.65, 0.75, 0.85],
             ..Default::default()
         };
         effects
-            .update(&mut base, game.magic(), &game.world)
+            .update(
+                &mut base,
+                game.magic(),
+                &game.world,
+                game.matter(),
+                game.physics().thermal,
+            )
             .map_err(std::io::Error::other)?;
         effects.append(&mut scene, game.magic());
-        effects.append_matter(&mut base, &mut scene, game.matter(), &game.world);
+        effects.append_matter(
+            &mut base,
+            &mut scene,
+            game.matter(),
+            &game.world,
+            game.physics(),
+        );
         let stack = game.entity(player)?.inventory.get(selected)?;
         let item = stack
             .map(|s| {
@@ -342,6 +358,9 @@ pub(super) fn run(
             .and_then(|s| game.world.content().block(s.block()).ok())
             .map(|b| b.display.name.as_str())
             .unwrap_or("sky");
+        let peak_temperature = game.peak_temperature_kelvin()?;
+        hottest = hottest.max(peak_temperature);
+        most_bodies = most_bodies.max(game.matter().bodies.len());
         let overlay = hud.draw(
             &mut base,
             size,
@@ -364,9 +383,9 @@ pub(super) fn run(
                     dt * 1000.
                 ),
                 format!(
-                    "Fields: {} active, {:.0} manons | matter energy error {:.2e} J",
+                    "Fields: {} active, {:.0} manons | {:.0} K peak | energy error {:.2e} J",
                     game.magic().active().len(),
-                    game.magic().bound_manons(),game.coupled_energy_residual_joules()?
+                    game.magic().bound_manons(),peak_temperature,game.coupled_energy_residual_joules()?
                 ),
                 status.clone(),
             ],
@@ -381,9 +400,10 @@ pub(super) fn run(
         frame_count += 1;
         if smoke_frames.is_some_and(|limit| frame_count >= limit) {
             println!(
-                "3D smoke complete: {frame_count} frames, {} active formula programs, energy residual {:.3e} J",
+                "3D smoke complete: {frame_count} frames, {} active programs, peak {hottest:.0} K, peak {most_bodies} bodies, {} dispersed blocks, energy residual {:.3e} J",
                 game.magic().active().len(),
-                game.magic().energy_residual_joules()
+                game.matter().dispersed_blocks,
+                game.coupled_energy_residual_joules()?
             );
             break;
         }

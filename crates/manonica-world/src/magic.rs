@@ -100,6 +100,9 @@ impl SpellEvent {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasedEnergy {
+    pub exported_heat_joules: f64,
+    pub received_heat_joules: f64,
+    pub radiated_joules: f64,
     pub exported_mechanical_work_joules: f64,
     pub heat_joules: f64,
     pub external_work_joules: f64,
@@ -122,6 +125,22 @@ impl MagicState {
     pub fn bound_manons(&self) -> f64 {
         self.active.iter().map(|e| e.field.manons()).sum()
     }
+    pub fn cumulative_heat_transfers_joules(&self) -> (f64, f64) {
+        (
+            self.released.exported_heat_joules
+                + self
+                    .active
+                    .iter()
+                    .map(|e| e.field.energy.exported_heat_joules)
+                    .sum::<f64>(),
+            self.released.received_heat_joules
+                + self
+                    .active
+                    .iter()
+                    .map(|e| e.field.energy.received_heat_joules)
+                    .sum::<f64>(),
+        )
+    }
     pub fn cumulative_mechanical_work_joules(&self) -> f64 {
         self.released.exported_mechanical_work_joules
             + self
@@ -131,7 +150,10 @@ impl MagicState {
                 .sum::<f64>()
     }
     pub fn energy_residual_joules(&self) -> f64 {
-        self.released.heat_joules + self.released.exported_mechanical_work_joules
+        self.released.exported_heat_joules - self.released.received_heat_joules
+            + self.released.radiated_joules
+            + self.released.heat_joules
+            + self.released.exported_mechanical_work_joules
             - self.released.external_work_joules
             + self
                 .active
@@ -140,9 +162,13 @@ impl MagicState {
                 .sum::<f64>()
     }
     pub(crate) fn validate(&self) -> WorldResult<()> {
-        if self.active.len() > 8
+        if !self.released.exported_heat_joules.is_finite()
+            || !self.released.exported_mechanical_work_joules.is_finite()
+            || self.active.len() > 8
             || !self.bound_manons().is_finite()
             || [
+                self.released.radiated_joules,
+                self.released.received_heat_joules,
                 self.released.heat_joules,
                 self.released.external_work_joules,
             ]
@@ -265,6 +291,10 @@ impl GameRuntime {
         });
         let len = dims.iter().product();
         let field = ManonField {
+            thermal: field::ManonThermalField {
+                settings: self.physics.thermal,
+                cell_heat_joules: vec![0.; len],
+            },
             origin: first,
             dimensions: dims,
             cell_width: dx,
@@ -304,6 +334,27 @@ impl GameRuntime {
         if event.field.manons() <= 0.0 {
             return Err(WorldError::Invalid("insufficient_ambient_mana"));
         }
+        let mut next_matter = self.matter.clone();
+        let mut transferred = 0.0;
+        for i in 0..len {
+            let p = event.cell(i)?;
+            let key = [p.x, p.y as i64, p.z];
+            if let Some(cell) = next_matter
+                .medium_heat
+                .iter_mut()
+                .find(|c| c.position == key)
+            {
+                let q = cell.heat_joules;
+                event.field.thermal.cell_heat_joules[i] = q;
+                cell.heat_joules = 0.0;
+                transferred += q;
+            }
+        }
+        next_matter.medium_heat.retain(|c| c.heat_joules > 0.0);
+        next_matter.energy.heat_exported_to_fields_joules += transferred;
+        event.field.energy.heat_joules = transferred;
+        event.field.energy.received_heat_joules = transferred;
+        next_matter.validate()?;
         // Evaluate the first physical step before consuming a scroll or reserving world state.
         let mut probe = event.clone();
         field::step(&mut probe, 0.025_f64.min(event.duration()), false)?;
@@ -313,6 +364,7 @@ impl GameRuntime {
             .unwrap()
             .inventory
             .commit_slot(slot, replacement);
+        self.matter = next_matter;
         self.magic.casts = id;
         self.magic.active.push(event.clone());
         Ok(event)
@@ -323,6 +375,7 @@ impl GameRuntime {
         }
         let mut next = self.magic.clone();
         let mut restore = vec![];
+        let mut heat_deposits = vec![];
         let mut active = vec![];
         for mut event in next.active.drain(..) {
             event.age_seconds = (event.age_seconds + dt).min(event.duration());
@@ -337,7 +390,17 @@ impl GameRuntime {
                     let cell = event.cell(i)?;
                     restore.push((cell, self.world.density(cell)? + n));
                 }
-                next.released.heat_joules += event.field.energy.heat_joules;
+                for (i, q) in event.field.thermal.cell_heat_joules.iter().enumerate() {
+                    if *q > 0.0 {
+                        heat_deposits.push((event.cell(i)?, *q));
+                    }
+                }
+                event.field.energy.exported_heat_joules += event.field.energy.heat_joules;
+                event.field.energy.heat_joules = 0.0;
+
+                next.released.exported_heat_joules += event.field.energy.exported_heat_joules;
+                next.released.received_heat_joules += event.field.energy.received_heat_joules;
+                next.released.radiated_joules += event.field.energy.radiated_joules;
                 next.released.exported_mechanical_work_joules +=
                     event.field.energy.exported_mechanical_work_joules;
                 next.released.external_work_joules += event.field.energy.external_work_joules;
@@ -370,6 +433,7 @@ impl GameRuntime {
             self.physics,
             dt,
             &occupied,
+            &heat_deposits,
         )?;
         next.validate()?;
         if (next.cumulative_mechanical_work_joules()
@@ -423,6 +487,23 @@ impl crate::matter::MomentumMedium for MagicState {
                     })
             })
             .collect()
+    }
+    fn transfer_heat(
+        &mut self,
+        id: crate::matter::MediumCellId,
+        heat: &mut f64,
+        capacity: f64,
+        conductance: f64,
+        dt: f64,
+    ) -> WorldResult<f64> {
+        let event = self
+            .active
+            .get_mut(id.domain)
+            .ok_or(WorldError::Invalid("medium_domain"))?;
+        if id.cell >= event.field.densities.len() {
+            return Err(WorldError::Invalid("medium_cell"));
+        }
+        field::transfer_heat(event, id.cell, heat, capacity, conductance, dt)
     }
     fn transfer(
         &mut self,

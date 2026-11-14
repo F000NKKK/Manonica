@@ -110,7 +110,7 @@ impl TerrainView {
                 let handle = base.render.materials.register(Material {
                     base_color_factor: [c[0], c[1], c[2], 1.0],
                     emissive: appearance.emissive,
-                    unlit: true,
+                    unlit: false,
                     ..Default::default()
                 });
                 self.materials.insert((block, face), handle);

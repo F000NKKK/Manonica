@@ -74,7 +74,8 @@ fn audit(game: &GameRuntime, before: f64) {
 }
 #[test]
 fn compression_release_is_manon_transport_not_a_world_edit() {
-    let v = recipe(0);
+    let mut v = recipe(0);
+    v["program"]["controls"]["heat_power"] = serde_json::json!("0");
     let (mut game, registry, player) = setup(&v, 3.0);
     let before = game.world.statistics().free_manons;
     let blocks = game.world.occupied_blocks().count();
@@ -95,7 +96,10 @@ fn compression_release_is_manon_transport_not_a_world_edit() {
         .iter()
         .copied()
         .fold(0., f64::max);
-    assert!(released < compressed);
+    assert!(
+        released < compressed,
+        "peaks before={compressed}, after={released}"
+    );
     assert!(
         game.magic().active()[0]
             .field
@@ -201,7 +205,7 @@ fn formula_constructions_are_deterministic_and_respond_to_semantics() {
     assert!(a.nodes.iter().any(|n| n.symbol == "function:exp"));
     assert!(a.paths.iter().flatten().any(|p| p[1] != 0.0));
     let mut changed = program.clone();
-    changed.controls.potential_source.0 = changed.controls.potential_source.0.replace("160", "80");
+    changed.controls.potential_source.0 = changed.controls.potential_source.0.replace("600", "300");
     let c = grammar.compile(&changed).unwrap();
     assert_ne!(a.fingerprint, c.fingerprint);
     changed = program.clone();

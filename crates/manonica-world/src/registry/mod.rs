@@ -274,6 +274,17 @@ impl ContentRegistry {
 }
 
 fn validate_mechanics(m: MaterialMechanics) -> WorldResult<()> {
+    if !m.surface_emissivity.is_finite()
+        || !(0.0..=1.0).contains(&m.surface_emissivity)
+        || m.crushing_energy_joules
+            .is_some_and(|v| v < m.fracture_energy_joules)
+        || !m.thermal_contact_watts_per_kelvin.is_finite()
+        || m.thermal_contact_watts_per_kelvin < 0.0
+        || m.crushing_energy_joules
+            .is_some_and(|v| !v.is_finite() || v < 0.0)
+    {
+        return Err(WorldError::Invalid("material_thermal_contact"));
+    }
     if [m.mass_kg, m.heat_capacity_joules_per_kelvin]
         .iter()
         .any(|v| !v.is_finite() || *v <= 0.0)
