@@ -33,4 +33,3 @@ meval = "0.2"
 
 manonica-world = { path = "../../crates/manonica-world" }
 
-meridian-gpu-wgpu = { git = "https://github.com/F000NKKK/Meridian-Engine", rev = "49c68a1c8570e2d4ca6255169209508ccea686e4" }

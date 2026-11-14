@@ -1,20 +1,11 @@
-//! GPU-authored 3D particles, volumetric casting circles and actual liberated block bodies.
-use manonica_world::magic::{MagicState, SpellEffect};
-use meridian_gpu_wgpu::BufferUsage;
+//! A generic field observer: particles, current vectors and isopotential contours.
+//! No spell identifiers, particle presets or object commands enter this renderer.
+use manonica_world::magic::{MagicState, ManonField, construction::CircleGrammar};
 use meridian_sdk::{
     Device, GraphicsSession, Material, MaterialHandle, MeshHandle, MeshSource, Motor3,
-    Renderable3d, Rotor, Scale3, Vec3, cube_mesh_source,
+    Renderable3d, Scale3, Vec3,
 };
-const PARTICLES: usize = 384;
-const FRAMES: usize = 64;
-pub struct SpellView {
-    materials: [[MaterialHandle; 4]; 3],
-    frames: Vec<Vec<Vec<MeshHandle>>>,
-    circle: MeshHandle,
-    debris: MeshHandle,
-    debris_material: MaterialHandle,
-    mana: MeshHandle,
-}
+use std::collections::BTreeMap;
 fn empty() -> MeshSource {
     MeshSource {
         positions: vec![],
@@ -25,9 +16,9 @@ fn empty() -> MeshSource {
         morph: None,
     }
 }
-fn octahedron(mesh: &mut MeshSource, center: [f32; 3], size: f32) {
+fn particle(mesh: &mut MeshSource, p: [f32; 3], size: f32) {
     let base = mesh.positions.len() as u32;
-    for d in [
+    for n in [
         [1., 0., 0.],
         [-1., 0., 0.],
         [0., 1., 0.],
@@ -36,11 +27,11 @@ fn octahedron(mesh: &mut MeshSource, center: [f32; 3], size: f32) {
         [0., 0., -1.],
     ] {
         mesh.positions
-            .push(std::array::from_fn(|a| center[a] + d[a] * size));
-        mesh.normals.push(d);
+            .push(std::array::from_fn(|a| p[a] + n[a] * size));
+        mesh.normals.push(n);
         mesh.uvs.push([0., 0.]);
     }
-    for triangle in [
+    for t in [
         [2, 0, 4],
         [2, 4, 1],
         [2, 1, 5],
@@ -50,343 +41,325 @@ fn octahedron(mesh: &mut MeshSource, center: [f32; 3], size: f32) {
         [3, 5, 1],
         [3, 0, 5],
     ] {
-        mesh.indices.extend(triangle.map(|i| base + i));
+        mesh.indices.extend(t.map(|i| base + i));
     }
 }
-fn beam(mesh: &mut MeshSource, a: [f32; 3], b: [f32; 3], radius: f32) {
-    let center: [f32; 3] = std::array::from_fn(|i| (a[i] + b[i]) * 0.5);
-    let direction = std::array::from_fn::<_, 3, _>(|i| b[i] - a[i]);
-    let length = direction.iter().map(|v| v * v).sum::<f32>().sqrt();
-    if length < 1e-6 {
+fn beam(mesh: &mut MeshSource, a: [f32; 3], b: [f32; 3], width: f32) {
+    let d = std::array::from_fn::<_, 3, _>(|i| b[i] - a[i]);
+    let n = d.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if n < 1e-6 {
         return;
     }
-    let d = direction.map(|v| v / length);
-    let up = if d[1].abs() < 0.9 {
-        [0., 1., 0.]
+    let u = if d[1].abs() / n < 0.9 {
+        [d[2] / n, 0., -d[0] / n]
     } else {
         [1., 0., 0.]
     };
-    let cross = |a: [f32; 3], b: [f32; 3]| {
-        [
-            a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0],
-        ]
-    };
-    let u = cross(d, up);
-    let n = u.iter().map(|v| v * v).sum::<f32>().sqrt();
-    let u = u.map(|v| v / n);
-    let v = cross(d, u);
+    let length = u.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let u = u.map(|v| v / length);
+    let v = [
+        d[1] * u[2] - d[2] * u[1],
+        d[2] * u[0] - d[0] * u[2],
+        d[0] * u[1] - d[1] * u[0],
+    ]
+    .map(|v| v / n);
     let base = mesh.positions.len() as u32;
-    for sign in [-1., 1.] {
+    for p in [a, b] {
         for k in 0..4 {
             let angle = k as f32 * std::f32::consts::FRAC_PI_2;
             let normal =
                 std::array::from_fn::<_, 3, _>(|i| u[i] * angle.cos() + v[i] * angle.sin());
-            mesh.positions.push(std::array::from_fn(|i| {
-                center[i] + sign * length * 0.5 * d[i] + normal[i] * radius
-            }));
+            mesh.positions
+                .push(std::array::from_fn(|i| p[i] + normal[i] * width));
             mesh.normals.push(normal);
             mesh.uvs.push([0., 0.]);
         }
     }
     for k in 0..4 {
-        let next = (k + 1) % 4;
+        let j = (k + 1) % 4;
         mesh.indices.extend([
             base + k,
-            base + next,
+            base + j,
             base + k + 4,
-            base + next,
-            base + next + 4,
+            base + j,
+            base + j + 4,
             base + k + 4,
         ]);
     }
 }
-fn circle_mesh() -> MeshSource {
-    let mut mesh = empty();
-    for radius in [0.72_f32, 0.92, 1.0] {
-        for i in 0..128 {
-            let a = i as f32 / 128. * std::f32::consts::TAU;
-            let b = (i + 1) as f32 / 128. * std::f32::consts::TAU;
-            beam(
-                &mut mesh,
-                [radius * a.cos(), 0., radius * a.sin()],
-                [radius * b.cos(), 0., radius * b.sin()],
-                0.006,
-            );
-        }
-    }
-    for i in 0..12 {
-        let a = i as f32 / 12. * std::f32::consts::TAU;
-        let b = (i + 5) as f32 / 12. * std::f32::consts::TAU;
-        beam(
-            &mut mesh,
-            [0.72 * a.cos(), 0., 0.72 * a.sin()],
-            [0.72 * b.cos(), 0., 0.72 * b.sin()],
-            0.004,
-        );
-        let c = a + 0.035;
-        beam(
-            &mut mesh,
-            [0.94 * a.cos(), 0., 0.94 * a.sin()],
-            [0.82 * c.cos(), 0., 0.82 * c.sin()],
-            0.01,
-        );
-    }
-    mesh
-}
-fn renderable(
-    mesh: MeshHandle,
-    material: MaterialHandle,
-    center: [f64; 3],
-    scale: [f64; 3],
-    rotation: f32,
-) -> Renderable3d {
+fn draw(mesh: MeshHandle, material: MaterialHandle) -> Renderable3d {
     Renderable3d {
         mesh,
         material,
-        frame: Motor3::from_rotation_translation(
-            Rotor::from_axis_angle(Vec3::Y, rotation),
-            Vec3::new(center[0] as f32, center[1] as f32, center[2] as f32),
-        ),
-        scale: Scale3::new(scale[0] as f32, scale[1] as f32, scale[2] as f32)
-            .expect("positive effect scale"),
+        frame: Motor3::translation(Vec3::ZERO),
+        scale: Scale3::UNIT,
         billboard: false,
         casts_shadow: false,
         palette: None,
         morph_weights: vec![],
     }
 }
+fn index(f: &ManonField, p: [usize; 3]) -> usize {
+    (p[2] * f.dimensions[1] + p[1]) * f.dimensions[0] + p[0]
+}
+fn contours(mesh: &mut MeshSource, f: &ManonField) {
+    let peak = f
+        .potential
+        .iter()
+        .copied()
+        .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+        .unwrap_or(0.0);
+    if peak.abs() < 1e-6 {
+        return;
+    }
+    for axis in 0..3 {
+        let a = (axis + 1) % 3;
+        let b = (axis + 2) % 3;
+        for slice in [0.25, 0.5, 0.75] {
+            let layer = ((f.dimensions[axis] - 1) as f64 * slice) as usize;
+            for fraction in [0.2, 0.5, 0.8] {
+                let level = peak * fraction;
+                for y in 0..f.dimensions[b] - 1 {
+                    for x in 0..f.dimensions[a] - 1 {
+                        let mut corners = [[0; 3]; 4];
+                        for (i, [da, db]) in
+                            [[0, 0], [1, 0], [1, 1], [0, 1]].into_iter().enumerate()
+                        {
+                            corners[i][axis] = layer;
+                            corners[i][a] = x + da;
+                            corners[i][b] = y + db;
+                        }
+                        let ids = corners.map(|p| index(f, p));
+                        let mut crossings = vec![];
+                        for k in 0..4 {
+                            let j = (k + 1) % 4;
+                            let va = f.potential[ids[k]];
+                            let vb = f.potential[ids[j]];
+                            if (va < level) != (vb < level) {
+                                let t = (level - va) / (vb - va);
+                                let p = f.position(ids[k]);
+                                let q = f.position(ids[j]);
+                                crossings.push(std::array::from_fn::<_, 3, _>(|a| {
+                                    (p[a] + t * (q[a] - p[a])) as f32
+                                }));
+                            }
+                        }
+                        for pair in crossings.as_chunks::<2>().0 {
+                            beam(mesh, pair[0], pair[1], 0.009);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+pub struct SpellView {
+    materials: [MaterialHandle; 3],
+    meshes: Vec<MeshHandle>,
+    renderables: Vec<Renderable3d>,
+    signature: Vec<(u64, u64)>,
+    grammar: CircleGrammar,
+    constructions: BTreeMap<u64, (MeshHandle, Renderable3d)>,
+    diagnostics: bool,
+}
 impl SpellView {
     pub fn new(
-        device: &Device,
-        runtime: &tokio::runtime::Runtime,
+        _device: &Device,
+        _runtime: &tokio::runtime::Runtime,
         base: &mut GraphicsSession,
     ) -> Result<Self, String> {
-        let buffer = device.create_buffer(3 * FRAMES * PARTICLES * 16, BufferUsage::Storage);
-        let shader = device.create_shader("Manonica 3D particles", include_str!("effects.wgsl"));
-        let pipeline = device.create_compute_pipeline(&shader, "bake");
-        let group = device.create_compute_bind_group(&pipeline, &[&buffer]);
-        let mut commands = device.create_command_buffer();
-        commands.dispatch_compute(&pipeline, &group, (3 * FRAMES * PARTICLES) as u32 / 64);
-        commands.submit();
-        let data = runtime.block_on(device.read_buffer(&buffer));
-        let colors = [
-            [
-                [1., 0.23, 0.015],
-                [1., 0.65, 0.05],
-                [1., 0.95, 0.5],
-                [0.55, 0.25, 0.09],
-            ],
-            [
-                [0.18, 0.6, 1.0],
-                [0.4, 0.9, 1.0],
-                [0.6, 0.4, 0.2],
-                [0.9, 0.7, 0.3],
-            ],
-            [
-                [0.25, 0.6, 0.75],
-                [0.6, 0.9, 1.0],
-                [0.17, 0.4, 0.45],
-                [0.38, 0.3, 0.17],
-            ],
-        ];
-        let materials = colors.map(|family| {
-            family.map(|c| {
-                base.render.materials.register(Material {
-                    base_color_factor: [c[0], c[1], c[2], 1.0],
-                    emissive: c.map(|v| v * 0.7),
-                    unlit: true,
-                    ..Default::default()
-                })
+        let materials = [[0.22, 0.9, 1.0], [0.75, 0.95, 1.0], [0.85, 0.5, 1.0]].map(|c| {
+            base.render.materials.register(Material {
+                base_color_factor: [c[0], c[1], c[2], 1.],
+                emissive: c.map(|v| v * 0.6),
+                unlit: true,
+                ..Default::default()
             })
         });
-        let mut frames = vec![];
-        for family in 0..3 {
-            let mut series = vec![];
-            for frame in 0..FRAMES {
-                let mut buckets: Vec<_> = (0..4).map(|_| empty()).collect();
-                for particle in 0..PARTICLES {
-                    let offset = ((family * FRAMES + frame) * PARTICLES + particle) * 16;
-                    let v = std::array::from_fn::<_, 4, _>(|i| {
-                        f32::from_le_bytes(
-                            data[offset + i * 4..offset + i * 4 + 4].try_into().unwrap(),
-                        )
-                    });
-                    octahedron(
-                        &mut buckets[particle % 4],
-                        [v[0], v[1], v[2]],
-                        v[3].max(1e-5),
-                    );
-                }
-                let mut handles = vec![];
-                for mesh in buckets {
-                    handles.push(
-                        base.render
-                            .meshes
-                            .register(mesh)
-                            .map_err(|e| e.to_string())?,
-                    );
-                }
-                series.push(handles);
-            }
-            frames.push(series);
-        }
-        let circle = base
-            .render
-            .meshes
-            .register(circle_mesh())
-            .map_err(|e| e.to_string())?;
-        let debris = base
-            .render
-            .meshes
-            .register(cube_mesh_source(1.0))
-            .map_err(|e| e.to_string())?;
-        let debris_material = base.render.materials.register(Material {
-            base_color_factor: [0.4, 0.3, 0.2, 1.],
-            unlit: true,
-            ..Default::default()
-        });
-        let mut mote = empty();
-        octahedron(&mut mote, [0.; 3], 1.0);
-        let mana = base
-            .render
-            .meshes
-            .register(mote)
-            .map_err(|e| e.to_string())?;
         Ok(Self {
-            mana,
             materials,
-            frames,
-            circle,
-            debris,
-            debris_material,
+            meshes: vec![],
+            renderables: vec![],
+            signature: vec![(u64::MAX, u64::MAX)],
+            grammar: CircleGrammar::from_jsonl(include_str!(
+                "../../../../assets/demo/circles.jsonl"
+            ))
+            .map_err(|e| e.to_string())?,
+            constructions: BTreeMap::new(),
+            diagnostics: false,
         })
     }
-    pub fn append_mana(
-        &self,
-        scene: &mut meridian_sdk::Scene3d,
-        world: &manonica_world::chunk::ChunkWorld,
-        eye: [f64; 3],
-        time: f64,
-    ) {
-        let origin = eye.map(|v| (v / 2.0).floor() as i64);
-        for z in -3..=3 {
-            for y in -2..=2 {
-                for x in -3..=3 {
-                    let cell = [
-                        (origin[0] + x) * 2,
-                        (origin[1] + y) * 2,
-                        (origin[2] + z) * 2,
-                    ];
-                    if cell[1] < 0 {
-                        continue;
-                    }
-                    let p = manonica_world::chunk::CellPosition {
-                        x: cell[0],
-                        y: cell[1] as usize,
-                        z: cell[2],
-                    };
-                    let Ok(density) = world.density(p) else {
-                        continue;
-                    };
-                    if density <= 0.0 || manonica_world::gameplay::solid(world, p, false) {
-                        continue;
-                    }
-                    let seed = (cell[0] * 127 + cell[1] * 47 + cell[2] * 311) as f64;
-                    let center = [
-                        cell[0] as f64 + 1.0 + 0.6 * (seed + time * 0.3).sin(),
-                        cell[1] as f64 + 0.8 + 0.5 * (seed * 1.7 + time * 0.6).cos(),
-                        cell[2] as f64 + 1.0 + 0.6 * (seed * 0.7 + time * 0.25).sin(),
-                    ];
-                    let size = (density.sqrt() * 0.018).clamp(0.01, 0.08);
-                    scene.renderables.push(renderable(
-                        self.mana,
-                        self.materials[2][1],
-                        center,
-                        [size; 3],
-                        time as f32,
-                    ));
-                }
-            }
+    pub fn invalidate(&mut self) {
+        self.signature = vec![(u64::MAX, u64::MAX)];
+    }
+    pub fn set_diagnostics(&mut self, enabled: bool) {
+        if self.diagnostics != enabled {
+            self.diagnostics = enabled;
+            self.invalidate();
         }
     }
-    pub fn append(&self, scene: &mut meridian_sdk::Scene3d, state: &MagicState) {
+    pub fn update(
+        &mut self,
+        base: &mut GraphicsSession,
+        state: &MagicState,
+        world: &manonica_world::chunk::ChunkWorld,
+    ) -> Result<(), String> {
+        let signature = state
+            .active()
+            .iter()
+            .map(|e| (e.id, e.field.simulated_seconds.to_bits()))
+            .collect::<Vec<_>>();
+        if signature == self.signature {
+            return Ok(());
+        }
+        let mut meshes = [empty(), empty(), empty()];
         for event in state.active() {
-            let index = event.effect.index();
-            let fraction = event.age_seconds / event.effect.duration();
-            let frame = if index == 2 {
-                (event.age_seconds * 32.0) as usize % FRAMES
-            } else {
-                (fraction * FRAMES as f64) as usize
-            };
-            let (scale, center) = match event.effect {
-                SpellEffect::Explosion { radius } => ([radius; 3], event.center),
-                SpellEffect::EarthRift { length, width, .. } => {
-                    ([width, 4.0, length * 0.5], event.center)
+            let f = &event.field;
+            let average = f.manons() / (f.densities.len() as f64 * f.cell_width.powi(3));
+            for (i, &n) in f.densities.iter().enumerate() {
+                if !self.diagnostics
+                    && n - f.reference_density[i] < 0.5_f64.max(f.reference_density[i] * 0.5)
+                    || n <= 0.0
+                {
+                    continue;
                 }
-                SpellEffect::Tornado { radius, height, .. } => {
-                    ([radius, height, radius], event.center)
+                let pos = f.position(i);
+                let phase = i as f64 * 1.618;
+                let jitter = [phase.sin(), (phase * 1.7).cos(), (phase * 0.7).sin()]
+                    .map(|v| v * 0.28 * f.cell_width);
+                let p = std::array::from_fn(|a| (pos[a] + jitter[a]) as f32);
+                let size = (0.025 * (n / average.max(1e-6)).sqrt()).clamp(0.012, 0.13) as f32;
+                particle(&mut meshes[0], p, size);
+                if self.diagnostics && i % 11 == 0 {
+                    let [nx, ny, nz] = f.dimensions;
+                    let xyz = [i % nx, (i / nx) % ny, i / (nx * ny)];
+                    let mut v = f.velocity[i];
+                    for axis in 0..3 {
+                        let mut lo = xyz;
+                        lo[axis] = lo[axis].saturating_sub(1);
+                        let mut hi = xyz;
+                        hi[axis] = (hi[axis] + 1).min([nx, ny, nz][axis] - 1);
+                        let distance = (hi[axis] - lo[axis]) as f64 * f.cell_width;
+                        v[axis] -= event.program.transport.mobility
+                            * (f.potential[index(f, hi)] - f.potential[index(f, lo)])
+                            / distance;
+                        v[axis] -= event.program.transport.diffusivity
+                            * (f.densities[index(f, hi)] - f.densities[index(f, lo)])
+                            / distance
+                            / n.max(1e-9);
+                    }
+                    let speed = v.iter().map(|v| v * v).sum::<f64>().sqrt();
+                    if speed > 1e-4 {
+                        let q = std::array::from_fn(|a| p[a] + (v[a] / speed * 0.4) as f32);
+                        beam(&mut meshes[1], p, q, 0.01);
+                    }
                 }
-            };
-            let rotation = if index == 1 {
-                -(event.direction[0].atan2(event.direction[2]) as f32)
-            } else {
-                0.
-            };
-            for bucket in 0..4 {
-                scene.renderables.push(renderable(
-                    self.frames[index][frame.min(FRAMES - 1)][bucket],
-                    self.materials[index][bucket],
-                    center,
-                    scale,
-                    rotation,
-                ));
             }
-            let size = match event.effect {
-                SpellEffect::Explosion { radius } => radius * 1.1,
-                SpellEffect::EarthRift { length, .. } => length * 0.4,
-                SpellEffect::Tornado { radius, .. } => radius * 1.1,
-            };
-            let growth = (event.age_seconds / 0.2).clamp(0.02, 1.0);
-            let fade = ((event.effect.duration() - event.age_seconds) / 0.3).clamp(0.02, 1.0);
-            let size = size * growth * fade;
-            let mut origin = event.center;
-            origin[1] += 0.06 + (event.age_seconds * 3.0).sin() * 0.03;
-            scene.renderables.push(renderable(
-                self.circle,
-                self.materials[index][1],
-                origin,
-                [size, 1., size],
-                event.age_seconds as f32 * 0.3,
-            ));
-            let origin = [
-                event.source[0] as f64 + 0.5,
-                event.source[1] as f64 - 1.55,
-                event.source[2] as f64 + 0.5,
+            if self.diagnostics {
+                contours(&mut meshes[2], f);
+            }
+            if !self.constructions.contains_key(&event.id) {
+                let construction = self
+                    .grammar
+                    .compile(&event.program)
+                    .map_err(|e| e.to_string())?;
+                let mut mesh = empty();
+                for path in &construction.paths {
+                    for edge in path.windows(2) {
+                        beam(
+                            &mut mesh,
+                            edge[0].map(|v| v as f32),
+                            edge[1].map(|v| v as f32),
+                            0.005,
+                        );
+                    }
+                }
+                for link in &construction.links {
+                    beam(
+                        &mut mesh,
+                        link[0].map(|v| v as f32),
+                        link[1].map(|v| v as f32),
+                        0.003,
+                    );
+                }
+                let radius = construction
+                    .paths
+                    .iter()
+                    .flatten()
+                    .map(|p| p[0].hypot(p[2]))
+                    .fold(0.0, f64::max)
+                    .max(1.0);
+                let handle = base
+                    .render
+                    .meshes
+                    .register(mesh)
+                    .map_err(|e| e.to_string())?;
+                let mut object = draw(handle, self.materials[2]);
+                object.frame = Motor3::translation(Vec3::new(
+                    event.center[0] as f32,
+                    (event.center[1] + 0.04) as f32,
+                    event.center[2] as f32,
+                ));
+                let scale = (2.8 / radius) as f32;
+                object.scale =
+                    Scale3::new(scale, scale, scale).expect("positive construction scale");
+                self.constructions.insert(event.id, (handle, object));
+            }
+        }
+        for (cell, density) in world.concentrations_above(7.5, 1024) {
+            if manonica_world::gameplay::solid(world, cell, false) {
+                continue;
+            }
+            let p = [
+                cell.x as f32 + 0.5,
+                cell.y as f32 + 0.5,
+                cell.z as f32 + 0.5,
             ];
-            if event.age_seconds < 0.8 {
-                scene.renderables.push(renderable(
-                    self.circle,
-                    self.materials[index][1],
-                    origin,
-                    [0.9, 0.9, 0.9],
-                    -event.age_seconds as f32,
-                ));
+            particle(
+                &mut meshes[0],
+                p,
+                ((density - 5.0).sqrt() * 0.012).clamp(0.012, 0.08) as f32,
+            );
+        }
+        let mut handles = vec![];
+        let mut renderables = vec![];
+        for (i, mesh) in meshes.into_iter().enumerate() {
+            if mesh.indices.is_empty() {
+                continue;
+            }
+            let handle = base
+                .render
+                .meshes
+                .register(mesh)
+                .map_err(|e| e.to_string())?;
+            handles.push(handle);
+            renderables.push(draw(handle, self.materials[i]));
+        }
+        for handle in self.meshes.drain(..) {
+            base.render.meshes.unregister(handle);
+        }
+        self.meshes = handles;
+        self.renderables = renderables;
+        let expired = self
+            .constructions
+            .keys()
+            .filter(|id| !state.active().iter().any(|e| e.id == **id))
+            .copied()
+            .collect::<Vec<_>>();
+        for id in expired {
+            if let Some((mesh, _)) = self.constructions.remove(&id) {
+                base.render.meshes.unregister(mesh);
             }
         }
-        for body in state.debris() {
-            scene.renderables.push(renderable(
-                self.debris,
-                self.debris_material,
-                body.motion.position_metres,
-                [0.44; 3],
-                if body.resting {
-                    0.0
-                } else {
-                    body.age_seconds as f32 * 1.5
-                },
-            ));
-        }
+        self.signature = signature;
+        Ok(())
+    }
+    pub fn append(&self, scene: &mut meridian_sdk::Scene3d, _state: &MagicState) {
+        scene.renderables.extend(self.renderables.iter().cloned());
+        scene.renderables.extend(
+            self.constructions
+                .values()
+                .map(|(_, object)| object.clone()),
+        );
     }
 }

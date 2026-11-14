@@ -11,3 +11,4 @@ manonica-physics = { path = "../manonica-physics" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 fastnbt = "=2.6.3"
+meval = "0.2"

@@ -22,6 +22,7 @@ use std::{
 };
 #[derive(Clone, Copy)]
 enum Action {
+    Diagnostics,
     Jump,
     Break,
     Use,
@@ -143,6 +144,9 @@ impl AppHandler for GameApp {
                         if input.was_key_pressed(key) {
                             state.push(Action::Select(i));
                         }
+                    }
+                    if input.was_key_pressed(KeyCode::F3) {
+                        state.push(Action::Diagnostics);
                     }
                     if input.was_key_pressed(KeyCode::R) {
                         state.push(Action::Respawn);

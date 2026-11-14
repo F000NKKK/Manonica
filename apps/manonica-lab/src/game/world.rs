@@ -68,6 +68,24 @@ pub fn generate() -> WorldResult<(GameRuntime, EntityId)> {
             Default::default(),
         )?;
     }
+    // Initial conditions: free-mana clouds around the four experimental crystals.
+    // This seeds the world once; placing an empty crystal does not create manons.
+    for (cx, cz) in [(-7_i64, -4_i64), (7, -4), (-10, 7), (11, 8)] {
+        for dz in -2_i64..=2 {
+            for dy in -2_i64..=2 {
+                for dx in -2_i64..=2 {
+                    let p = CellPosition {
+                        x: cx + dx,
+                        y: (9 + dy) as usize,
+                        z: cz + dz,
+                    };
+                    let radius = (dx * dx + dy * dy + dz * dz) as f64;
+                    let density = game.world.density(p)? + 24.0 * (-radius / 1.5).exp();
+                    game.world.set_density(p, density)?;
+                }
+            }
+        }
+    }
     // Walk-through stone arch and stepped platforms.
     for x in -3_i64..=3 {
         for y in 4..=8 {

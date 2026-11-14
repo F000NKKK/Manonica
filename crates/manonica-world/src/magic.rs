@@ -1,69 +1,24 @@
-//! Data-driven game magic. Reserved manons remain accounted for until an effect expires.
-//! Spell geometry is a demo game rule, not a validated continuum destruction model.
+//! Formula-driven control of manon fields. No spell names or voxel mutation rules.
+pub mod construction;
+mod field;
+mod program;
 use crate::{
     WorldError, WorldResult,
     chunk::CellPosition,
     registry::{ContentRegistry, ResourceKey},
     runtime::{EntityId, GameRuntime},
 };
+pub use field::{FieldEnergy, ManonField};
+pub use program::{
+    FieldControls, FormulaDomain, ManonProgram, ScalarFormula, TransportSettings, VectorFormula,
+    WorkBudget,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-mod dynamics;
-pub use dynamics::{BodyMotion, VoxelBody};
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CastingRules {
-    pub mana_cost: f64,
     pub range: f64,
-}
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum SpellEffect {
-    Explosion {
-        radius: f64,
-    },
-    EarthRift {
-        length: f64,
-        width: f64,
-        depth: f64,
-    },
-    Tornado {
-        radius: f64,
-        height: f64,
-        duration: f64,
-    },
-}
-impl SpellEffect {
-    pub fn duration(self) -> f64 {
-        match self {
-            Self::Explosion { .. } => 1.5,
-            Self::EarthRift { .. } => 3.0,
-            Self::Tornado { duration, .. } => duration,
-        }
-    }
-    pub fn index(self) -> usize {
-        match self {
-            Self::Explosion { .. } => 0,
-            Self::EarthRift { .. } => 1,
-            Self::Tornado { .. } => 2,
-        }
-    }
-    fn valid(self) -> bool {
-        let valid = |v: f64| v.is_finite() && v > 0.0 && v <= 32.0;
-        match self {
-            Self::Explosion { radius } => valid(radius),
-            Self::EarthRift {
-                length,
-                width,
-                depth,
-            } => valid(length) && valid(width) && valid(depth),
-            Self::Tornado {
-                radius,
-                height,
-                duration,
-            } => valid(radius) && valid(height) && valid(duration),
-        }
-    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,7 +26,7 @@ pub struct SpellDefinition {
     pub key: ResourceKey,
     pub scroll: ResourceKey,
     pub casting: CastingRules,
-    pub effect: SpellEffect,
+    pub program: ManonProgram,
 }
 #[derive(Clone, Debug)]
 pub struct SpellRegistry {
@@ -84,7 +39,7 @@ impl SpellRegistry {
         }
         let mut by_scroll = BTreeMap::new();
         let mut keys = BTreeSet::new();
-        for (index, line) in text
+        for (i, line) in text
             .lines()
             .enumerate()
             .filter(|(_, s)| !s.trim().is_empty())
@@ -95,15 +50,12 @@ impl SpellRegistry {
             let spell: SpellDefinition =
                 serde_json::from_str(line).map_err(|e| WorldError::Content {
                     source: "spells.jsonl",
-                    line: index + 1,
+                    line: i + 1,
                     detail: e.to_string(),
                 })?;
             content.item_id(&spell.scroll)?;
-            if !spell.effect.valid()
-                || !spell.casting.mana_cost.is_finite()
-                || spell.casting.mana_cost <= 0.0
-                || spell.casting.mana_cost > 10000.0
-                || !spell.casting.range.is_finite()
+            spell.program.compile()?;
+            if !spell.casting.range.is_finite()
                 || spell.casting.range <= 0.0
                 || spell.casting.range > 64.0
                 || !keys.insert(spell.key.clone())
@@ -123,93 +75,126 @@ impl SpellRegistry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpellEvent {
+    pub id: u64,
     pub spell: ResourceKey,
-    pub effect: SpellEffect,
+    pub program: ManonProgram,
     pub center: [f64; 3],
     pub direction: [f64; 3],
     pub age_seconds: f64,
-    pub reserved_manons: f64,
-    pub source: [i64; 3],
-    pub changed_blocks: usize,
-    pub(crate) impacts: Vec<dynamics::VoxelImpact>,
+    pub field: ManonField,
+}
+impl SpellEvent {
+    pub fn duration(&self) -> f64 {
+        self.program.domain.duration_seconds
+    }
+    fn cell(&self, i: usize) -> WorldResult<CellPosition> {
+        let [nx, ny, _] = self.field.dimensions;
+        let y = self.field.origin[1] + ((i / nx) % ny) as i64;
+        Ok(CellPosition {
+            x: self.field.origin[0] + (i % nx) as i64,
+            y: usize::try_from(y).map_err(|_| WorldError::Invalid("spell_cell"))?,
+            z: self.field.origin[2] + (i / (nx * ny)) as i64,
+        })
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleasedEnergy {
+    pub heat_joules: f64,
+    pub external_work_joules: f64,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MagicState {
-    pub(crate) bound_manons: f64,
-    pub(crate) casts: u64,
-    pub(crate) active: Vec<SpellEvent>,
-    pub(crate) debris: Vec<dynamics::VoxelBody>,
-    pub(crate) revision: u64,
-    pub(crate) mechanical_work_joules: f64,
+    casts: u64,
+    active: Vec<SpellEvent>,
+    pub released: ReleasedEnergy,
 }
 impl MagicState {
-    pub fn debris(&self) -> &[dynamics::VoxelBody] {
-        &self.debris
-    }
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-    pub fn mechanical_work_joules(&self) -> f64 {
-        self.mechanical_work_joules
-    }
-    pub fn bound_manons(&self) -> f64 {
-        self.bound_manons
-    }
     pub fn casts(&self) -> u64 {
         self.casts
     }
     pub fn active(&self) -> &[SpellEvent] {
         &self.active
     }
+    /// Manons owned by active solver domains, not a separate magical source.
+    pub fn bound_manons(&self) -> f64 {
+        self.active.iter().map(|e| e.field.manons()).sum()
+    }
+    pub fn energy_residual_joules(&self) -> f64 {
+        self.released.heat_joules - self.released.external_work_joules
+            + self
+                .active
+                .iter()
+                .map(|e| e.field.energy.residual_joules())
+                .sum::<f64>()
+    }
     pub(crate) fn validate(&self) -> WorldResult<()> {
-        if self.debris.len() > 1024 || !self.mechanical_work_joules.is_finite() {
-            return Err(WorldError::Invalid("magic_debris"));
-        }
-        for body in &self.debris {
-            body.validate()?;
-        }
-        if self.active.len() > 16 || !self.bound_manons.is_finite() || self.bound_manons < 0.0 {
+        if self.active.len() > 8
+            || !self.bound_manons().is_finite()
+            || [
+                self.released.heat_joules,
+                self.released.external_work_joules,
+            ]
+            .iter()
+            .any(|v| !v.is_finite() || *v < 0.0)
+        {
             return Err(WorldError::Invalid("magic_state"));
         }
+        let mut ids = BTreeSet::new();
         for e in &self.active {
-            if e.impacts.len() > 512
-                || e.impacts.iter().any(|i| {
-                    !i.at_seconds.is_finite()
-                        || i.at_seconds < e.age_seconds
-                        || i.at_seconds >= e.effect.duration()
-                        || i.position[1] < 0
-                })
-            {
-                return Err(WorldError::Invalid("magic_plan"));
-            }
-            if !e.effect.valid()
+            e.program.compile()?;
+            e.field.validate()?;
+            let norm = e.direction[0].hypot(e.direction[2]);
+            if !ids.insert(e.id)
+                || e.id == 0
+                || e.id > self.casts
+                || e.field.dimensions != e.program.domain.dimensions
+                || e.field.origin[1] < 0
                 || e.center
                     .iter()
                     .chain(e.direction.iter())
-                    .any(|v| !v.is_finite() || v.abs() > 1e9)
+                    .any(|v| !v.is_finite() || v.abs() > 1e8)
+                || (norm - 1.0).abs() > 1e-10
+                || e.direction[1] != 0.0
                 || !e.age_seconds.is_finite()
                 || e.age_seconds < 0.0
-                || e.age_seconds >= e.effect.duration()
-                || !e.reserved_manons.is_finite()
-                || e.reserved_manons <= 0.0
-                || e.source[1] < 0
+                || e.age_seconds >= e.duration()
+                || e.field.simulated_seconds > e.age_seconds + 1e-9
+                || e.field.energy.external_work_joules > e.program.work.total_joules + 1e-8
             {
                 return Err(WorldError::Invalid("spell_event"));
             }
         }
-        let sum: f64 = self.active.iter().map(|e| e.reserved_manons).sum();
-        if (sum - self.bound_manons).abs() > 1e-10 * sum.max(1.0) {
-            return Err(WorldError::Invalid("magic_balance"));
+        for (i, a) in self.active.iter().enumerate() {
+            for b in &self.active[i + 1..] {
+                if overlap(&a.field, &b.field) {
+                    return Err(WorldError::Invalid("overlapping_spell_domains"));
+                }
+            }
+        }
+        if self.energy_residual_joules().abs()
+            > 1e-7
+                * (self.released.external_work_joules
+                    + self
+                        .active
+                        .iter()
+                        .map(|e| {
+                            e.field.energy.external_work_joules
+                                + e.field.energy.potential_joules.abs()
+                        })
+                        .sum::<f64>()
+                    + 1.0)
+        {
+            return Err(WorldError::Invalid("magic_energy_balance"));
         }
         Ok(())
     }
 }
-fn position(v: [i64; 3]) -> WorldResult<CellPosition> {
-    Ok(CellPosition {
-        x: v[0],
-        y: usize::try_from(v[1]).map_err(|_| WorldError::Invalid("spell_position"))?,
-        z: v[2],
+fn overlap(a: &ManonField, b: &ManonField) -> bool {
+    (0..3).all(|i| {
+        a.origin[i] < b.origin[i] + b.dimensions[i] as i64
+            && b.origin[i] < a.origin[i] + a.dimensions[i] as i64
     })
 }
 impl GameRuntime {
@@ -225,7 +210,7 @@ impl GameRuntime {
         target: [f64; 3],
         direction: [f64; 3],
     ) -> WorldResult<SpellEvent> {
-        if self.magic.active.len() >= 16
+        if self.magic.active.len() >= 8
             || origin
                 .iter()
                 .chain(target.iter())
@@ -239,8 +224,7 @@ impl GameRuntime {
             .inventory
             .get(slot)?
             .ok_or(WorldError::Invalid("empty_inventory_slot"))?;
-        let key = &self.world.content().item(stack.item())?.key;
-        let spell = registry.for_scroll(key)?;
+        let spell = registry.for_scroll(&self.world.content().item(stack.item())?.key)?;
         let distance = origin
             .iter()
             .zip(target)
@@ -250,105 +234,108 @@ impl GameRuntime {
         if distance > spell.casting.range {
             return Err(WorldError::Invalid("spell_out_of_range"));
         }
-        let length = direction[0].hypot(direction[2]);
-        if length < 1e-8 {
+        let norm = direction[0].hypot(direction[2]);
+        if norm < 1e-8 {
             return Err(WorldError::Invalid("spell_direction"));
         }
-        let direction = [direction[0] / length, 0.0, direction[2] / length];
+        let direction = [direction[0] / norm, 0., direction[2] / norm];
         let replacement = entity.inventory.after_consuming(slot, 1)?;
-        let mut candidate = self.world.clone();
-        let source = origin.map(|v| v.floor() as i64);
-        candidate.density(position(source)?)?;
-        let mut remaining = spell.casting.mana_cost;
-        let volume = candidate.layout().cell_width().powi(3);
-        for dz in -2..=2 {
-            for dy in -2..=2 {
-                for dx in -2..=2 {
-                    if remaining <= 1e-12 {
-                        continue;
-                    }
-                    let p = [source[0] + dx, source[1] + dy, source[2] + dz];
-                    let Ok(p) = position(p) else { continue };
-                    let Ok(density) = candidate.density(p) else {
-                        continue;
-                    };
-                    let amount = (density * volume).min(remaining);
-                    if amount > 0.0 {
-                        candidate.set_density(p, (density - amount / volume).max(0.0))?;
-                        remaining -= amount;
-                    }
-                }
-            }
+        let domain = spell.program.domain;
+        let dims = domain.dimensions;
+        let dx = self.world.layout().cell_width();
+        if target
+            .iter()
+            .any(|v| !(*v / dx).is_finite() || (*v / dx).abs() > 99_000_000.0)
+        {
+            return Err(WorldError::Invalid("spell_domain_coordinate"));
         }
-        if remaining > 1e-9 {
-            return Err(WorldError::Invalid("insufficient_ambient_mana"));
-        }
-        let impacts = dynamics::plan(
-            &candidate,
-            spell.effect,
-            target,
-            direction,
-            spell.casting.mana_cost,
-        )?;
-        let event = SpellEvent {
-            spell: spell.key.clone(),
-            effect: spell.effect,
-            center: target,
-            direction,
-            age_seconds: 0.0,
-            reserved_manons: spell.casting.mana_cost,
-            source,
-            changed_blocks: 0,
-            impacts,
+        let first = std::array::from_fn(|i| {
+            (target[i] / dx).floor() as i64
+                - ((dims[i] - 1) as f64 * domain.anchor[i]).floor() as i64
+        });
+        let len = dims.iter().product();
+        let field = ManonField {
+            origin: first,
+            dimensions: dims,
+            cell_width: dx,
+            densities: vec![0.; len],
+            reference_density: vec![0.; len],
+            potential: vec![0.; len],
+            sources: vec![0.; len],
+            velocity: vec![[0.; 3]; len],
+            simulated_seconds: 0.,
+            energy: FieldEnergy::default(),
         };
-        let casts = self
+        if self.magic.active.iter().any(|e| overlap(&field, &e.field)) {
+            return Err(WorldError::Invalid("overlapping_spell_domains"));
+        }
+        let id = self
             .magic
             .casts
             .checked_add(1)
             .ok_or(WorldError::Invalid("spell_counter"))?;
-        self.world = candidate;
+        let mut event = SpellEvent {
+            id,
+            spell: spell.key.clone(),
+            program: spell.program.clone(),
+            center: target,
+            direction,
+            age_seconds: 0.,
+            field,
+        };
+        let mut zero = Vec::with_capacity(len);
+        for i in 0..len {
+            let pos = event.cell(i)?;
+            event.field.densities[i] = self.world.density(pos)?;
+            zero.push((pos, 0.));
+        }
+        event.field.reference_density = event.field.densities.clone();
+        if event.field.manons() <= 0.0 {
+            return Err(WorldError::Invalid("insufficient_ambient_mana"));
+        }
+        // Evaluate the first physical step before consuming a scroll or reserving world state.
+        let mut probe = event.clone();
+        field::step(&mut probe, 0.025_f64.min(event.duration()), false)?;
+        self.world.replace_cells(&zero)?;
         self.entities
             .get_mut(&caster)
             .unwrap()
             .inventory
             .commit_slot(slot, replacement);
-        self.magic.bound_manons += event.reserved_manons;
-        self.magic.casts = casts;
+        self.magic.casts = id;
         self.magic.active.push(event.clone());
         Ok(event)
     }
     pub fn advance_magic(&mut self, dt: f64) -> WorldResult<()> {
-        dynamics::advance(&mut self.world, &mut self.magic, dt)
-    }
-    pub fn magic_acceleration(&self, point: [f64; 3]) -> [f64; 3] {
-        let mut a = [0.0; 3];
-        for e in &self.magic.active {
-            let delta = std::array::from_fn::<_, 3, _>(|i| point[i] - e.center[i]);
-            let radial = delta[0].hypot(delta[2]).max(0.3);
-            match e.effect {
-                SpellEffect::Tornado { radius, height, .. }
-                    if radial < radius && delta[1] > -1.0 && delta[1] < height =>
-                {
-                    let charge = (e.reserved_manons / 16.0).min(2.0);
-                    let strength = (1.0 - radial / radius) * 25.0 * charge;
-                    a[0] += (-delta[2] / radial - delta[0] / radial * 0.5) * strength;
-                    a[2] += (delta[0] / radial - delta[2] / radial * 0.5) * strength;
-                    a[1] += 36.0 * (1.0 - radial / radius) * charge;
+        if !dt.is_finite() || dt <= 0.0 || dt > 0.1 {
+            return Err(WorldError::Invalid("magic_dt"));
+        }
+        let mut next = self.magic.clone();
+        let mut restore = vec![];
+        let mut active = vec![];
+        for mut event in next.active.drain(..) {
+            event.age_seconds = (event.age_seconds + dt).min(event.duration());
+            let finishing = event.age_seconds >= event.duration();
+            while event.field.simulated_seconds + 0.025 <= event.age_seconds + 1e-12 {
+                field::step(&mut event, 0.025, false)?;
+            }
+            if finishing {
+                let remaining = (event.age_seconds - event.field.simulated_seconds).max(0.0);
+                field::step(&mut event, remaining.max(0.025), true)?;
+                for (i, n) in event.field.densities.iter().enumerate() {
+                    let cell = event.cell(i)?;
+                    restore.push((cell, self.world.density(cell)? + n));
                 }
-                SpellEffect::Explosion { radius } if e.age_seconds < 0.25 => {
-                    let r = delta.iter().map(|v| v * v).sum::<f64>().sqrt().max(0.3);
-                    if r < radius * 2.0 {
-                        for i in 0..3 {
-                            a[i] += delta[i] / r
-                                * 50.0
-                                * (1.0 - r / (radius * 2.0))
-                                * (e.reserved_manons / 12.0).min(2.0);
-                        }
-                    }
-                }
-                _ => {}
+                next.released.heat_joules += event.field.energy.heat_joules;
+                next.released.external_work_joules += event.field.energy.external_work_joules;
+            } else {
+                active.push(event);
             }
         }
-        a
+        next.active = active;
+        next.validate()?;
+        self.world.replace_cells(&restore)?;
+        self.magic = next;
+        Ok(())
     }
 }

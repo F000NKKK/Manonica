@@ -75,6 +75,40 @@ impl ChunkWorld {
             })
         })
     }
+    /// Bounded read-only query for density visualization. Uniform background needs no scan.
+    pub fn concentrations_above(&self, minimum: f64, limit: usize) -> Vec<(CellPosition, f64)> {
+        let mut result = Vec::new();
+        if !minimum.is_finite() || limit == 0 {
+            return result;
+        }
+        let dims = self.layout.dimensions();
+        for (coord, slot) in &self.chunks {
+            let Slot::Resident { chunk, .. } = slot else {
+                continue;
+            };
+            if matches!(chunk.mana,DensityStorage::Uniform(v) if v<minimum) {
+                continue;
+            }
+            for i in 0..self.layout.cells() {
+                let n = chunk.mana.at(i);
+                if n < minimum {
+                    continue;
+                }
+                result.push((
+                    CellPosition {
+                        x: i64::from(coord.x) * dims[0] as i64 + (i % dims[0]) as i64,
+                        y: (i / dims[0]) % dims[1],
+                        z: i64::from(coord.z) * dims[2] as i64 + (i / (dims[0] * dims[1])) as i64,
+                    },
+                    n,
+                ));
+                if result.len() >= limit.min(4096) {
+                    return result;
+                }
+            }
+        }
+        result
+    }
     pub fn coordinates(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
         self.chunks.keys().copied()
     }
@@ -132,6 +166,37 @@ impl ChunkWorld {
     pub fn density(&self, pos: CellPosition) -> WorldResult<f64> {
         let (c, i) = self.layout.locate(pos)?;
         Ok(self.resident(c)?.mana.at(i))
+    }
+    /// Atomic bulk density replacement; the caller owns the corresponding resource ledger.
+    pub(crate) fn replace_cells(&mut self, cells: &[(CellPosition, f64)]) -> WorldResult<()> {
+        let mut updates: BTreeMap<ChunkCoord, Vec<f64>> = BTreeMap::new();
+        let volume = self.layout.cell_width.powi(3);
+        let mut seen = std::collections::BTreeSet::new();
+        for (position, value) in cells {
+            if !value.is_finite() || *value < 0.0 {
+                return Err(WorldError::Invalid("density"));
+            }
+            let (coord, index) = self.layout.locate(*position)?;
+            if !seen.insert((coord, index)) {
+                return Err(WorldError::Invalid("duplicate_density_cell"));
+            }
+            let values =
+                if let std::collections::btree_map::Entry::Vacant(entry) = updates.entry(coord) {
+                    entry.insert(self.resident(coord)?.mana.values(self.layout.cells()))
+                } else {
+                    updates.get_mut(&coord).unwrap()
+                };
+            values[index] = *value;
+        }
+        for values in updates.values() {
+            if !(values.iter().sum::<f64>() * volume).is_finite() {
+                return Err(WorldError::Invalid("density_balance"));
+            }
+        }
+        for (coord, values) in updates {
+            self.resident_mut(coord)?.mana = DensityStorage::from_values(values);
+        }
+        Ok(())
     }
     /// Explicit source/sink API; callers account for the corresponding resource transfer.
     pub fn set_density(&mut self, pos: CellPosition, density: f64) -> WorldResult<()> {

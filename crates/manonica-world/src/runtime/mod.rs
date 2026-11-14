@@ -225,7 +225,7 @@ impl GameRuntime {
             })
             .collect::<WorldResult<Vec<_>>>()?;
         let save = SavedGame {
-            version: 2,
+            version: 3,
             magic: self.magic.clone(),
             registry: self.world.content().fingerprint().into(),
             dimensions: self.world.layout().dimensions().map(|v| v as i32),
@@ -240,7 +240,7 @@ impl GameRuntime {
     }
     pub fn from_nbt(content: Arc<ContentRegistry>, bytes: &[u8]) -> WorldResult<Self> {
         let save: SavedGame = decode_nbt(bytes)?;
-        if save.version != 2
+        if save.version != 3
             || save.registry != content.fingerprint()
             || !save.clock.elapsed_seconds.is_finite()
             || save.clock.elapsed_seconds < 0.0

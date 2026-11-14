@@ -70,7 +70,8 @@ pub(super) fn run(
         include_str!("../../../../assets/demo/spells.jsonl"),
         game.world.content(),
     )?;
-    let effects = SpellView::new(&device, &runtime, &mut base).map_err(std::io::Error::other)?;
+    let mut effects =
+        SpellView::new(&device, &runtime, &mut base).map_err(std::io::Error::other)?;
     let mut terrain = TerrainView::new();
     terrain
         .rebuild(&mut base, &game.world)
@@ -78,8 +79,7 @@ pub(super) fn run(
     let mut hud = Hud::new(&mut base);
     let mut character = Character::new(world::SPAWN);
     let mut camera = FlyCamera::new(Vec3::new(0., 10., 13.));
-    let started = Instant::now();
-    let mut previous = started;
+    let mut previous = Instant::now();
     let mut accumulator = 0.0;
     let mut selected = 0;
     let mut status =
@@ -87,11 +87,12 @@ pub(super) fn run(
     let mut size = [1280, 800];
     let mut frame_count = 0;
     let mut pending_jump = false;
+    let mut diagnostics = false;
     if showcase {
         for (slot, target) in [
-            (3, [-7.0, 4.0, -4.0]),
-            (4, [0.0, 4.0, -8.0]),
-            (5, [7.0, 4.0, -4.0]),
+            (3, [-11.0, 4.5, -3.0]),
+            (4, [0.0, 4.5, -10.0]),
+            (5, [11.0, 4.5, -3.0]),
         ] {
             game.cast_scroll(
                 &spells,
@@ -107,7 +108,7 @@ pub(super) fn run(
             .map_err(std::io::Error::other)?;
     }
     println!(
-        "3D ready: {} chunks, GPU terrain + volumetric WGSL particles on {}",
+        "3D ready: {} chunks, generic manon-field observer on {}",
         game.world.statistics().chunks.total,
         device.adapter_name()
     );
@@ -147,10 +148,14 @@ pub(super) fn run(
             f64::from(camera.yaw.sin() * camera.pitch.cos()),
         ];
         let mut dirty = false;
-        let old_revision = game.magic().revision();
+
         for action in actions {
             match action {
                 Action::Jump => pending_jump = true,
+                Action::Diagnostics => {
+                    diagnostics = !diagnostics;
+                    effects.set_diagnostics(diagnostics);
+                }
                 Action::Select(slot) => selected = slot,
                 Action::Respawn => {
                     character = Character::new(world::SPAWN);
@@ -177,6 +182,7 @@ pub(super) fn run(
                             status = "LOAD: player position is blocked".into();
                         } else {
                             game = loaded;
+                            effects.invalidate();
                             player = id;
                             character = restored;
                             camera.pitch = transform.rotation_radians[0] as f32;
@@ -237,10 +243,11 @@ pub(super) fn run(
                             direction,
                         ) {
                             Ok(event) => {
-                                dirty |= event.changed_blocks > 0;
                                 status = format!(
-                                    "{}: {} blocks, {:.0} manons reserved",
-                                    event.spell, event.changed_blocks, event.reserved_manons
+                                    "{}: {} field cells, {:.0} manons",
+                                    event.spell,
+                                    event.field.densities.len(),
+                                    event.field.manons()
                                 );
                             }
                             Err(e) => status = e.to_string(),
@@ -265,7 +272,7 @@ pub(super) fn run(
         if locked || showcase {
             accumulator = (accumulator + dt).min(0.1);
             while accumulator >= 1.0 / 120.0 {
-                let acceleration = game.magic_acceleration(character.feet);
+                let acceleration = [0.0; 3];
                 character.step(
                     &game.world,
                     WalkInput {
@@ -280,59 +287,32 @@ pub(super) fn run(
                     acceleration,
                 );
                 pending_jump = false;
-                game.advance_magic(1.0 / 120.0)?;
+                if let Err(error) = game.advance_magic(1.0 / 120.0) {
+                    status = format!("FIELD PAUSED: {error}");
+                }
                 accumulator -= 1.0 / 120.0;
             }
         } else {
             accumulator = 0.0;
             pending_jump = false;
         }
-        dirty |= old_revision != game.magic().revision();
+
         if dirty {
             terrain
                 .rebuild(&mut base, &game.world)
                 .map_err(std::io::Error::other)?;
         }
         let eye = character.eye();
-        let mut shake = 0.0;
-        for event in game.magic().active() {
-            let distance = eye
-                .iter()
-                .zip(event.center)
-                .map(|(a, b)| (a - b).powi(2))
-                .sum::<f64>()
-                .sqrt();
-            let strength = match event.effect {
-                manonica_world::magic::SpellEffect::EarthRift { .. } => {
-                    0.13 * (1.0 - event.age_seconds / 3.0).max(0.0)
-                }
-                manonica_world::magic::SpellEffect::Explosion { .. } => {
-                    0.25 * (-event.age_seconds * 4.0).exp()
-                }
-                _ => 0.015,
-            };
-            shake += strength
-                * (1.0 - distance / 30.0).max(0.0)
-                * (event.reserved_manons / 16.0).min(2.0);
-        }
-        let time = frame_count as f64 * 0.71;
-        camera.position = Vec3::new(
-            (eye[0] + shake * time.sin()) as f32,
-            (eye[1] + shake * (time * 1.37).cos()) as f32,
-            eye[2] as f32,
-        );
+        camera.position = Vec3::new(eye[0] as f32, eye[1] as f32, eye[2] as f32);
         let mut scene = Scene3d {
             camera: camera.camera(size[0] as f32 / size[1] as f32),
             renderables: terrain.renderables.clone(),
             ..Default::default()
         };
+        effects
+            .update(&mut base, game.magic(), &game.world)
+            .map_err(std::io::Error::other)?;
         effects.append(&mut scene, game.magic());
-        effects.append_mana(
-            &mut scene,
-            &game.world,
-            eye,
-            now.duration_since(started).as_secs_f64(),
-        );
         let stack = game.entity(player)?.inventory.get(selected)?;
         let item = stack
             .map(|s| {
@@ -354,11 +334,11 @@ pub(super) fn run(
             &[
                 "MANONICA / ARCANE FRONTIER".into(),
                 "WASD walk | SHIFT sprint | SPACE jump | ESC pause/cursor | R respawn".into(),
-                "LMB collect | RMB place/cast | 1 stone 2 crystal 3 grass 4 blast 5 rift 6 tornado"
+                "LMB collect | RMB place/cast | 1 stone 2 crystal 3 grass 4 compress/release 5 moving well 6 vortex"
                     .into(),
                 format!("Selected {}: {} | target: {}", selected + 1, item, target),
                 format!(
-                    "XYZ {:.1} {:.1} {:.1} | {} | {:.1} ms/frame | K save / L load",
+                    "XYZ {:.1} {:.1} {:.1} | {} | {:.1} ms/frame | K save / L load | F3 field diagnostics",
                     character.feet[0],
                     character.feet[1],
                     character.feet[2],
@@ -370,9 +350,9 @@ pub(super) fn run(
                     dt * 1000.
                 ),
                 format!(
-                    "Magic: {} active, {:.0} bound manons | terrain physics: CPU contacts",
+                    "Fields: {} active, {:.0} solver-owned manons | energy residual {:.2e} J",
                     game.magic().active().len(),
-                    game.magic().bound_manons()
+                    game.magic().bound_manons(),game.magic().energy_residual_joules()
                 ),
                 status.clone(),
             ],
@@ -387,10 +367,9 @@ pub(super) fn run(
         frame_count += 1;
         if smoke_frames.is_some_and(|limit| frame_count >= limit) {
             println!(
-                "3D smoke complete: {frame_count} frames, {} active spells, {} voxel bodies, {} released voxels",
+                "3D smoke complete: {frame_count} frames, {} active formula programs, energy residual {:.3e} J",
                 game.magic().active().len(),
-                game.magic().debris().len(),
-                game.magic().revision()
+                game.magic().energy_residual_joules()
             );
             break;
         }
