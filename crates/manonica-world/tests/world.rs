@@ -384,3 +384,33 @@ fn all_geometry_mutations_advance_the_world_revision() {
     w.reload(c, true).unwrap();
     assert_ne!(unloaded, w.geometry_revision());
 }
+
+#[test]
+fn column_geometry_versions_track_lifecycle_without_density_invalidation() {
+    let mut w = ChunkWorld::new(content(), ChunkLayout::new([2, 2, 2], 1.).unwrap());
+    let a = ChunkCoord { x: -1, z: 0 };
+    let b = ChunkCoord { x: 0, z: 0 };
+    w.create(a, 3., true).unwrap();
+    w.create(b, 3., true).unwrap();
+    let before = w.geometry_chunks().collect::<BTreeMap<_, _>>();
+    w.set_density(pos(-1), 5.).unwrap();
+    assert_eq!(w.geometry_chunks().collect::<BTreeMap<_, _>>(), before);
+    w.set_block(
+        pos(-1),
+        &key("manonica:stone"),
+        BTreeMap::new(),
+        Default::default(),
+    )
+    .unwrap();
+    let after = w.geometry_chunks().collect::<BTreeMap<_, _>>();
+    assert!(after[&a] > before[&a]);
+    assert_eq!(after[&b], before[&b]);
+    assert_eq!(w.occupied_blocks_in(a).count(), 1);
+    assert_eq!(w.occupied_blocks_in(b).count(), 0);
+    w.unload(a).unwrap();
+    assert_eq!(w.geometry_chunks().count(), 1);
+    assert_eq!(w.occupied_blocks_in(a).count(), 0);
+    w.reload(a, true).unwrap();
+    assert!(w.geometry_chunks().collect::<BTreeMap<_, _>>()[&a] > after[&a]);
+    assert_eq!(w.occupied_blocks_in(a).count(), 1);
+}

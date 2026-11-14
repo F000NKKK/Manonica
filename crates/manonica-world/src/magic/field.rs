@@ -188,6 +188,27 @@ struct Flow<'a> {
     field: &'a FreeManaField,
     thermal: &'a ManonThermalField,
 }
+// A prescribed expression independent of n is identical on every transport
+// substep at this control time. Cache face samples without approximating it.
+struct FaceFlow(std::collections::BTreeMap<[u64; 3], Vec3<MetresPerSecond>>);
+impl VelocityField for &FaceFlow {
+    fn at(&self, p: Vec3<Metres>) -> Result<Vec3<MetresPerSecond>, PhysicsError> {
+        self.0
+            .get(&[
+                p.x.value().to_bits(),
+                p.y.value().to_bits(),
+                p.z.value().to_bits(),
+            ])
+            .copied()
+            .ok_or_else(|| {
+                manonica_error::BaseError::new(
+                    manonica_error::ErrorCode::InvalidRange,
+                    "cached_flow_face",
+                )
+                .into()
+            })
+    }
+}
 impl VelocityField for Flow<'_> {
     fn at(&self, p: Vec3<Metres>) -> Result<Vec3<MetresPerSecond>, PhysicsError> {
         let f = &self.event.field;
@@ -342,7 +363,76 @@ pub(super) fn step(event: &mut SpellEvent, dt: f64, finishing: bool) -> WorldRes
     let mut velocity = vec![[0.; 3]; shape.len()];
     if !finishing {
         // Small physical substeps, including CFL-checked reference operators.
-        let substeps = (dt / 0.005).ceil().max(1.0) as usize;
+        let mut transport_rate = 0.0_f64;
+        let density_dependent = compiled.velocity.iter().any(|expr| {
+            expr.iter()
+                .any(|token| matches!(token, meval::tokenizer::Token::Var(name) if name == "n"))
+        });
+        let cached = if !density_dependent {
+            let flow = Flow {
+                event,
+                compiled: &compiled,
+                time: t,
+                field: &density,
+                thermal: &thermal,
+            };
+            let mut faces = std::collections::BTreeMap::new();
+            let mut advection_outgoing = vec![0.0_f64; shape.len()];
+            let mut drift_outgoing = vec![0.0_f64; shape.len()];
+            for z in 0..nz {
+                for y in 0..ny {
+                    for x in 0..nx {
+                        for axis in 0..3 {
+                            if [x, y, z][axis] + 1 >= [nx, ny, nz][axis] {
+                                continue;
+                            }
+                            let mut p = [
+                                (x as f64 + 0.5 - nx as f64 * 0.5) * f.cell_width,
+                                (y as f64 + 0.5 - ny as f64 * 0.5) * f.cell_width,
+                                (z as f64 + 0.5 - nz as f64 * 0.5) * f.cell_width,
+                            ];
+                            p[axis] += 0.5 * f.cell_width;
+                            let out = flow
+                                .at(Vec3::try_values(p[0], p[1], p[2])?)
+                                .map_err(physical)?;
+                            let i = shape.index(x, y, z).unwrap();
+                            let mut neighbor = [x, y, z];
+                            neighbor[axis] += 1;
+                            let j = shape.index(neighbor[0], neighbor[1], neighbor[2]).unwrap();
+                            let speed = [out.x.value(), out.y.value(), out.z.value()][axis];
+                            advection_outgoing[if speed >= 0. { i } else { j }] +=
+                                speed.abs() / f.cell_width;
+                            let drift = -s.mobility
+                                * (potential.values()[j] - potential.values()[i])
+                                / f.cell_width;
+                            drift_outgoing[if drift >= 0. { i } else { j }] +=
+                                drift.abs() / f.cell_width;
+                            faces.insert(p.map(f64::to_bits), out);
+                        }
+                    }
+                }
+            }
+            transport_rate = advection_outgoing
+                .into_iter()
+                .chain(drift_outgoing)
+                .fold(6. * s.diffusivity / f.cell_width.powi(2), f64::max);
+            Some(FaceFlow(faces))
+        } else {
+            None
+        };
+        // Adaptive conservative substeps: no need to run five passes when
+        // one or two satisfy every operator's donor positivity bound.
+        let substeps = if cached.is_some() {
+            (dt * transport_rate / 0.9)
+                .ceil()
+                .max((dt / 0.0125).ceil())
+                .max(1.) as usize
+        } else {
+            (dt / 0.005).ceil().max(1.) as usize
+        };
+        if substeps > 512 {
+            return Err(WorldError::Invalid("transport_substep_budget"));
+        }
         let h = TimeStep::from_seconds(dt / substeps as f64)?;
         for _ in 0..substeps {
             FreeDiffusion::new(Quantity::<Diffusivity>::nonnegative(s.diffusivity)?)
@@ -358,9 +448,15 @@ pub(super) fn step(event: &mut SpellEvent, dt: f64, finishing: bool) -> WorldRes
                 thermal: &thermal,
             };
             let mut transported = density.clone();
-            FreeAdvection::new(flow)
-                .evolve(&mut transported, h)
-                .map_err(physical)?;
+            if let Some(cached) = &cached {
+                FreeAdvection::new(cached)
+                    .evolve(&mut transported, h)
+                    .map_err(physical)?;
+            } else {
+                FreeAdvection::new(flow)
+                    .evolve(&mut transported, h)
+                    .map_err(physical)?;
+            }
             density = transported;
         }
         let flow = Flow {

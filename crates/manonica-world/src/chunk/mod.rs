@@ -32,6 +32,7 @@ pub struct ChunkWorld {
     layout: ChunkLayout,
     chunks: BTreeMap<ChunkCoord, Slot>,
     geometry_revision: u64,
+    geometry_chunks: BTreeMap<ChunkCoord, u64>,
 }
 impl ChunkWorld {
     pub fn new(content: Arc<ContentRegistry>, layout: ChunkLayout) -> Self {
@@ -40,6 +41,7 @@ impl ChunkWorld {
             layout,
             chunks: BTreeMap::new(),
             geometry_revision: 0,
+            geometry_chunks: BTreeMap::new(),
         }
     }
     pub fn geometry_revision(&self) -> u64 {
@@ -51,34 +53,47 @@ impl ChunkWorld {
     pub fn layout(&self) -> ChunkLayout {
         self.layout
     }
+    /// Resident geometry versions; density-only changes do not invalidate terrain.
+    pub fn geometry_chunks(&self) -> impl Iterator<Item = (ChunkCoord, u64)> + '_ {
+        self.chunks.iter().filter_map(|(coord, slot)| match slot {
+            Slot::Resident { .. } => Some((
+                *coord,
+                self.geometry_chunks.get(coord).copied().unwrap_or(0),
+            )),
+            _ => None,
+        })
+    }
     pub fn occupied_blocks(&self) -> impl Iterator<Item = (CellPosition, &BlockState)> + '_ {
+        self.geometry_chunks()
+            .flat_map(|(coord, _)| self.occupied_blocks_in(coord))
+    }
+    /// Visit a single column without scanning unrelated resident columns.
+    pub fn occupied_blocks_in(
+        &self,
+        coord: ChunkCoord,
+    ) -> impl Iterator<Item = (CellPosition, &BlockState)> + '_ {
         let dims = self.layout.dimensions();
         let air = self.content.air();
-        self.chunks.iter().flat_map(move |(coord, slot)| {
-            let chunk = match slot {
-                Slot::Resident { chunk, .. } => Some(chunk),
-                _ => None,
-            };
-            chunk.into_iter().flat_map(move |chunk| {
+        self.resident(coord)
+            .ok()
+            .into_iter()
+            .flat_map(move |chunk| {
                 (0..self.layout.cells()).filter_map(move |i| {
                     let state = chunk.state(i);
                     if state.block() == air {
                         return None;
                     }
-                    let x = i % dims[0];
-                    let y = (i / dims[0]) % dims[1];
-                    let z = i / (dims[0] * dims[1]);
                     Some((
                         CellPosition {
-                            x: i64::from(coord.x) * dims[0] as i64 + x as i64,
-                            y,
-                            z: i64::from(coord.z) * dims[2] as i64 + z as i64,
+                            x: i64::from(coord.x) * dims[0] as i64 + (i % dims[0]) as i64,
+                            y: (i / dims[0]) % dims[1],
+                            z: i64::from(coord.z) * dims[2] as i64
+                                + (i / (dims[0] * dims[1])) as i64,
                         },
                         state,
                     ))
                 })
             })
-        })
     }
     /// Bounded read-only query for density visualization. Uniform background needs no scan.
     pub fn concentrations_above(&self, minimum: f64, limit: usize) -> Vec<(CellPosition, f64)> {
@@ -146,6 +161,7 @@ impl ChunkWorld {
         };
         self.chunks.insert(coord, Slot::Resident { chunk, active });
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.geometry_chunks.insert(coord, self.geometry_revision);
         Ok(())
     }
     fn resident(&self, coord: ChunkCoord) -> WorldResult<&Chunk> {
@@ -248,6 +264,7 @@ impl ChunkWorld {
         let len = self.layout.cells();
         self.resident_mut(c)?.set(i, state, data, len)?;
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.geometry_chunks.insert(c, self.geometry_revision);
         Ok(())
     }
     pub fn export(&self, coord: ChunkCoord) -> WorldResult<Vec<u8>> {
@@ -265,6 +282,7 @@ impl ChunkWorld {
         }
         self.chunks.insert(coord, Slot::Resident { chunk, active });
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.geometry_chunks.insert(coord, self.geometry_revision);
         Ok(coord)
     }
     pub fn unload(&mut self, coord: ChunkCoord) -> WorldResult<()> {
@@ -273,6 +291,7 @@ impl ChunkWorld {
         let bytes = self.export(coord)?;
         self.chunks.insert(coord, Slot::Archived { bytes, total });
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.geometry_chunks.insert(coord, self.geometry_revision);
         Ok(())
     }
     pub fn reload(&mut self, coord: ChunkCoord, active: bool) -> WorldResult<()> {
@@ -283,6 +302,7 @@ impl ChunkWorld {
         let chunk = save::decode(bytes, self.layout, &self.content)?;
         self.chunks.insert(coord, Slot::Resident { chunk, active });
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.geometry_chunks.insert(coord, self.geometry_revision);
         Ok(())
     }
     pub fn statistics(&self) -> WorldStatistics {

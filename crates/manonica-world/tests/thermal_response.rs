@@ -139,3 +139,35 @@ fn heat_and_load_fragment_material_without_leaving_tiny_permanent_bodies() {
     }
     assert!(g.matter().particles.is_empty());
 }
+
+#[test]
+fn adaptive_prescribed_faces_agree_with_fine_density_dependent_path() {
+    let run = |expression: &str| {
+        let (mut g, p) = base();
+        let mut recipe = heating(0.8);
+        recipe["program"]["controls"]["heat_power"] = serde_json::json!("0");
+        recipe["program"]["controls"]["manon_velocity"]["x"] = serde_json::json!(expression);
+        let r = SpellRegistry::from_jsonl(&recipe.to_string(), &content()).unwrap();
+        g.cast_scroll(&r, p, 0, [6.5, 6.5, 6.5], [6.5, 6.5, 6.5], [0., 0., 1.])
+            .unwrap();
+        for _ in 0..12 {
+            g.advance_magic(0.025).unwrap();
+        }
+        g
+    };
+    let cached = run("2*sin(t)");
+    let uncached = run("2*sin(t)+0*n");
+    let a = &cached.magic().active()[0].field;
+    let b = &uncached.magic().active()[0].field;
+    let error = a
+        .densities
+        .iter()
+        .zip(&b.densities)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0., f64::max);
+    assert!(error < 0.02, "coarse/fine maximum density error {error}");
+    assert!((a.manons() - b.manons()).abs() < 1e-9);
+    assert!(a.densities.iter().all(|n| *n >= 0.));
+    assert!(cached.coupled_energy_residual_joules().unwrap().abs() < 1e-6);
+    assert!(uncached.coupled_energy_residual_joules().unwrap().abs() < 1e-6);
+}

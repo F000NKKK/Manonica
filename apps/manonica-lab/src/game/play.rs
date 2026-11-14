@@ -8,6 +8,7 @@ use meridian_sdk::{
     Device, FlyCamera, FlyControls, GraphicsSession, Scene3d, Vec3, Window, compose_frame,
 };
 use std::{
+    io::{BufWriter, Write},
     path::Path,
     sync::{
         Arc, Mutex,
@@ -60,6 +61,11 @@ pub(super) fn run(
     smoke_frames: Option<u64>,
     showcase: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut trace = std::env::var_os("MANONICA_FRAME_TRACE").map(|path| {
+        let mut writer = BufWriter::new(std::fs::File::create_new(path)?);
+        writeln!(writer,"frame,interval_ms,render_ms,input_ms,update_ms,terrain_ms,effects_ms,overlays_ms,draw_present_ms,bodies,programs")?;
+        Ok::<_,std::io::Error>(writer)
+    }).transpose()?;
     let runtime = tokio::runtime::Runtime::new()?;
     let (device, mut surface) =
         runtime.block_on(Device::new_windowed(window.surface_target(), 1280, 800))?;
@@ -81,6 +87,7 @@ pub(super) fn run(
     let mut camera = FlyCamera::new(Vec3::new(0., 10., 13.));
     let mut previous = Instant::now();
     let mut accumulator = 0.0;
+    let mut physics_accumulator = 0.0;
     let mut selected = 0;
     let mut status =
         "Explore the arch and crystal pillars. Scrolls are in slots 4, 5, 6.".to_string();
@@ -117,7 +124,8 @@ pub(super) fn run(
     );
     while running.load(Ordering::Acquire) {
         let now = Instant::now();
-        let dt = now.duration_since(previous).as_secs_f64().min(0.05);
+        let interval_ms = now.duration_since(previous).as_secs_f64() * 1000.;
+        let dt = (interval_ms / 1000.).min(0.05);
         previous = now;
         let (controls, actions, viewport, locked) = {
             let mut state = lock(&input);
@@ -186,6 +194,7 @@ pub(super) fn run(
                         } else {
                             game = loaded;
                             effects.invalidate();
+                            terrain.invalidate();
                             player = id;
                             character = restored;
                             camera.pitch = transform.rotation_radians[0] as f32;
@@ -279,6 +288,8 @@ pub(super) fn run(
                 rotation_radians: [f64::from(camera.pitch), f64::from(camera.yaw), 0.0],
             },
         )?;
+        let input_ms = now.elapsed().as_secs_f64() * 1000.;
+        let update_start = Instant::now();
         if locked || showcase {
             accumulator = (accumulator + dt).min(0.1);
             while accumulator >= 1.0 / 120.0 {
@@ -297,19 +308,28 @@ pub(super) fn run(
                     acceleration,
                 );
                 pending_jump = false;
-                if let Err(error) = game.advance_magic(1.0 / 120.0) {
+                accumulator -= 1.0 / 120.0;
+            }
+            // The field already has a 40 Hz control clock. Couple material once
+            // per control step; contact relaxation is analytic, motion uses CFL substeps.
+            physics_accumulator = (physics_accumulator + dt).min(0.1);
+            while physics_accumulator + 1e-12 >= 0.025 {
+                if let Err(error) = game.advance_magic(0.025) {
                     if smoke_frames.is_some() {
                         return Err(error.into());
                     }
                     status = format!("FIELD PAUSED: {error}");
                 }
-                accumulator -= 1.0 / 120.0;
+                physics_accumulator = (physics_accumulator - 0.025).max(0.0);
             }
         } else {
             accumulator = 0.0;
+            physics_accumulator = 0.0;
             pending_jump = false;
         }
 
+        let update_ms = update_start.elapsed().as_secs_f64() * 1000.;
+        let terrain_start = Instant::now();
         dirty |= terrain_revision != game.world.geometry_revision();
         if dirty {
             terrain_revision = game.world.geometry_revision();
@@ -317,6 +337,8 @@ pub(super) fn run(
                 .rebuild(&mut base, &game.world)
                 .map_err(std::io::Error::other)?;
         }
+        let terrain_ms = terrain_start.elapsed().as_secs_f64() * 1000.;
+        let effects_start = Instant::now();
         let eye = character.eye();
         camera.position = Vec3::new(eye[0] as f32, eye[1] as f32, eye[2] as f32);
         let mut scene = Scene3d {
@@ -342,7 +364,10 @@ pub(super) fn run(
             game.matter(),
             &game.world,
             game.physics(),
+            physics_accumulator,
         );
+        let effects_ms = effects_start.elapsed().as_secs_f64() * 1000.;
+        let overlays_start = Instant::now();
         let stack = game.entity(player)?.inventory.get(selected)?;
         let item = stack
             .map(|s| {
@@ -390,6 +415,8 @@ pub(super) fn run(
                 status.clone(),
             ],
         );
+        let overlays_ms = overlays_start.elapsed().as_secs_f64() * 1000.;
+        let draw_start = Instant::now();
         compose_frame(
             &mut base,
             &scene,
@@ -397,7 +424,17 @@ pub(super) fn run(
             [0.19, 0.34, 0.49, 1.0],
             &window,
         );
+        let draw_present_ms = draw_start.elapsed().as_secs_f64() * 1000.;
         frame_count += 1;
+        if let Some(writer) = &mut trace {
+            writeln!(
+                writer,
+                "{frame_count},{interval_ms:.6},{:.6},{input_ms:.6},{update_ms:.6},{terrain_ms:.6},{effects_ms:.6},{overlays_ms:.6},{draw_present_ms:.6},{},{}",
+                now.elapsed().as_secs_f64() * 1000.,
+                game.matter().bodies.len(),
+                game.magic().active().len()
+            )?;
+        }
         if smoke_frames.is_some_and(|limit| frame_count >= limit) {
             println!(
                 "3D smoke complete: {frame_count} frames, {} active programs, peak {hottest:.0} K, peak {most_bodies} bodies, {} dispersed blocks, energy residual {:.3e} J",
@@ -407,6 +444,9 @@ pub(super) fn run(
             );
             break;
         }
+    }
+    if let Some(writer) = &mut trace {
+        writer.flush()?;
     }
     Ok(())
 }

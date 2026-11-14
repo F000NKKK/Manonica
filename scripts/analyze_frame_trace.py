@@ -31,8 +31,10 @@ def main():
         reader = csv.DictReader(source)
         if not set(METRICS).issubset(reader.fieldnames or []):
             raise ValueError("missing timing columns")
+        metrics = METRICS + tuple(key for key in ("terrain_ms", "effects_ms") if key in (reader.fieldnames or []))
+        has_gpu = "gpu_batch_ms" in (reader.fieldnames or [])
         for line, row in enumerate(reader, 2):
-            values = {key: float(row[key]) for key in METRICS}
+            values = {key: float(row[key]) for key in metrics}
             if any(not math.isfinite(value) or value < 0 for value in values.values()):
                 raise ValueError(f"invalid timing on line {line}")
             start = elapsed
@@ -43,12 +45,13 @@ def main():
         raise ValueError("no frames remain after warm-up")
     print(f"Frames: {len(samples)}; warm-up: {args.warmup_seconds:g}s")
     print(f"{'metric (ms)':24} {'p50':>10} {'p95':>10} {'max':>10}")
-    for key in METRICS:
+    for key in metrics:
         values = [row[key] for row in samples]
         print(f"{key:24} {percentile(values, .5):10.3f} "
               f"{percentile(values, .95):10.3f} {max(values):10.3f}")
     # gpu_batch_ms is a retained snapshot, not an independent batch per frame.
-    print("GPU batches are retained snapshots; use gpu-coupled for batch statistics.")
+    if has_gpu:
+        print("GPU batches are retained snapshots; use gpu-coupled for batch statistics.")
 
 
 if __name__ == "__main__":

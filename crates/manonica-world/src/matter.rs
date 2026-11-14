@@ -357,6 +357,83 @@ fn collision(world: &ChunkWorld, point: [f64; 3], ignored: &[CellPosition]) -> b
     }
     false
 }
+/// Grid reinsertion is a relocation policy, independent of the force source.
+/// Search nearby shells first; if boxed in, search every resident column.
+fn settlement_cell(
+    world: &ChunkWorld,
+    origin: CellPosition,
+    occupied: &[([f64; 3], [f64; 3])],
+    reserved: &std::collections::BTreeSet<[i64; 3]>,
+) -> Option<CellPosition> {
+    let dx = world.layout().cell_width();
+    let free = |p: CellPosition| {
+        let xyz = [p.x, p.y as i64, p.z];
+        let lo = xyz.map(|v| v as f64 * dx);
+        !reserved.contains(&xyz)
+            && world.block(p).is_ok_and(|s| {
+                world
+                    .content()
+                    .block(s.block())
+                    .is_ok_and(|d| d.physics.replaceable)
+            })
+            && !occupied.iter().any(|(center, half)| {
+                (0..3).all(|a| {
+                    center[a] + half[a] > lo[a] + 1e-6 && center[a] - half[a] < lo[a] + dx - 1e-6
+                })
+            })
+    };
+    for radius in 0_i64..=8 {
+        for y in -radius..=radius {
+            for z in -radius..=radius {
+                for x in -radius..=radius {
+                    if x.abs().max(y.abs()).max(z.abs()) != radius {
+                        continue;
+                    }
+                    let yy = origin.y as i64 + y;
+                    if yy < 0 {
+                        continue;
+                    }
+                    let p = CellPosition {
+                        x: origin.x + x,
+                        y: yy as usize,
+                        z: origin.z + z,
+                    };
+                    if free(p) {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+    let dims = world.layout().dimensions();
+    let mut nearest = None;
+    let mut best = f64::INFINITY;
+    for (coord, _) in world.geometry_chunks() {
+        for z in 0..dims[2] {
+            for x in 0..dims[0] {
+                let xx = i64::from(coord.x) * dims[0] as i64 + x as i64;
+                let zz = i64::from(coord.z) * dims[2] as i64 + z as i64;
+                let horizontal = (xx - origin.x) as f64 * (xx - origin.x) as f64
+                    + (zz - origin.z) as f64 * (zz - origin.z) as f64;
+                if horizontal >= best {
+                    continue;
+                }
+                for y in 0..dims[1] {
+                    let distance = horizontal + (y as f64 - origin.y as f64).powi(2);
+                    if distance >= best {
+                        continue;
+                    }
+                    let p = CellPosition { x: xx, y, z: zz };
+                    if free(p) {
+                        nearest = Some(p);
+                        best = distance;
+                    }
+                }
+            }
+        }
+    }
+    nearest
+}
 pub(crate) fn step(
     world: &ChunkWorld,
     medium: &mut impl MomentumMedium,
@@ -637,20 +714,46 @@ pub(crate) fn step(
             heat_joules,
         })
         .collect();
+    // Broad phase: only the seven contact cells can exchange with a body.
+    // Keep original sample order to preserve the sequential finite-reservoir law.
+    let mut sample_cells: BTreeMap<[i64; 3], Vec<usize>> = BTreeMap::new();
+    for (index, sample) in samples.iter().enumerate() {
+        if let Ok(p) = cell(sample.position, world.layout().cell_width()) {
+            sample_cells
+                .entry([p.x, p.y as i64, p.z])
+                .or_default()
+                .push(index);
+        }
+    }
     for material in &mut next.bodies {
         let mut body = material.motion.body()?;
         if let Ok(target) = cell(material.motion.position_metres, world.layout().cell_width()) {
-            for sample in &samples {
-                let Ok(p) = cell(sample.position, world.layout().cell_width()) else {
-                    continue;
-                };
-                let distance = (p.x - target.x).abs()
-                    + (p.y as i64 - target.y as i64).abs()
-                    + (p.z - target.z).abs();
-                if distance > 1 {
-                    continue;
+            let mut contacts = Vec::with_capacity(7);
+            for offset in [
+                [0, 0, 0],
+                [1, 0, 0],
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, -1, 0],
+                [0, 0, 1],
+                [0, 0, -1],
+            ] {
+                let key = [
+                    target.x + offset[0],
+                    target.y as i64 + offset[1],
+                    target.z + offset[2],
+                ];
+                if let Some(indices) = sample_cells.get(&key) {
+                    contacts.extend(
+                        indices
+                            .iter()
+                            .map(|index| (*index, if offset == [0, 0, 0] { 1.0 } else { 0.5 })),
+                    );
                 }
-                let weight = if distance == 0 { 1.0 } else { 0.5 };
+            }
+            contacts.sort_unstable_by_key(|(index, _)| *index);
+            for (index, weight) in contacts {
+                let sample = &samples[index];
                 let capacity = world
                     .content()
                     .block(world.content().block_id(&material.block)?)?
@@ -803,26 +906,15 @@ pub(crate) fn step(
             continue;
         }
 
-        let p = cell(body.motion.position_metres, world.layout().cell_width())?;
-        let xyz = [p.x, p.y as i64, p.z];
-        let lo = xyz.map(|v| v as f64 * world.layout().cell_width());
-        let entity_overlap = occupied.iter().any(|(center, half)| {
-            (0..3).all(|a| {
-                center[a] + half[a] > lo[a] + 1e-6
-                    && center[a] - half[a] < lo[a] + world.layout().cell_width() - 1e-6
-            })
-        });
-        let can_place = body.resting
-            && body.still_seconds >= 1.0
-            && !entity_overlap
-            && world.block(p).is_ok_and(|s| {
-                world
-                    .content()
-                    .block(s.block())
-                    .is_ok_and(|d| d.physics.replaceable)
-            })
-            && places.insert(xyz);
-        if can_place {
+        let origin = cell(body.motion.position_metres, world.layout().cell_width())?;
+        let destination = if body.resting && body.still_seconds >= 1.0 {
+            settlement_cell(world, origin, occupied, &places)
+        } else {
+            None
+        };
+        if let Some(p) = destination {
+            let xyz = [p.x, p.y as i64, p.z];
+            places.insert(xyz);
             if body.heat_joules > 0.0 {
                 if let Some(anchor) = next.anchors.iter_mut().find(|a| a.position == xyz) {
                     anchor.heat_joules += body.heat_joules;
@@ -1069,8 +1161,63 @@ mod tests {
             &[],
         )
         .unwrap();
-        assert_eq!(next.bodies.len(), 1);
-        assert!(changes.settled.is_empty());
+        assert!(next.bodies.is_empty());
+        assert_eq!(changes.settled.len(), 1);
+        assert_ne!(
+            changes.settled[0].position,
+            CellPosition { x: 2, y: 1, z: 2 }
+        );
+    }
+    #[test]
+    fn reinsertion_search_skips_solid_cells_and_reservations() {
+        let mut w = world();
+        let origin = CellPosition { x: 2, y: 1, z: 2 };
+        w.set_block(
+            origin,
+            &ResourceKey::parse("manonica:stone").unwrap(),
+            BTreeMap::new(),
+            Default::default(),
+        )
+        .unwrap();
+        let mut reserved = std::collections::BTreeSet::new();
+        let first = settlement_cell(&w, origin, &[], &reserved).unwrap();
+        assert_ne!(first, origin);
+        reserved.insert([first.x, first.y as i64, first.z]);
+        let second = settlement_cell(&w, origin, &[], &reserved).unwrap();
+        assert_ne!(first, second);
+        assert_ne!(second, origin);
+    }
+    #[test]
+    fn boxed_in_reinsertion_searches_beyond_local_radius_and_retries_a_full_world() {
+        let content = std::sync::Arc::new(world().content().clone());
+        let mut w = ChunkWorld::new(
+            content,
+            crate::chunk::ChunkLayout::new([20, 1, 1], 1.).unwrap(),
+        );
+        w.create(crate::chunk::ChunkCoord { x: 0, z: 0 }, 3., true)
+            .unwrap();
+        let stone = ResourceKey::parse("manonica:stone").unwrap();
+        for x in 0..20 {
+            w.set_block(
+                CellPosition { x, y: 0, z: 0 },
+                &stone,
+                BTreeMap::new(),
+                Default::default(),
+            )
+            .unwrap();
+        }
+        let origin = CellPosition { x: 0, y: 0, z: 0 };
+        let reserved = std::collections::BTreeSet::new();
+        assert!(settlement_cell(&w, origin, &[], &reserved).is_none());
+        let distant = CellPosition { x: 19, y: 0, z: 0 };
+        w.set_block(
+            distant,
+            &ResourceKey::parse("manonica:air").unwrap(),
+            BTreeMap::new(),
+            Default::default(),
+        )
+        .unwrap();
+        assert_eq!(settlement_cell(&w, origin, &[], &reserved), Some(distant));
     }
     #[test]
     fn weak_load_does_not_remove_static_material() {

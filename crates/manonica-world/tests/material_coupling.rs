@@ -125,7 +125,11 @@ fn jsonl_vortex_transfers_vertical_and_tangential_momentum_to_material() {
                             "manonica:grass"
                         }),
                         BTreeMap::new(),
-                        Default::default(),
+                        manonica_world::metadata::NbtCompound::new(BTreeMap::from([(
+                            "test_id".into(),
+                            manonica_world::metadata::NbtTag::Long(z * 12 + x),
+                        )]))
+                        .unwrap(),
                     )
                     .unwrap();
             }
@@ -140,18 +144,42 @@ fn jsonl_vortex_transfers_vertical_and_tangential_momentum_to_material() {
     let mut highest = 1.5_f64;
     let mut angular = 0.0_f64;
     let mut bodies = 0;
-    for _ in 0..240 {
+    let mut trajectories: BTreeMap<i64, (f64, f64, f64)> = BTreeMap::new();
+    let mut early_swirl = false;
+    let mut orbit = 0.0_f64;
+    for step in 0..240 {
         game.advance_magic(0.025).unwrap();
         bodies = bodies.max(game.matter().bodies.len());
         for b in &game.matter().bodies {
             let p = b.motion.position_metres;
             highest = highest.max(p[1]);
             let m = b.motion.momentum;
+            let radius = (p[0] - center[0]).hypot(p[2] - center[2]);
+            if step < 20 && p[1] > 1.6 && radius > 0.8 {
+                early_swirl |= ((p[2] - center[2]) * m[0] - (p[0] - center[0]) * m[2]).abs() > 1.;
+            }
+            if let Some(manonica_world::metadata::NbtTag::Long(id)) = b.data.get("test_id") {
+                let angle = (p[2] - center[2]).atan2(p[0] - center[0]);
+                let trace = trajectories.entry(*id).or_insert((angle, 0., radius));
+                let delta = (angle - trace.0).sin().atan2((angle - trace.0).cos());
+                // Count arcs on a visible orbit, never angle jitter on the axis.
+                if radius > 0.8 && trace.2 > 0.8 {
+                    trace.1 += delta;
+                    orbit = orbit.max(trace.1.abs());
+                }
+                trace.0 = angle;
+                trace.2 = radius;
+            }
             angular = angular.max(((p[2] - center[2]) * m[0] - (p[0] - center[0]) * m[2]).abs());
         }
         assert!(game.coupled_energy_residual_joules().unwrap().abs() < 1e-5);
     }
+    eprintln!(
+        "vortex: peak={bodies}, height={highest}, angle={orbit}, early={early_swirl}, angular={angular}"
+    );
     assert!(bodies > 0, "no detached bodies");
     assert!(highest > 3.0, "highest body {highest}");
     assert!(angular > 1., "angular momentum {angular}");
+    assert!(early_swirl, "no simultaneous early lift and rotation");
+    assert!(orbit > std::f64::consts::PI, "visible orbital arc {orbit}");
 }

@@ -64,6 +64,7 @@ pub fn capture(path: &Path, seconds: f64, slot: usize) -> Result<(), Box<dyn std
         game.matter(),
         &game.world,
         game.physics(),
+        0.0,
     );
     let pixels = base
         .render_to_pixels(&scene, [0.19, 0.34, 0.49, 1.0])
@@ -78,6 +79,51 @@ pub fn capture(path: &Path, seconds: f64, slot: usize) -> Result<(), Box<dyn std
         "Captured {seconds:.3}s: peak {peak:.0} K, {} bodies, {} dispersed blocks, residual {:.3e} J",
         game.matter().bodies.len(),
         game.matter().dispersed_blocks,
+        game.coupled_energy_residual_joules()?
+    );
+    Ok(())
+}
+
+/// Headless, fixed-step timing of the same playable scene (no GPU or VSync).
+pub fn profile(seconds: f64, slot: usize, hz: u32) -> Result<(), Box<dyn std::error::Error>> {
+    if !seconds.is_finite() || !(0.1..=10.).contains(&seconds) || !(3..=5).contains(&slot) {
+        return Err("profile requires 0.1..10 seconds and scroll 4..6".into());
+    }
+    let (mut game, player) = world::generate()?;
+    let spells = SpellRegistry::from_jsonl(
+        include_str!("../../../../assets/demo/spells.jsonl"),
+        game.world.content(),
+    )?;
+    game.cast_scroll(
+        &spells,
+        player,
+        slot,
+        [0.5, 5.5, 8.],
+        [0.5, 4.5, -3.5],
+        [0., 0., -1.],
+    )?;
+    if !(10..=240).contains(&hz) {
+        return Err("physics Hz must be 10..240".into());
+    }
+    let timestep = 1. / f64::from(hz);
+    let mut times = vec![];
+    let mut peak = 0;
+    for _ in 0..(seconds * f64::from(hz)).round() as usize {
+        let start = std::time::Instant::now();
+        game.advance_magic(timestep)?;
+        times.push(start.elapsed().as_secs_f64() * 1000.);
+        peak = peak.max(game.matter().bodies.len());
+    }
+    let total: f64 = times.iter().sum();
+    times.sort_by(f64::total_cmp);
+    println!(
+        "physics: {} steps, {:.3} ms total, p50 {:.3} ms, p95 {:.3} ms, max {:.3} ms; peak {} bodies; residual {:.3e} J",
+        times.len(),
+        total,
+        times[times.len() / 2],
+        times[times.len() * 95 / 100],
+        times[times.len() - 1],
+        peak,
         game.coupled_energy_residual_joules()?
     );
     Ok(())

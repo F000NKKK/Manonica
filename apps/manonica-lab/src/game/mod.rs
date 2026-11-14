@@ -182,4 +182,4 @@ impl Drop for GameApp {
     }
 }
 mod snapshot;
-pub use snapshot::capture;
+pub use snapshot::{capture, profile};

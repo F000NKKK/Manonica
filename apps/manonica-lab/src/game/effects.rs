@@ -595,6 +595,7 @@ impl SpellView {
         state: &manonica_world::matter::MatterState,
         world: &manonica_world::chunk::ChunkWorld,
         physics: manonica_world::matter::WorldPhysics,
+        presentation_seconds: f64,
     ) {
         for mesh in self.particle_meshes.drain(..) {
             base.render.meshes.unregister(mesh);
@@ -699,7 +700,16 @@ impl SpellView {
             } else {
                 material
             };
-            let p = body.motion.position_metres;
+            // Visual prediction only; never writes back into the conserved state.
+            let prediction = presentation_seconds.clamp(0.0, 0.025);
+            let p = std::array::from_fn::<_, 3, _>(|axis| {
+                body.motion.position_metres[axis]
+                    + if body.resting {
+                        0.
+                    } else {
+                        body.motion.momentum[axis] / body.motion.mass_kg * prediction
+                    }
+            });
             let mut object = draw(self.body_mesh, material);
             object.frame = Motor3::translation(Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32));
             let extent = (world.layout().cell_width() * 0.5) as f32;
